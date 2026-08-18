@@ -1,0 +1,95 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "church-production-director"
+version = "1.0.0"
+description = "AI-assisted church worship production control system"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Church Tech Team", email = "tech@church.example"}
+]
+
+requires-python = ">=3.11"
+
+dependencies = [
+    # Web Framework
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.35.0",
+    "pydantic>=2.11.0",
+    "pydantic-settings>=2.10.0",
+    
+    # Database
+    "sqlalchemy>=2.0.41",
+    "psycopg[binary]>=3.3.0",
+    "alembic>=1.12.0",
+    "pgvector>=0.2.0",
+    
+    # AI/LangChain
+    "langgraph>=1.0.0",
+    "langchain>=1.0.0",
+    
+    # Vision
+    "opencv-python>=4.10.0",
+    "numpy>=2.1.0",
+
+    # HTTP Client
+    "httpx>=0.25.0",
+    "requests>=2.31.0",
+    
+    # Utilities
+    "python-dotenv>=1.0.0",
+    "structlog>=23.1.0",
+    "python-multipart>=0.0.6",
+    
+    # Testing
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black>=23.0.0",
+    "pylint>=2.17.0",
+    "mypy>=1.5.0",
+    "isort>=5.12.0",
+    "pre-commit>=3.3.0",
+]
+
+test = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "httpx>=0.25.0",
+]
+
+[tool.setuptools]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "hardware: marks tests as requiring physical ATEM hardware (deselect with '-m \"not hardware\"')",
+    "integration: marks tests as integration tests",
+]
+
+[tool.black]
+line-length = 100
+target-version = ['py311']
+
+[tool.pylint]
+max-line-length = 100
+disable = [
+    "missing-docstring",
+    "broad-except",
+]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
