@@ -120,6 +120,82 @@ Run the `mgx-ai-mixer` backend and point `MIXER_WS_URL` at its `/ws` endpoint.
 In mock mode the director advances after a simulated song length so the flow can
 be exercised without the desk.
 
+## EasyWorship slide control
+
+EasyWorship has no public API, so slides are controlled by **injecting
+keystrokes** into its window on the Windows desktop (the standard approach, as
+used by AutoHotkey / Stream Deck setups). Implementation:
+[app/easyworship/](../backend/app/easyworship/).
+
+The director issues a `SLIDE` cue action at slide-content cues:
+
+| Cue                       | EasyWorship action |
+| ------------------------- | ------------------ |
+| `service_start`           | `live` (go live on the countdown item) |
+| `first_song`              | `next_item`        |
+| `call_to_worship_slides`  | `next_item`        |
+| `song_of_prayer`          | `next_item`        |
+| `scripture_reading`       | `next_item`        |
+
+Supported actions: `next_slide`, `prev_slide`, `next_item`, `prev_item`,
+`clear`, `logo`, `black`, `live`. Each maps to a configurable **key spec**:
+
+```
+ENABLE_MOCK_EASYWORSHIP=true         # mock unless on the Windows desktop
+EASYWORSHIP_WINDOW_TITLE=EasyWorship
+EASYWORSHIP_SEND_MODE=foreground     # foreground (SetForegroundWindow+keys) | postmessage
+EW_KEY_NEXT_SLIDE=pagedown
+EW_KEY_NEXT_ITEM=ctrl+pagedown
+EW_KEY_CLEAR=f5
+EW_KEY_LIVE=f9
+# ... prev_slide / prev_item / logo / black
+```
+
+Key specs are strings like `"pagedown"`, `"ctrl+pagedown"`, or `"ctrl+alt+c"`.
+
+**Setup notes:**
+
+- Run the backend on the same Windows 11 machine as EasyWorship (or provide a
+  remote agent — see below).
+- The default key specs are placeholders; set them (and EasyWorship's own
+  keyboard shortcuts) so each action matches your EasyWorship configuration.
+  Slide navigation (`pagedown`/`pageup`) works when EasyWorship's live output has
+  focus.
+- `foreground` mode steals focus to deliver keys reliably; `postmessage` mode
+  posts keys to the window without stealing focus but is less reliable.
+- The EasyWorship **schedule must be arranged in service order** so `next_item`
+  advances to the right presentation at each cue.
+
+### Remote agent
+
+When the backend runs on a **different machine** than EasyWorship, run the
+self-contained agent on the EW desktop:
+[backend/easyworship_agent/agent.py](../backend/easyworship_agent/agent.py).
+
+```powershell
+# On the EasyWorship Windows machine:
+python agent.py            # listens on 0.0.0.0:8091
+```
+
+Then point the backend at it and disable mock:
+
+```
+ENABLE_MOCK_EASYWORSHIP=false
+EASYWORSHIP_AGENT_URL=http://<ew-machine-ip>:8091
+```
+
+The backend's `HttpAgentDriver` health-checks the agent and forwards each action
+to `POST /action/{name}`; the agent injects the configured keystroke locally.
+
+### EasyWorship API
+
+| Method | Path                          | Description                     |
+| ------ | ----------------------------- | ------------------------------- |
+| GET    | `/easyworship/status`         | Connection state + last action  |
+| POST   | `/easyworship/action/{name}`  | Perform a named action          |
+| POST   | `/easyworship/next`           | Next slide                      |
+| POST   | `/easyworship/previous`       | Previous slide                  |
+
 ## API summary
 
 | Method   | Path                     | Description                          |

@@ -11,6 +11,7 @@ This is a production-grade system designed for churches to automate and assist i
 - **Blackmagic ATEM Control** — Program/Preview switching, Cut/Auto transitions, streaming, recording
 - **PTZOptics Camera Control** — Full driver over VISCA-over-IP (TCP/UDP) + HTTP-CGI: pan/tilt/zoom, presets, and press-and-hold joystick
 - **Scripted Service Director** — Runs a Sunday cue sheet that drives the ATEM and PTZOptics camera, advancing manually, on a timer, on song-end, or by AI decision
+- **EasyWorship Slide Control** — Advances EasyWorship slides/items from the cue sheet (Windows keystroke injection), so the director controls the screens too
 - **Scheduled Auto-Start** — Optionally starts the service automatically at a configured time on selected weekdays
 - **Yamaha MGX16 Mixer (listen-only)** — Consumes the mixer meter feed to detect song start/end (the desk has no remote-control protocol)
 - **AI Director** — Anthropic Claude decides cue advances from observations (transcript/vision), gated by the policy engine
@@ -180,6 +181,7 @@ backend/           Python FastAPI application
     agents/        Claude LLM client + director AI decisions
     cameras/       PTZOptics driver (VISCA + HTTP-CGI) and service
     director/      Scripted service engine, cue sheet, scheduler
+    easyworship/   EasyWorship slide control (keystroke injection)
     mixer/         Yamaha MGX16 meter listener (song-end detection)
     policy/        Permission engine
     database/      PostgreSQL models

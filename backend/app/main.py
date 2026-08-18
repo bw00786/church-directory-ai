@@ -49,6 +49,13 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Failed to start service scheduler")
 
+    # Connect EasyWorship slide control (mock unless on the Windows desktop).
+    try:
+        from app.easyworship.service import easyworship_service
+        await easyworship_service.start()
+    except Exception:
+        logger.exception("Failed to start EasyWorship service")
+
     # Automatic camera registration from config (camera_1)
     try:
         if global_settings.camera_1_host:

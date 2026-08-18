@@ -5,6 +5,7 @@ export { CameraObservation } from './CameraObservation'
 export { AiObservation } from './AiObservation'
 export { CameraJoystick } from './CameraJoystick'
 export { CueSheet } from './CueSheet'
+export { SlidesPanel } from './SlidesPanel'
 
 export function AtemPanel() {
   return <div>ATEM Panel - TODO</div>

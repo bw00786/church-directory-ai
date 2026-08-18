@@ -5,6 +5,7 @@ import { CameraObservation } from './components/CameraObservation'
 import { CueSheet } from './components/CueSheet'
 import { DetectionOverlay } from './components/DetectionOverlay'
 import { EventTimeline } from './components/EventTimeline'
+import { SlidesPanel } from './components/SlidesPanel'
 import { VisionPanel } from './components/VisionPanel'
 
 export function App() {
@@ -26,6 +27,7 @@ export function App() {
         <div className="flex flex-wrap gap-4">
           <CueSheet />
           <CameraJoystick cameraId={1} />
+          <SlidesPanel />
         </div>
 
         <EventTimeline />

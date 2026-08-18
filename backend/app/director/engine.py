@@ -14,6 +14,7 @@ from typing import List, Optional
 from app.cameras.service import camera_service
 from app.config import settings
 from app.dependencies import get_atem_service_instance
+from app.easyworship.service import easyworship_service
 from app.events.bus import event_bus
 from app.logging_config import get_logger
 from app.mixer.service import mixer_service
@@ -57,6 +58,8 @@ class ServiceDirector:
             await atem.connect()
         if not mixer_service.connected:
             await mixer_service.start()
+        if not easyworship_service.connected:
+            await easyworship_service.start()
 
         logger.info("Service director started", script=self._script.name, autonomous=autonomous)
         await self._enter_cue(0)
@@ -168,6 +171,14 @@ class ServiceDirector:
                 self._publish(
                     "ptz_preset",
                     f"Preset {action.preset_id} ({'ok' if ok else 'failed'})",
+                    action,
+                )
+
+            elif action.type == ActionType.SLIDE and action.slide_op is not None:
+                ok = await easyworship_service.action(action.slide_op)
+                self._publish(
+                    "slide",
+                    f"EasyWorship {action.slide_op} ({'ok' if ok else 'failed'})",
                     action,
                 )
 

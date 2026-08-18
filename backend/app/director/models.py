@@ -11,6 +11,7 @@ class ActionType(str, Enum):
 
     ATEM_PROGRAM = "atem_program"   # switch ATEM program to an input
     PTZ_PRESET = "ptz_preset"       # recall a PTZOptics preset
+    SLIDE = "slide"                 # control EasyWorship slides
     NOTE = "note"                   # advisory note for the operator (e.g. mixer)
 
 
@@ -30,6 +31,7 @@ class CueAction(BaseModel):
     atem_input: Optional[int] = None
     camera_id: Optional[int] = None
     preset_id: Optional[int] = None
+    slide_op: Optional[str] = None  # EasyWorship action name (e.g. "next_item")
     note: Optional[str] = None
     description: str = ""
 

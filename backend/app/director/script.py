@@ -31,6 +31,10 @@ def _note(note: str) -> CueAction:
     return CueAction(type=ActionType.NOTE, note=note, description=note)
 
 
+def _slide(op: str, description: str) -> CueAction:
+    return CueAction(type=ActionType.SLIDE, slide_op=op, description=description)
+
+
 def build_default_service_script() -> ServiceScript:
     """Build the Vernon UMC Sunday service cue sheet from configured inputs."""
     cam1 = settings.atem_camera1_input   # PTZOptics
@@ -44,6 +48,7 @@ def build_default_service_script() -> ServiceScript:
             description="10:00 AM. Slides on screen; opening 5-minute countdown.",
             actions=[
                 _atem(cam2, "Show EasyWorship slides (countdown)"),
+                _slide("live", "EasyWorship: go live on the countdown item"),
                 _note("Open Mic 1 on the ATEM (Yamaha MGX16 desk feed)."),
             ],
             advance=AdvanceTrigger.TIMER,
@@ -55,6 +60,7 @@ def build_default_service_script() -> ServiceScript:
             description="Vocalist (ch 5) and congregation (ch 8) sing over the slides.",
             actions=[
                 _atem(cam2, "Stay on slides for song lyrics"),
+                _slide("next_item", "EasyWorship: advance to the first song"),
                 _note("Vocalist on channel 5; congregation on channel 8."),
             ],
             advance=AdvanceTrigger.SONG_END,
@@ -100,6 +106,7 @@ def build_default_service_script() -> ServiceScript:
             description="Show the Call to Worship and opening prayer slides.",
             actions=[
                 _atem(cam2, "Switch to slides for Call to Worship / opening prayer"),
+                _slide("next_item", "EasyWorship: advance to Call to Worship / opening prayer"),
             ],
             advance=AdvanceTrigger.MANUAL,
             ai_enabled=True,
@@ -111,6 +118,7 @@ def build_default_service_script() -> ServiceScript:
             description="Congregation stands for the song of prayer (slides).",
             actions=[
                 _atem(cam2, "Stay on slides for the song of prayer"),
+                _slide("next_item", "EasyWorship: advance to the song of prayer"),
             ],
             advance=AdvanceTrigger.SONG_END,
             channels=song_channels,
@@ -121,6 +129,7 @@ def build_default_service_script() -> ServiceScript:
             description="Liturgist reads scripture; slides remain on screen.",
             actions=[
                 _atem(cam2, "Stay on slides for the scripture"),
+                _slide("next_item", "EasyWorship: advance to the scripture slides"),
             ],
             advance=AdvanceTrigger.MANUAL,
             ai_enabled=True,

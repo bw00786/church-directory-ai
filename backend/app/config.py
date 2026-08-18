@@ -95,6 +95,23 @@ class Settings(BaseSettings):
     song_max_wait_seconds: float = 900.0  # give up auto-advance after this
     mock_song_seconds: float = 8.0       # simulated song length in mock mode
 
+    # EasyWorship slide control (Windows desktop; driven by keystroke injection).
+    enable_mock_easyworship: bool = True
+    easyworship_window_title: str = "EasyWorship"
+    easyworship_send_mode: str = "foreground"  # "foreground" or "postmessage"
+    # When set, control EasyWorship via a remote agent on the EW machine
+    # instead of local keystroke injection (e.g. "http://192.168.30.40:8091").
+    easyworship_agent_url: str | None = None
+    # Key specs per action (e.g. "pagedown", "ctrl+pagedown", "f5").
+    ew_key_next_slide: str = "pagedown"
+    ew_key_prev_slide: str = "pageup"
+    ew_key_next_item: str = "ctrl+pagedown"
+    ew_key_prev_item: str = "ctrl+pageup"
+    ew_key_clear: str = "f5"
+    ew_key_logo: str = "f6"
+    ew_key_black: str = "f7"
+    ew_key_live: str = "f9"
+
     class Config:
         env_file = ".env"
         case_sensitive = False

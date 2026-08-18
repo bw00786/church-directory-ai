@@ -73,7 +73,6 @@ export const directorAPI = {
   async getStatus() {
     return client.get('/director/status')
   },
-
   async getScript() {
     return client.get('/director/script')
   },
@@ -105,6 +104,24 @@ export const directorAPI = {
     autonomous?: boolean
   }) {
     return client.post('/director/schedule', payload)
+  },
+}
+
+export const easyworshipAPI = {
+  async getStatus() {
+    return client.get('/easyworship/status')
+  },
+
+  async action(name: string) {
+    return client.post(`/easyworship/action/${name}`)
+  },
+
+  async next() {
+    return client.post('/easyworship/next')
+  },
+
+  async previous() {
+    return client.post('/easyworship/previous')
   },
 }
 
