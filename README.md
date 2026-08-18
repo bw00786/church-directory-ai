@@ -59,6 +59,12 @@ Human and AI share the same `next()`/`goto()` engine, so the operator can always
 override. A wall-clock **scheduler** can auto-start the service (default Sundays
 10:00).
 
+At slide cues the director also drives **EasyWorship** (go live on the countdown,
+`next_item` for songs / call to worship / prayer / scripture). EasyWorship is
+controlled by keystroke injection on the Windows desktop, either in-process or
+via a small remote agent ([backend/easyworship_agent/agent.py](backend/easyworship_agent/agent.py))
+when the backend runs on a different machine. See [docs/director.md](docs/director.md).
+
 ### Director API
 
 | Method | Path                     | Description                                  |
@@ -187,6 +193,7 @@ backend/           Python FastAPI application
     database/      PostgreSQL models
     memory/        Production memory
     services/      Event bus, audit, health
+  easyworship_agent/  Standalone Windows agent for remote EasyWorship control
   tests/           Unit and integration tests
 
 atem-bridge/       C++ native ATEM bridge (Windows) — implemented
@@ -196,8 +203,8 @@ atem-bridge/       C++ native ATEM bridge (Windows) — implemented
 
 frontend/          React/TypeScript production panel
   src/
-    api/           API client (ATEM, cameras, director)
-    components/    React components (CueSheet, CameraJoystick, ...)
+    api/           API client (ATEM, cameras, director, EasyWorship)
+    components/    React components (CueSheet, CameraJoystick, SlidesPanel, ...)
     hooks/         Custom hooks (useDirector, useCameraJoystick, ...)
     styles/        Styling
 
