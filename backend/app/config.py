@@ -25,9 +25,12 @@ class Settings(BaseSettings):
     postgres_pool_size: int = 10
     postgres_max_overflow: int = 20
     
-    # Ollama & AI
-    ollama_base_url: str = "http://127.0.0.1:11434"
-    gemma_model: str = "gemma3"
+    # Anthropic Claude
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-4-5"
+    anthropic_base_url: str | None = None
+    llm_max_tokens: int = 1024
+    llm_temperature: float = 0.0
     llm_timeout_seconds: int = 30
     
     # Production Policy
@@ -59,13 +62,38 @@ class Settings(BaseSettings):
     vision_enabled: bool = False
 
     # PTZ Camera (example one-camera config; add more fields for more cameras)
+    camera_1_name: str = "PTZOptics Camera 1"
     camera_1_host: str | None = None
-    camera_1_port: int = 80
+    camera_1_port: int = 80  # HTTP-CGI port
     camera_1_username: str | None = None
     camera_1_password: str | None = None
-    # Optional vendor HTTP endpoints (fallback)
-    camera_1_http_ptz_path: str | None = None
-    camera_1_http_preset_path: str | None = None
+    camera_1_visca_port: int = 1240  # VISCA-over-IP TCP port
+    camera_1_visca_udp: bool = False  # use UDP (Sony header) instead of TCP
+
+    # Continuous joystick control: auto-stop if no command arrives within this window
+    camera_joystick_hold_timeout: float = 1.0
+
+    # Service Director (scripted Sunday service)
+    # ATEM program input mapping for the two cameras.
+    atem_camera1_input: int = 1  # PTZOptics camera
+    atem_camera2_input: int = 2  # EasyWorship laptop (slides)
+    ptz_camera_id: int = 1  # CameraService id for the PTZOptics camera
+    service_countdown_seconds: int = 300  # opening 5-minute countdown slide
+
+    # Scheduled auto-start (wall clock). Days are comma-separated (mon..sun).
+    service_auto_start_enabled: bool = False
+    service_start_time: str = "10:00"  # local HH:MM
+    service_start_days: str = "sun"
+    service_autonomous: bool = True  # AI may auto-advance eligible cues
+
+    # Yamaha MGX16 mixer (listen-only; the desk has no remote-control protocol).
+    # Consumes the mgx-ai-mixer meter WebSocket to detect song start/end.
+    enable_mock_mixer: bool = True
+    mixer_ws_url: str = "ws://127.0.0.1:9000/ws"
+    song_end_silence_db: float = -45.0   # RMS below this counts as "silent"
+    song_end_hold_seconds: float = 3.0   # sustained silence that ends a song
+    song_max_wait_seconds: float = 900.0  # give up auto-advance after this
+    mock_song_seconds: float = 8.0       # simulated song length in mock mode
 
     class Config:
         env_file = ".env"

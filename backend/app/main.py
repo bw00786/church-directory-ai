@@ -16,10 +16,10 @@ from app.config import settings as global_settings
 setup_logging(log_format=settings.log_format, log_level=settings.log_level)
 logger = get_logger(__name__)
 
-
-@asynccontextmanager
 vision_manager = VisionManager()
 
+
+@asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan - startup and shutdown."""
     # Startup
@@ -35,6 +35,20 @@ async def lifespan(app: FastAPI):
     if settings.vision_enabled:
         await vision_manager.start()
 
+    # Start the mixer meter feed (listen-only) for song-end detection.
+    try:
+        from app.mixer.service import mixer_service
+        await mixer_service.start()
+    except Exception:
+        logger.exception("Failed to start mixer service")
+
+    # Start the scheduled auto-start loop for the service director.
+    try:
+        from app.director.scheduler import service_scheduler
+        await service_scheduler.start()
+    except Exception:
+        logger.exception("Failed to start service scheduler")
+
     # Automatic camera registration from config (camera_1)
     try:
         if global_settings.camera_1_host:
@@ -44,13 +58,16 @@ async def lifespan(app: FastAPI):
                 port=global_settings.camera_1_port,
                 username=global_settings.camera_1_username,
                 password=global_settings.camera_1_password,
+                name=global_settings.camera_1_name,
+                visca_port=global_settings.camera_1_visca_port,
+                visca_udp=global_settings.camera_1_visca_udp,
             )
             # attempt connect in background
             try:
                 import asyncio
                 asyncio.create_task(camera_service.connect_camera(1))
             except Exception:
-                pass
+                logger.exception("Failed to start camera connect task")
     except Exception:
         logger.exception("Failed to auto-register camera from config")
     
@@ -58,6 +75,16 @@ async def lifespan(app: FastAPI):
     
     if settings.vision_enabled:
         await vision_manager.stop()
+    try:
+        from app.mixer.service import mixer_service
+        await mixer_service.stop()
+    except Exception:
+        logger.exception("Failed to stop mixer service")
+    try:
+        from app.director.scheduler import service_scheduler
+        await service_scheduler.stop()
+    except Exception:
+        logger.exception("Failed to stop service scheduler")
     logger.info("Church Production Director shutting down...")
 
 
@@ -101,7 +128,7 @@ async def health_ready():
     # Could add checks for:
     # - Database connectivity
     # - ATEM bridge availability
-    # - Ollama availability
+    # - Anthropic API availability
     
     return {
         "status": "ready",

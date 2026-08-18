@@ -1,6 +1,8 @@
 import React from 'react'
 import { AiObservation } from './components/AiObservation'
+import { CameraJoystick } from './components/CameraJoystick'
 import { CameraObservation } from './components/CameraObservation'
+import { CueSheet } from './components/CueSheet'
 import { DetectionOverlay } from './components/DetectionOverlay'
 import { EventTimeline } from './components/EventTimeline'
 import { VisionPanel } from './components/VisionPanel'
@@ -19,6 +21,11 @@ export function App() {
           <CameraObservation />
           <DetectionOverlay />
           <AiObservation />
+        </div>
+
+        <div className="flex flex-wrap gap-4">
+          <CueSheet />
+          <CameraJoystick cameraId={1} />
         </div>
 
         <EventTimeline />

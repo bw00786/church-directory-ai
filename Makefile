@@ -15,7 +15,7 @@ help:
 	@echo "format           Auto-format code"
 	@echo "build            Build production artifacts"
 	@echo "clean            Clean build artifacts"
-	@echo "docker-up        Start PostgreSQL and Ollama via docker-compose"
+	@echo "docker-up        Start PostgreSQL via docker-compose"
 	@echo "docker-down      Stop docker services"
 	@echo ""
 

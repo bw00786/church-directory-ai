@@ -3,6 +3,8 @@ export { DetectionOverlay } from './DetectionOverlay'
 export { EventTimeline } from './EventTimeline'
 export { CameraObservation } from './CameraObservation'
 export { AiObservation } from './AiObservation'
+export { CameraJoystick } from './CameraJoystick'
+export { CueSheet } from './CueSheet'
 
 export function AtemPanel() {
   return <div>ATEM Panel - TODO</div>

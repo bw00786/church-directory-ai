@@ -9,13 +9,15 @@ This is a production-grade system designed for churches to automate and assist i
 ### Key Capabilities
 
 - **Blackmagic ATEM Control** — Program/Preview switching, Cut/Auto transitions, streaming, recording
-- **PTZ Camera Support** — Pan/tilt/zoom with preset management (ONVIF and manufacturer-specific drivers)
-- **AI Director** — LangGraph-based agent providing camera recommendations and autonomous direction
-- **Production Control Panel** — React/Vite web interface with real-time WebSocket updates
+- **PTZOptics Camera Control** — Full driver over VISCA-over-IP (TCP/UDP) + HTTP-CGI: pan/tilt/zoom, presets, and press-and-hold joystick
+- **Scripted Service Director** — Runs a Sunday cue sheet that drives the ATEM and PTZOptics camera, advancing manually, on a timer, on song-end, or by AI decision
+- **Scheduled Auto-Start** — Optionally starts the service automatically at a configured time on selected weekdays
+- **Yamaha MGX16 Mixer (listen-only)** — Consumes the mixer meter feed to detect song start/end (the desk has no remote-control protocol)
+- **AI Director** — Anthropic Claude decides cue advances from observations (transcript/vision), gated by the policy engine
+- **Production Control Panel** — React/Vite web interface with real-time WebSocket updates (cue sheet + camera joystick)
 - **Event Audit Trail** — Complete logging of all production actions and AI decisions
 - **Production Memory** — PostgreSQL + pgvector for semantic retrieval of past services
 - **Policy Engine** — Granular permission control on AI and human actions
-- **Vision Recommendation Policy** — AI camera recommendations are validated by the policy engine before ATEM execution
 - **Manual Override** — Full manual control available even with all AI services offline
 
 ## Architecture
@@ -25,7 +27,7 @@ React/Vite Frontend
     ↓ REST/WebSocket
 FastAPI Backend
     ├─ Production Services (ATEM, Cameras)
-    └─ LangGraph AI (Gemma/Ollama)
+    └─ LangGraph AI (Anthropic Claude)
          ├─ Validated Tools
          ├─ Policy Engine
          └─ ATEM Service
@@ -39,6 +41,43 @@ FastAPI Backend
 
 **Critical Principle:** The LLM never directly accesses hardware. All AI actions flow through policy validation and verified tool execution.
 
+## Service Director (scripted Sunday service)
+
+The director walks a **cue sheet** ([backend/app/director/script.py](backend/app/director/script.py)) that
+drives the ATEM (camera 1 = PTZOptics, camera 2 = EasyWorship laptop) and the
+PTZOptics presets. Each cue advances by one of:
+
+- **Manual** — operator presses Next in the cue-sheet panel
+- **Timer** — e.g. the opening 5-minute countdown
+- **Song end** — the Yamaha MGX16 meter feed shows the vocalist (ch 5) and
+  congregation (ch 8) fall silent
+- **AI** — Claude decides from an observation (e.g. "the liturgist finished the
+  scripture"), gated by the policy confidence threshold and autonomous mode
+
+Human and AI share the same `next()`/`goto()` engine, so the operator can always
+override. A wall-clock **scheduler** can auto-start the service (default Sundays
+10:00).
+
+### Director API
+
+| Method | Path                     | Description                                  |
+| ------ | ------------------------ | -------------------------------------------- |
+| GET    | `/director/status`       | Running state + current/next cue             |
+| GET    | `/director/script`       | The full cue sheet                           |
+| POST   | `/director/start`        | Start the service (`{"autonomous": bool}`)   |
+| POST   | `/director/stop`         | Stop                                         |
+| POST   | `/director/next`         | Advance one cue (manual)                     |
+| POST   | `/director/goto/{index}` | Jump to a cue                                |
+| GET/POST | `/director/schedule`   | View / set the auto-start schedule           |
+| POST   | `/director/suggest`      | Feed a raw advance suggestion                |
+| POST   | `/director/observe`      | Let the AI decide from an observation string |
+| WS     | `/ws/director`           | Live cue/action stream for the panel         |
+
+> **Yamaha MGX16 note:** the desk exposes no remote-control protocol, so mic/
+> fader actions are **advisory cues** (shown to the operator). The mixer is used
+> **listen-only** (via the companion `mgx-ai-mixer` meter WebSocket) to detect
+> when songs end.
+
 ## Quick Start
 
 ### Prerequisites
@@ -47,9 +86,10 @@ FastAPI Backend
 - Python 3.11+
 - Node.js 18+ (npm)
 - PostgreSQL 14+
-- Ollama (for AI features)
-- Visual Studio Build Tools (for C++ bridge)
-- Blackmagic ATEM SDK (for native bridge support)
+- Anthropic API key (for AI features)
+- Visual Studio 2022 Build Tools with the Windows SDK (provides the C++ compiler and `midl.exe` for the bridge)
+- CMake 3.20+
+- Blackmagic ATEM Switcher software installed (provides the COM runtime; the SDK interface definition is vendored in `atem-bridge/`)
 
 ### Setup
 
@@ -77,11 +117,30 @@ FastAPI Backend
 
 5. Open http://localhost:5173 for the production control panel
 
+### Building the native ATEM bridge
+
+The C++ bridge is built separately from a Visual Studio Developer Command Prompt
+(so `midl.exe` is on `PATH`). Dependencies (`cpp-httplib`, `nlohmann/json`) are
+fetched automatically by CMake, and the Blackmagic SDK interface is compiled
+from the vendored `BMDSwitcherAPI.idl` — no separate SDK download is required.
+
+```bash
+cd atem-bridge
+mkdir build && cd build
+cmake ..
+cmake --build . --config Release
+.\bin\atem-bridge.exe   # listens on http://127.0.0.1:8090
+```
+
+See [atem-bridge/README.md](atem-bridge/README.md) for endpoints, environment
+variables, and troubleshooting.
+
 ## Documentation
 
 - [Architecture](docs/architecture.md) — System design and data flow
 - [ATEM Integration](docs/atem.md) — ATEM bridge and control
-- [Camera Control](docs/cameras.md) — PTZ camera abstraction and drivers
+- [Camera Control](docs/cameras.md) — PTZOptics VISCA/HTTP-CGI driver, joystick, calibration
+- [Service Director](docs/director.md) — Cue sheet, scheduler, AI advances, mixer wiring
 - [AI Director](docs/ai-director.md) — LangGraph agent behavior and tools
 - [Database](docs/database.md) — PostgreSQL schema and migrations
 - [Security](docs/security.md) — Authentication, authorization, audit
@@ -103,7 +162,7 @@ The system is built in phases to ensure stability and testability:
 8. Policy engine
 9. PostgreSQL persistence
 10. LangGraph tools
-11. Ollama/Gemma integration
+11. Anthropic Claude integration
 12. Camera abstraction
 13. PTZ driver integration
 14. Production event system
@@ -116,26 +175,28 @@ The system is built in phases to ensure stability and testability:
 ```
 backend/           Python FastAPI application
   app/
-    api/           REST endpoints
+    api/           REST endpoints (incl. director, cameras, websocket)
     atem/          ATEM control service
-    agents/        LangGraph definitions
-    cameras/       Camera abstraction
+    agents/        Claude LLM client + director AI decisions
+    cameras/       PTZOptics driver (VISCA + HTTP-CGI) and service
+    director/      Scripted service engine, cue sheet, scheduler
+    mixer/         Yamaha MGX16 meter listener (song-end detection)
     policy/        Permission engine
     database/      PostgreSQL models
     memory/        Production memory
     services/      Event bus, audit, health
   tests/           Unit and integration tests
 
-atem-bridge/       C++ native ATEM bridge (Windows)
-  src/             Source code
-  include/         Headers
+atem-bridge/       C++ native ATEM bridge (Windows) — implemented
+  src/             Source code (controller, callbacks, HTTP server, entry point)
+  include/         Headers + vendored Blackmagic SDK IDL
   tests/           Tests
 
 frontend/          React/TypeScript production panel
   src/
-    api/           API client
-    components/    React components
-    hooks/         Custom hooks
+    api/           API client (ATEM, cameras, director)
+    components/    React components (CueSheet, CameraJoystick, ...)
+    hooks/         Custom hooks (useDirector, useCameraJoystick, ...)
     styles/        Styling
 
 docs/              Architecture and deployment docs

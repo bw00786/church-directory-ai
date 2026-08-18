@@ -15,7 +15,7 @@
 │  │   Production Services    │     AI Director (LangGraph)      │    │
 │  │                          │                                  │    │
 │  │  • ATEM Service          │  • State Management              │    │
-│  │  • Camera Service        │  • Gemma/Ollama Integration     │    │
+│  │  • Camera Service        │  • Claude (Anthropic) Integration │    │
 │  │  • Stream Manager        │  • Tool Execution               │    │
 │  │  • Recording Manager     │  • Policy Validation            │    │
 │  │  • Event Bus             │  • Decision Logging             │    │
@@ -111,7 +111,7 @@ Request → Policy Check → Execution → Verification → Logging
 
 If any component fails:
 
-- **Ollama offline** → Manual control continues, AI disabled
+- **Anthropic API offline** → Manual control continues, AI disabled
 - **PostgreSQL offline** → Production works, no persistence
 - **WebSocket offline** → React refreshes via polling (poor UX but functional)
 - **AI Bridge offline** → ATEM bridge can operate independently
@@ -263,7 +263,7 @@ All runtime behavior is configured via `.env`:
 - **Hardware** — ATEM IP, bridge port
 - **AI Permissions** — What the AI can do (policy)
 - **AI Behavior** — Confidence thresholds, hold times
-- **Infrastructure** — Database, Ollama URL
+- **Infrastructure** — Database, Anthropic API key
 - **Features** — Mock ATEM, AI enabled, etc.
 
 See `.env.example` for full list.
@@ -300,7 +300,7 @@ GET /health
   "status": "healthy",
   "atem": true,
   "database": true,
-  "ollama": false
+  "anthropic": false
 }
 ```
 

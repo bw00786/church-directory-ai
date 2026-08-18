@@ -6,7 +6,7 @@
 
 - Python 3.11+
 - PostgreSQL 14+ (for Phase 9+)
-- Ollama (for AI features)
+- Anthropic API key (for AI features)
 
 ### Setup
 
@@ -75,7 +75,7 @@ app/
 ├── agents/              # AI orchestration
 │   ├── state.py         # ProductionState definition
 │   ├── graph.py         # LangGraph construction
-│   ├── prompts.py       # System prompts for Gemma
+│   ├── prompts.py       # System prompts for Claude
 │   └── tools/           # Tool implementations
 │       ├── atem_tools.py
 │       ├── camera_tools.py
@@ -135,8 +135,8 @@ PostgreSQL models and migrations
 ### Phase 10 - LangGraph
 AI agent definition and tools
 
-### Phase 11 - Ollama
-Gemma integration
+### Phase 11 - Claude
+Anthropic Claude integration
 
 ### Phase 12-16 - Advanced Features
 Cameras, memory, AI director
@@ -157,9 +157,9 @@ alembic = "^1.12"  # Migrations
 pgvector = "^0.2"  # Vector search
 
 # AI
-langgraph = "^0.0"
-langchain = "^0.1"
-requests = "^2.31"  # For Ollama HTTP
+langgraph = "^1.0"
+langchain = "^1.0"
+langchain-anthropic = "^0.3"  # Anthropic Claude
 
 # Utilities
 python-dotenv = "^1.0"
@@ -185,9 +185,9 @@ POSTGRES_HOST=localhost
 POSTGRES_USER=church
 POSTGRES_PASSWORD=changeme
 
-# Ollama
-OLLAMA_BASE_URL=http://127.0.0.1:11434
-GEMMA_MODEL=gemma3
+# Anthropic Claude
+ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_MODEL=claude-sonnet-4-5
 
 # Policy
 AUTONOMOUS_CAMERA_SWITCHING=true
@@ -245,7 +245,7 @@ mypy app
 
 ### Unit Tests
 - Test individual services in isolation
-- Mock external dependencies (ATEM, Ollama, DB)
+- Mock external dependencies (ATEM, Anthropic API, DB)
 - Fast execution
 
 ### Integration Tests

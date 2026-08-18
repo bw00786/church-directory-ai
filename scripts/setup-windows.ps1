@@ -75,7 +75,7 @@ cd ..
 Write-Host "`nChecking Docker installation..." -ForegroundColor Cyan
 if (Get-Command docker -ErrorAction SilentlyContinue) {
     Write-Host "Docker found" -ForegroundColor Green
-    Write-Host "  Run 'docker-compose up -d' to start PostgreSQL and Ollama" -ForegroundColor Gray
+    Write-Host "  Run 'docker-compose up -d' to start PostgreSQL" -ForegroundColor Gray
 } else {
     Write-Host "Docker not found (optional)" -ForegroundColor Yellow
     Write-Host "  For development, install Docker Desktop: https://www.docker.com/products/docker-desktop" -ForegroundColor Gray

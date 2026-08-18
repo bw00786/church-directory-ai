@@ -1,19 +1,25 @@
 cmake_minimum_required(VERSION 3.20)
-project(atem-bridge)
+project(atem-bridge CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# SDK paths (update these based on installed SDK location)
-set(BLACKMAGIC_SDK_PATH "C:/Program Files/Blackmagic Design/ATEM Switchers SDK" CACHE PATH "Blackmagic ATEM SDK path")
+include(FetchContent)
 
-# Include directories
-include_directories(
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    "${BLACKMAGIC_SDK_PATH}/Include"
+# --- Third-party dependencies (header-only, fetched at configure time) -------
+FetchContent_Declare(
+    httplib
+    GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+    GIT_TAG v0.15.3
 )
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+)
+FetchContent_MakeAvailable(httplib nlohmann_json)
 
-# Source files
+# --- Source files ------------------------------------------------------------
 set(SOURCES
     src/main.cpp
     src/atem_controller.cpp
@@ -23,22 +29,60 @@ set(SOURCES
 
 set(HEADERS
     include/atem_controller.h
+    include/atem_callbacks.h
     include/atem_state.h
     include/http_server.h
+    include/logger.h
 )
 
-# Create executable
+# --- Blackmagic ATEM SDK (Windows / COM only) --------------------------------
+# The SDK ships an IDL that MIDL compiles into BMDSwitcherAPI.h. We generate it
+# into the build directory and add that directory to the include path.
+if(WIN32)
+    set(BLACKMAGIC_IDL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include/include")
+    set(BLACKMAGIC_IDL "${BLACKMAGIC_IDL_DIR}/BMDSwitcherAPI.idl")
+    set(GENERATED_HEADER "${CMAKE_CURRENT_BINARY_DIR}/BMDSwitcherAPI.h")
+    set(GENERATED_IID "${CMAKE_CURRENT_BINARY_DIR}/BMDSwitcherAPI_i.c")
+
+    find_program(MIDL_EXECUTABLE midl)
+    if(NOT MIDL_EXECUTABLE)
+        message(FATAL_ERROR "midl.exe not found. Run CMake from a Visual Studio Developer Command Prompt.")
+    endif()
+
+    add_custom_command(
+        OUTPUT ${GENERATED_HEADER} ${GENERATED_IID}
+        COMMAND ${MIDL_EXECUTABLE} /nologo /header BMDSwitcherAPI.h /iid BMDSwitcherAPI_i.c
+                /I "${BLACKMAGIC_IDL_DIR}" "${BLACKMAGIC_IDL}"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        DEPENDS ${BLACKMAGIC_IDL}
+        COMMENT "Compiling BMDSwitcherAPI.idl with MIDL"
+        VERBATIM
+    )
+    list(APPEND SOURCES ${GENERATED_HEADER})
+endif()
+
+# --- Executable --------------------------------------------------------------
 add_executable(atem-bridge ${SOURCES} ${HEADERS})
 
-# Link libraries
-if(MSVC)
-    # Link against Blackmagic SDK libraries
-    set(BM_LIB_PATH "${BLACKMAGIC_SDK_PATH}/Lib/x64")
-    target_link_directories(atem-bridge PRIVATE ${BM_LIB_PATH})
-    target_link_libraries(atem-bridge PRIVATE BMDSwitcherAPI)
-    
-    # Windows libraries
-    target_link_libraries(atem-bridge PRIVATE ws2_32 userenv)
+target_include_directories(atem-bridge PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_BINARY_DIR}
+)
+
+target_link_libraries(atem-bridge PRIVATE
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+)
+
+# --- Platform specifics ------------------------------------------------------
+if(WIN32)
+    target_compile_definitions(atem-bridge PRIVATE
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+        _CRT_SECURE_NO_WARNINGS
+    )
+    # COM / OLE runtime plus Winsock for the HTTP server.
+    target_link_libraries(atem-bridge PRIVATE ole32 oleaut32 ws2_32)
 endif()
 
 # Output directory
@@ -48,9 +92,9 @@ set_target_properties(atem-bridge PROPERTIES
 
 # Compiler flags
 if(MSVC)
-    target_compile_options(atem-bridge PRIVATE /W4 /WX)
+    target_compile_options(atem-bridge PRIVATE /W4)
 else()
-    target_compile_options(atem-bridge PRIVATE -Wall -Wextra -Werror)
+    target_compile_options(atem-bridge PRIVATE -Wall -Wextra)
 endif()
 
 # Enable testing

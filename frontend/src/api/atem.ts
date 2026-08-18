@@ -53,11 +53,58 @@ export const cameraAPI = {
   async moveToPreset(cameraId: number, presetId: number) {
     return client.post(`/cameras/${cameraId}/preset/${presetId}`)
   },
+
+  async savePreset(cameraId: number, presetId: number) {
+    return client.post(`/cameras/${cameraId}/preset/${presetId}/save`)
+  },
+
+  async stop(cameraId: number) {
+    return client.post(`/cameras/${cameraId}/stop`)
+  },
 }
 
 export const productionAPI = {
   async getStatus() {
     return client.get('/production')
+  },
+}
+
+export const directorAPI = {
+  async getStatus() {
+    return client.get('/director/status')
+  },
+
+  async getScript() {
+    return client.get('/director/script')
+  },
+
+  async start(autonomous = true) {
+    return client.post('/director/start', { autonomous })
+  },
+
+  async stop() {
+    return client.post('/director/stop')
+  },
+
+  async next() {
+    return client.post('/director/next')
+  },
+
+  async goto(index: number) {
+    return client.post(`/director/goto/${index}`)
+  },
+
+  async getSchedule() {
+    return client.get('/director/schedule')
+  },
+
+  async setSchedule(payload: {
+    enabled?: boolean
+    time?: string
+    days?: string
+    autonomous?: boolean
+  }) {
+    return client.post('/director/schedule', payload)
   },
 }
 

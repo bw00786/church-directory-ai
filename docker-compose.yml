@@ -18,18 +18,6 @@ services:
       timeout: 5s
       retries: 5
 
-  ollama:
-    image: ollama/ollama:latest
-    container_name: church-prod-ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    environment:
-      - OLLAMA_HOST=0.0.0.0:11434
-    profiles:
-      - ai
-
   pgvector:
     image: pgvector/pgvector:pg15
     container_name: church-prod-pgvector
@@ -46,5 +34,4 @@ services:
 
 volumes:
   postgres_data:
-  ollama_data:
   pgvector_data:

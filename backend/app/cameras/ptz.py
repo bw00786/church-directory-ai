@@ -3,6 +3,11 @@
 from abc import ABC, abstractmethod
 from typing import Optional
 
+from app.cameras.visca import ViscaOverIPClient
+from app.logging_config import get_logger
+
+logger = get_logger(__name__)
+
 
 class PTZDriver(ABC):
     """Abstract base class for PTZ camera drivers."""
@@ -186,151 +191,229 @@ class ONVIFDriver(PTZDriver):
             return False
 
 
-class PZOpticDriver(PTZDriver):
-    """PZ Optic-specific PTZ driver.
+class PTZOpticsDriver(PTZDriver):
+    """Driver for PTZOptics PT-series (G3) cameras.
 
-    Current implementation delegates to ONVIF when available. If your
-    PZOptics model supports ONVIF (many do), this will provide basic PTZ
-    and preset functionality. Vendor-specific HTTP/SDK extensions can be
-    added later if needed.
+    Uses VISCA-over-IP as the primary control path (movement, zoom, presets,
+    and position inquiries) and the PTZOptics HTTP-CGI interface
+    (``/cgi-bin/ptzctrl.cgi``) as a fallback when VISCA is unavailable.
+
+    Pan/tilt values are treated as absolute degrees and zoom as an absolute
+    percentage (0-100). Continuous "joystick" control is available via
+    :meth:`drive`, :meth:`zoom_drive`, and :meth:`stop`.
     """
 
-    def __init__(self, http_ptz_path: str | None = None, http_preset_path: str | None = None):
-        self._onvif = ONVIFDriver()
-        self._http_driver = None
-        self._http_ptz_path = http_ptz_path
-        self._http_preset_path = http_preset_path
+    def __init__(self, *, visca_port: int = 1240, use_udp: bool = False, cgi_timeout: float = 5.0):
+        self._host: str | None = None
+        self._http_port = 80
+        self._visca_port = visca_port
+        self._use_udp = use_udp
+        self._cgi_timeout = cgi_timeout
+        self._username: str | None = None
+        self._password: str | None = None
+        self._use_basic_auth = False
+        self._client = None
+        self._visca: ViscaOverIPClient | None = None
+        self._connected = False
 
-    async def connect(self, host: str, port: int = 80, username: str | None = None, password: str | None = None) -> bool:
-        """Attempt to connect using ONVIF first; if that fails, try HTTP fallback."""
-        # Try ONVIF first
-        try:
-            ok = await self._onvif.connect(host, port, username, password)
-            if ok:
-                return True
-        except RuntimeError:
-            # ONVIF lib not installed — fall through to HTTP
-            pass
+    # -- connection lifecycle -------------------------------------------------
+    async def connect(
+        self,
+        host: str,
+        port: int = 80,
+        username: str | None = None,
+        password: str | None = None,
+        visca_port: int | None = None,
+        use_udp: bool | None = None,
+    ) -> bool:
+        """Connect to the camera over VISCA and prepare the HTTP-CGI client."""
+        import httpx
 
-        # HTTP fallback driver
-        from httpx import AsyncClient
+        self._host = host
+        self._http_port = port
+        self._username = username
+        self._password = password
+        if visca_port is not None:
+            self._visca_port = visca_port
+        if use_udp is not None:
+            self._use_udp = use_udp
 
-        class _HttpDriver:
-            def __init__(self, base_url: str, auth: tuple | None = None, ptz_path: str | None = None, preset_path: str | None = None):
-                self.base_url = base_url.rstrip('/')
-                self.auth = auth
-                self.ptz_path = ptz_path or '/'
-                self.preset_path = preset_path or '/'
-                self._client = AsyncClient(timeout=5.0)
+        auth = None
+        if username:
+            auth = httpx.DigestAuth(username, password or "")
+        self._client = httpx.AsyncClient(timeout=self._cgi_timeout, auth=auth)
 
-            async def connect(self):
-                try:
-                    r = await self._client.get(self.base_url, auth=self.auth)
-                    return r.status_code == 200
-                except Exception:
-                    return False
+        self._visca = ViscaOverIPClient(host, self._visca_port, use_udp=self._use_udp)
+        visca_ok = await self._visca.connect()
 
-            async def get_status(self):
-                try:
-                    r = await self._client.get(self.base_url, auth=self.auth)
-                    return {'connected': r.status_code == 200, 'status_code': r.status_code}
-                except Exception:
-                    return {'connected': False}
+        # A harmless stop command doubles as an HTTP-CGI reachability probe.
+        http_ok = await self._cgi("ptzcmd", "ptzstop", 1, 1)
 
-            async def goto_preset(self, preset_id: int):
-                # best-effort: try common query param names used by some cameras
-                try:
-                    url = f"{self.base_url}{self.preset_path}"
-                    params = {'call': preset_id, 'goto': preset_id, 'preset': preset_id}
-                    # try each param until one succeeds
-                    for k, v in params.items():
-                        r = await self._client.get(url, params={k: v}, auth=self.auth)
-                        if r.status_code in (200, 204):
-                            return True
-                    return False
-                except Exception:
-                    return False
-
-            async def move(self, pan: float | None = None, tilt: float | None = None, zoom: float | None = None):
-                try:
-                    url = f"{self.base_url}{self.ptz_path}"
-                    params = {}
-                    if pan is not None:
-                        params.update({'pan': pan})
-                    if tilt is not None:
-                        params.update({'tilt': tilt})
-                    if zoom is not None:
-                        params.update({'zoom': zoom})
-                    if not params:
-                        return False
-                    r = await self._client.get(url, params=params, auth=self.auth)
-                    return r.status_code in (200, 204)
-                except Exception:
-                    return False
-
-        base = f"http://{host}:{port}"
-        auth = (username, password) if username and password else None
-        httpd = _HttpDriver(base, auth=auth, ptz_path=self._http_ptz_path, preset_path=self._http_preset_path)
-        ok = await httpd.connect()
-        if ok:
-            self._http_driver = httpd
-            return True
-        return False
+        self._connected = bool(visca_ok or http_ok)
+        if self._connected:
+            logger.info(
+                "PTZOptics connected",
+                host=host,
+                visca=visca_ok,
+                http_cgi=http_ok,
+                visca_port=self._visca_port,
+            )
+        else:
+            logger.warning("PTZOptics connect failed", host=host)
+        return self._connected
 
     async def disconnect(self) -> bool:
-        if await self._onvif.is_connected():
-            return await self._onvif.disconnect()
-        if self._http_driver:
-            try:
-                await self._http_driver._client.aclose()
-            except Exception:
-                pass
-            self._http_driver = None
-            return True
-        return False
+        try:
+            if self._visca is not None:
+                await self._visca.close()
+            if self._client is not None:
+                await self._client.aclose()
+        except Exception:
+            pass
+        finally:
+            self._visca = None
+            self._client = None
+            self._connected = False
+        return True
 
     async def is_connected(self) -> bool:
-        if await self._onvif.is_connected():
-            return True
-        return self._http_driver is not None
+        return self._connected
 
-    async def get_status(self) -> dict:
-        if await self._onvif.is_connected():
-            return await self._onvif.get_status()
-        if self._http_driver:
-            return await self._http_driver.get_status()
-        return {"connected": False}
+    # -- HTTP-CGI helper ------------------------------------------------------
+    async def _cgi(self, *parts) -> bool:
+        """Issue a PTZOptics HTTP-CGI command; returns True on 2xx."""
+        if self._client is None or not self._host:
+            return False
+        import httpx
+
+        query = "&".join(str(p) for p in parts)
+        url = f"http://{self._host}:{self._http_port}/cgi-bin/ptzctrl.cgi?{query}"
+        try:
+            resp = await self._client.get(url)
+            if resp.status_code == 401 and self._username and not self._use_basic_auth:
+                # Some firmware expects Basic instead of Digest auth.
+                self._use_basic_auth = True
+                await self._client.aclose()
+                self._client = httpx.AsyncClient(
+                    timeout=self._cgi_timeout,
+                    auth=httpx.BasicAuth(self._username, self._password or ""),
+                )
+                resp = await self._client.get(url)
+            return resp.status_code in (200, 204)
+        except Exception as e:
+            logger.debug("PTZOptics CGI request failed", url=url, error=str(e))
+            return False
+
+    def _visca_ready(self) -> bool:
+        return self._visca is not None and self._visca.connected
+
+    # -- absolute positioning -------------------------------------------------
+    async def move_absolute(
+        self,
+        pan_deg: Optional[float] = None,
+        tilt_deg: Optional[float] = None,
+        zoom_pct: Optional[float] = None,
+    ) -> bool:
+        """Move to an absolute pan/tilt (degrees) and/or zoom (percent)."""
+        ok = True
+
+        if pan_deg is not None or tilt_deg is not None:
+            if self._visca_ready():
+                current = await self._visca.get_pan_tilt()
+                cur_pan, cur_tilt = current if current else (0, 0)
+                pan_units = (
+                    ViscaOverIPClient.pan_deg_to_units(pan_deg)
+                    if pan_deg is not None
+                    else cur_pan
+                )
+                tilt_units = (
+                    ViscaOverIPClient.tilt_deg_to_units(tilt_deg)
+                    if tilt_deg is not None
+                    else cur_tilt
+                )
+                ok = ok and await self._visca.pan_tilt_absolute(pan_units, tilt_units)
+            else:
+                ok = False
+
+        if zoom_pct is not None:
+            if self._visca_ready():
+                ok = ok and await self._visca.zoom_absolute(
+                    ViscaOverIPClient.zoom_pct_to_pos(zoom_pct)
+                )
+            else:
+                ok = False
+
+        return ok
 
     async def pan(self, angle: float) -> bool:
-        if await self._onvif.is_connected():
-            return await self._onvif.pan(angle)
-        if self._http_driver:
-            return await self._http_driver.move(pan=angle)
-        return False
+        return await self.move_absolute(pan_deg=angle)
 
     async def tilt(self, angle: float) -> bool:
-        if await self._onvif.is_connected():
-            return await self._onvif.tilt(angle)
-        if self._http_driver:
-            return await self._http_driver.move(tilt=angle)
-        return False
+        return await self.move_absolute(tilt_deg=angle)
 
     async def zoom(self, level: float) -> bool:
-        if await self._onvif.is_connected():
-            return await self._onvif.zoom(level)
-        if self._http_driver:
-            return await self._http_driver.move(zoom=level)
-        return False
+        return await self.move_absolute(zoom_pct=level)
 
+    # -- continuous ("joystick") control -------------------------------------
+    async def drive(
+        self, pan_dir: int, tilt_dir: int, pan_speed: int = 12, tilt_speed: int = 12
+    ) -> bool:
+        """Start continuous pan/tilt. Directions are -1/0/1."""
+        if self._visca_ready():
+            return await self._visca.pan_tilt_drive(pan_dir, tilt_dir, pan_speed, tilt_speed)
+        cmd = {
+            (0, 1): "up",
+            (0, -1): "down",
+            (-1, 0): "left",
+            (1, 0): "right",
+            (-1, 1): "leftup",
+            (1, 1): "rightup",
+            (-1, -1): "leftdown",
+            (1, -1): "rightdown",
+            (0, 0): "ptzstop",
+        }.get((pan_dir, tilt_dir), "ptzstop")
+        return await self._cgi("ptzcmd", cmd, pan_speed, tilt_speed)
+
+    async def zoom_drive(self, direction: int, speed: int = 4) -> bool:
+        """Start continuous zoom. direction: -1 wide, 0 stop, 1 tele."""
+        if self._visca_ready():
+            return await self._visca.zoom_drive(direction, speed)
+        cmd = {1: "zoomin", -1: "zoomout", 0: "zoomstop"}.get(direction, "zoomstop")
+        return await self._cgi("ptzcmd", cmd, speed)
+
+    async def stop(self) -> bool:
+        """Stop all pan/tilt and zoom motion."""
+        if self._visca_ready():
+            ok = await self._visca.pan_tilt_stop()
+            ok = await self._visca.zoom_drive(0) and ok
+            return ok
+        stopped = await self._cgi("ptzcmd", "ptzstop", 1, 1)
+        return await self._cgi("ptzcmd", "zoomstop", 0) and stopped
+
+    # -- presets --------------------------------------------------------------
     async def move_to_preset(self, preset_id: int) -> bool:
-        if await self._onvif.is_connected():
-            return await self._onvif.move_to_preset(preset_id)
-        if self._http_driver:
-            return await self._http_driver.goto_preset(preset_id)
-        return False
+        if self._visca_ready() and await self._visca.preset_recall(preset_id):
+            return True
+        return await self._cgi("ptzcmd", "poscall", preset_id)
 
     async def save_preset(self, preset_id: int) -> bool:
-        if await self._onvif.is_connected():
-            return await self._onvif.save_preset(preset_id)
-        # Many HTTP endpoints do not support setting presets via simple CGI; skip
-        return False
+        if self._visca_ready() and await self._visca.preset_set(preset_id):
+            return True
+        return await self._cgi("ptzcmd", "posset", preset_id)
+
+    # -- status ---------------------------------------------------------------
+    async def get_status(self) -> dict:
+        status: dict = {"connected": self._connected, "pan": 0.0, "tilt": 0.0, "zoom": 0.0}
+        if self._visca_ready():
+            pan_tilt = await self._visca.get_pan_tilt()
+            if pan_tilt is not None:
+                status["pan"] = ViscaOverIPClient.units_to_pan_deg(pan_tilt[0])
+                status["tilt"] = ViscaOverIPClient.units_to_tilt_deg(pan_tilt[1])
+            zoom_pos = await self._visca.get_zoom()
+            if zoom_pos is not None:
+                status["zoom"] = ViscaOverIPClient.pos_to_zoom_pct(zoom_pos)
+        return status
+
+
+# Backwards-compatible alias for earlier imports.
+PZOpticDriver = PTZOpticsDriver

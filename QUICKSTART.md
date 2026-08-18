@@ -69,10 +69,11 @@ For Phase 9+, start PostgreSQL:
 docker-compose up -d postgres
 ```
 
-For AI features, start Ollama:
+For AI features, set your Anthropic API key in `.env`:
 
-```powershell
-docker-compose up -d ollama
+```
+ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_MODEL=claude-sonnet-4-5
 ```
 
 ## Common Commands
@@ -144,7 +145,7 @@ ATEM Mini Pro ISO
 **Mock ATEM** — Fully functional ATEM simulator for testing without hardware
 **Policy Engine** — Controls what AI can do (enabled/disabled, confidence thresholds)
 **State Verification** — Every command is verified, never assumed
-**Manual Control** — Works without AI, database, or Ollama
+**Manual Control** — Works without AI, database, or the Anthropic API
 
 ## Documentation
 

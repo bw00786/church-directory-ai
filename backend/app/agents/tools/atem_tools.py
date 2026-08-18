@@ -11,7 +11,7 @@
 # - get_production_state()
 
 # Each tool must:
-# 1. Be wrapped as a LangChain tool
+# 1. Be wrapped as a LangChain tool (compatible with Claude tool-calling)
 # 2. Have clear documentation
 # 3. Validate inputs
 # 4. Call backend services (not hardware directly)

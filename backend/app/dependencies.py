@@ -14,12 +14,17 @@ _vision_manager: VisionManager | None = None
 
 async def get_atem_service() -> AsyncGenerator[AtemService, None]:
     """Get ATEM service dependency."""
+    yield get_atem_service_instance()
+
+
+def get_atem_service_instance() -> AtemService:
+    """Get the shared ATEM service singleton (non-generator accessor)."""
     global _atem_service
-    
+
     if _atem_service is None:
         _atem_service = AtemService()
-    
-    yield _atem_service
+
+    return _atem_service
 
 
 async def get_policy_engine() -> AsyncGenerator[PolicyEngine, None]:
