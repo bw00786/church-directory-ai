@@ -104,23 +104,34 @@ mute channels. So:
 
 - Mic/fader actions in the script are **advisory notes** shown to the operator.
 - The desk is used **listen-only**: [MixerService](../backend/app/mixer/service.py)
-  connects to the companion `mgx-ai-mixer` app's meter WebSocket, which streams
-  `{"type":"meters","data":[{channel, rms_db, ...}]}` at ~12 Hz, and tracks
-  per-channel RMS.
+  connects to the companion [`mgx-ai-mixer`](https://github.com/bw00786/ai-yamaha-mixer-control)
+  app's meter WebSocket, which streams `{"type":"meters","data":[{channel, rms_db, ...}]}`
+  at ~12 Hz (it also sends `"analysis"`/`"dsp"` messages on the same socket,
+  which `MixerService` ignores), and tracks per-channel RMS.
+
+Both apps run on the **same machine** (the one with the MGX16's USB-C MAIN
+port plugged in). `mgx-ai-mixer`'s own default is `--port 8000`, which collides
+with this backend's `API_PORT` (also 8000 by default) — start it on a
+different port:
+
+```powershell
+# In the mgx-ai-mixer/backend checkout:
+uvicorn app.main:app --port 9000
+```
 
 Song-end detection (`wait_for_song_end`) waits for the watched channels to become
 active (the song starts), then for sustained silence (the song ends):
 
 ```
 ENABLE_MOCK_MIXER=true                 # mock simulates song length
-MIXER_WS_URL=ws://127.0.0.1:9000/ws    # mgx-ai-mixer meter feed
+MIXER_WS_URL=ws://127.0.0.1:9000/ws    # mgx-ai-mixer meter feed (port 9000, see above)
 SONG_END_SILENCE_DB=-45.0              # RMS below this = "silent"
 SONG_END_HOLD_SECONDS=3.0              # sustained silence that ends a song
 ```
 
-Run the `mgx-ai-mixer` backend and point `MIXER_WS_URL` at its `/ws` endpoint.
-In mock mode the director advances after a simulated song length so the flow can
-be exercised without the desk.
+Run the `mgx-ai-mixer` backend (port 9000, per above) and point `MIXER_WS_URL`
+at its `/ws` endpoint. In mock mode the director advances after a simulated
+song length so the flow can be exercised without the desk.
 
 ## EasyWorship slide control
 
