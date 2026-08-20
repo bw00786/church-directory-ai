@@ -39,6 +39,26 @@ export const atemAPI = {
   async auto() {
     return client.post('/atem/auto')
   },
+
+  async startStream() {
+    return client.post('/atem/stream/start')
+  },
+
+  async stopStream() {
+    return client.post('/atem/stream/stop')
+  },
+
+  async startRecording() {
+    return client.post('/atem/record/start')
+  },
+
+  async stopRecording() {
+    return client.post('/atem/record/stop')
+  },
+
+  async setMicMuted(micId: number, muted: boolean) {
+    return client.post(`/atem/mic/${micId}/mute`, { muted })
+  },
 }
 
 export const cameraAPI = {
@@ -122,6 +142,72 @@ export const easyworshipAPI = {
 
   async previous() {
     return client.post('/easyworship/previous')
+  },
+}
+
+export interface VisionTrack {
+  person_id: number
+  bbox: [number, number, number, number]
+  confidence: number
+  position: string
+}
+
+export interface VisionIdentityMatch {
+  person_id: string | null
+  name: string
+  role: string | null
+  confidence: number
+  live?: boolean
+}
+
+export interface VisionCameraTracks {
+  tracks: VisionTrack[]
+  identities: VisionIdentityMatch[]
+  frame_size: { width: number; height: number } | null
+}
+
+export interface VisionCameraQuality {
+  camera_id: number
+  overall_score: number
+  shot: string
+  subject_count: number
+}
+
+export interface VisionRecommendation {
+  recommended_camera: number
+  score: number
+  reason: string
+  current_program: number
+}
+
+export interface VisionEvent {
+  id: string
+  timestamp: number
+  type: string
+  camera_id: number
+  confidence: number
+  payload: Record<string, unknown>
+}
+
+export const visionAPI = {
+  async getStatus() {
+    return client.get('/api/vision/status')
+  },
+
+  async getCameras() {
+    return client.get<{ cameras: VisionCameraQuality[] }>('/api/vision/cameras')
+  },
+
+  async getCameraTracks(cameraId: number) {
+    return client.get<VisionCameraTracks>(`/api/vision/cameras/${cameraId}/tracks`)
+  },
+
+  async getEvents() {
+    return client.get<{ events: VisionEvent[] }>('/api/vision/events')
+  },
+
+  async getRecommendations() {
+    return client.get<{ recommendations: VisionRecommendation[] }>('/api/vision/recommendations')
   },
 }
 

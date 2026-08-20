@@ -74,6 +74,7 @@ For AI features, set your Anthropic API key in `.env`:
 ```
 ANTHROPIC_API_KEY=sk-ant-...
 ANTHROPIC_MODEL=claude-sonnet-4-5
+ANTHROPIC_FAST_MODEL=claude-haiku-4-5-20251001
 ```
 
 ## Common Commands

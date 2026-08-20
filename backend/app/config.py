@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     # Anthropic Claude
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-5"
+    # Smaller/faster model used for quick classification tasks (e.g. cue-advance decisions)
+    anthropic_fast_model: str = "claude-haiku-4-5-20251001"
     anthropic_base_url: str | None = None
     llm_max_tokens: int = 1024
     llm_temperature: float = 0.0
@@ -57,6 +59,10 @@ class Settings(BaseSettings):
     
     # Features
     enable_mock_atem: bool = True
+    # If True, probe the real ATEM bridge on each connect and use it when reachable,
+    # falling back to the mock client automatically otherwise (overrides enable_mock_atem).
+    atem_auto_detect: bool = True
+    atem_probe_timeout_seconds: float = 1.5
     enable_ai_director: bool = True
     enable_vision_detection: bool = False
     vision_enabled: bool = False

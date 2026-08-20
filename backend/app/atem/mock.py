@@ -27,6 +27,12 @@ class MockAtemClient:
             {"id": 2, "name": "Wide Shot", "short_name": "Wide", "type": "HDMI", "connected": True},
             {"id": 3, "name": "Piano", "short_name": "Pno", "type": "HDMI", "connected": True},
         ]
+
+        # Mic/audio input channels (Fairlight audio on the real ATEM).
+        self._audio_channels = [
+            {"id": 1, "name": "Mic 1", "muted": False},
+            {"id": 2, "name": "Mic 2", "muted": False},
+        ]
     
     async def connect(self, atem_ip: str) -> bool:
         """Simulate connection to ATEM.
@@ -64,9 +70,31 @@ class MockAtemClient:
             "streaming": self._streaming,
             "recording": self._recording,
             "inputs": self._inputs,
+            "audio_channels": self._audio_channels,
             "transition_in_progress": self._transition_in_progress,
             "timestamp": datetime.now().isoformat(),
         }
+    
+    async def set_mic_muted(self, mic_id: int, muted: bool) -> Dict[str, Any]:
+        """Mute/unmute a mic channel.
+
+        Args:
+            mic_id: Audio channel id (see ``self._audio_channels``).
+            muted: True to mute, False to unmute.
+
+        Returns:
+            Result dictionary.
+        """
+        if not self._connected:
+            return {"ok": False, "error": "Not connected"}
+
+        channel = next((c for c in self._audio_channels if c["id"] == mic_id), None)
+        if channel is None:
+            return {"ok": False, "error": f"Invalid mic: {mic_id}"}
+
+        channel["muted"] = muted
+        logger.info("Mic mute changed", mic_id=mic_id, muted=muted)
+        return {"ok": True, "mic_id": mic_id, "muted": muted}
     
     async def set_program(self, input_id: int) -> Dict[str, Any]:
         """Set program input.

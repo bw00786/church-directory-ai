@@ -60,6 +60,11 @@ class VisionManager:
         self.correlation_id = "vision-0"
         # (camera_id, track_id) -> rolling grayscale face crops, for liveness.
         self._face_crop_history: dict[tuple[int, int], list[Any]] = {}
+        # Latest per-camera live state, exposed via /api/vision for the
+        # frontend to render real overlays/observations instead of demo data.
+        self.latest_tracks: dict[int, list[dict[str, Any]]] = {}
+        self.latest_identities: dict[int, list[dict[str, Any]]] = {}
+        self.latest_frame_size: dict[int, dict[str, int]] = {}
 
     def _build_sources(self) -> list[VideoSource]:
         sources: list[VideoSource] = []
@@ -78,8 +83,21 @@ class VisionManager:
 
         return sources
 
+    def has_real_camera_source(self) -> bool:
+        """True if any real (RTSP) camera URL is configured, vs. test-pattern only."""
+        return any(
+            [
+                self.settings.camera_1_rtsp_url,
+                self.settings.camera_2_rtsp_url,
+                self.settings.camera_3_rtsp_url,
+                self.settings.camera_4_rtsp_url,
+            ]
+        )
+
     async def start(self) -> None:
-        if not self.settings.vision_enabled:
+        # Auto-detect: start automatically once a real camera is configured,
+        # even if vision_enabled wasn't explicitly turned on.
+        if not (self.settings.vision_enabled or self.has_real_camera_source()):
             return
         self.running = True
         await self.detector_registry.initialize()
@@ -171,6 +189,19 @@ class VisionManager:
         stale_keys = [key for key in self._face_crop_history if key[0] == camera_id and key not in active_history_keys]
         for key in stale_keys:
             del self._face_crop_history[key]
+
+        self.latest_tracks[camera_id] = [
+            {
+                "person_id": track.person_id,
+                "bbox": track.bbox,
+                "confidence": track.confidence,
+                "position": track.position,
+            }
+            for track in stable_tracks
+            if track.active
+        ]
+        self.latest_identities[camera_id] = identity_matches
+        self.latest_frame_size[camera_id] = {"width": metadata.width, "height": metadata.height}
 
         quality = score_camera_quality(
             camera_id=camera_id,
@@ -279,6 +310,16 @@ class VisionManager:
             }
             for quality in self.camera_quality.values()
         ]
+
+    def get_camera_tracks(self, camera_id: int) -> dict[str, Any]:
+        """Live per-frame detections for `camera_id`: track boxes, any
+        identity matches, and the frame size needed to scale bbox pixel
+        coordinates into the frontend's overlay (a percentage-based box)."""
+        return {
+            "tracks": self.latest_tracks.get(camera_id, []),
+            "identities": self.latest_identities.get(camera_id, []),
+            "frame_size": self.latest_frame_size.get(camera_id),
+        }
 
     def get_events(self) -> list[dict[str, Any]]:
         return [

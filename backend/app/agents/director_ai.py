@@ -69,9 +69,9 @@ class DirectorAI:
         self, observation: str, *, exit_hint: str, cue_name: str
     ) -> Optional[dict]:
         try:
-            from app.agents.llm import get_llm
+            from app.agents.llm import get_fast_llm
 
-            llm = get_llm()
+            llm = get_fast_llm()
         except Exception:
             return None  # no API key / package — fall back to heuristic
 

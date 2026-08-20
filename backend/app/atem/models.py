@@ -27,6 +27,17 @@ class AtemInputModel(BaseModel):
         }
 
 
+class AtemAudioChannelModel(BaseModel):
+    """A mic/audio input channel on the ATEM."""
+
+    id: int
+    name: str
+    muted: bool
+
+    class Config:
+        json_schema_extra = {"example": {"id": 1, "name": "Mic 1", "muted": False}}
+
+
 class AtemStateModel(BaseModel):
     """Current state of the ATEM."""
     
@@ -36,6 +47,7 @@ class AtemStateModel(BaseModel):
     streaming: bool
     recording: bool
     inputs: List[AtemInputModel]
+    audio_channels: List[AtemAudioChannelModel] = []
     transition_in_progress: bool
     timestamp: datetime
     
@@ -78,3 +90,12 @@ class CameraSelectRequestModel(BaseModel):
     
     class Config:
         json_schema_extra = {"example": {"input_id": 1}}
+
+
+class MicMuteRequestModel(BaseModel):
+    """Request to mute/unmute a mic channel."""
+
+    muted: bool
+
+    class Config:
+        json_schema_extra = {"example": {"muted": True}}

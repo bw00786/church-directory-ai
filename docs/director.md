@@ -92,8 +92,10 @@ Example `exit_hint`: *"Advance when the liturgist finishes reading the scripture
 (switch to the pastor)."*
 
 With `langchain-anthropic` installed and `ANTHROPIC_API_KEY` set, decisions use
-Claude; otherwise the keyword heuristic (e.g. "amen", "the word of the Lord",
-"please stand") is used so the pipeline still functions.
+Claude (the fast `ANTHROPIC_FAST_MODEL`, default `claude-haiku-4-5-20251001`,
+since this is a quick classification task); otherwise the keyword heuristic
+(e.g. "amen", "the word of the Lord", "please stand") is used so the pipeline
+still functions.
 
 ## Mixer wiring (Yamaha MGX16, listen-only)
 
@@ -175,6 +177,16 @@ self-contained agent on the EW desktop:
 ```powershell
 # On the EasyWorship Windows machine:
 python agent.py            # listens on 0.0.0.0:8091
+# or use the helper scripts (copy scripts/ + backend/easyworship_agent/ over):
+scripts\start-easyworship-agent.ps1            # foreground, manual start
+scripts\install-easyworship-agent-task.ps1     # one-time: auto-start at logon
+```
+
+Allow inbound TCP on the agent's port (8091 by default) through Windows
+Firewall on the EW machine — either accept the prompt on first run, or:
+
+```powershell
+New-NetFirewallRule -DisplayName "EasyWorship Agent" -Direction Inbound -Protocol TCP -LocalPort 8091 -Action Allow
 ```
 
 Then point the backend at it and disable mock:

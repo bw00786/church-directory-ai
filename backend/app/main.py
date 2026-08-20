@@ -1,5 +1,6 @@
 """FastAPI application initialization."""
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -32,7 +33,7 @@ async def lifespan(app: FastAPI):
         vision_enabled=settings.vision_enabled,
     )
 
-    if settings.vision_enabled:
+    if settings.vision_enabled or vision_manager.has_real_camera_source():
         await vision_manager.start()
 
     # Start the mixer meter feed (listen-only) for song-end detection.
@@ -71,6 +72,15 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Failed to start EasyWorship service")
 
+    # Auto-detect ATEM: connect the shared service at startup so the real
+    # bridge is used automatically when reachable, mock otherwise.
+    try:
+        from app.dependencies import get_atem_service_instance
+        atem_service = get_atem_service_instance()
+        asyncio.create_task(atem_service.connect())
+    except Exception:
+        logger.exception("Failed to start ATEM auto-connect task")
+
     # Automatic camera registration from config (camera_1)
     try:
         if global_settings.camera_1_host:
@@ -86,7 +96,6 @@ async def lifespan(app: FastAPI):
             )
             # attempt connect in background
             try:
-                import asyncio
                 asyncio.create_task(camera_service.connect_camera(1))
             except Exception:
                 logger.exception("Failed to start camera connect task")
@@ -95,7 +104,7 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    if settings.vision_enabled:
+    if settings.vision_enabled or vision_manager.has_real_camera_source():
         await vision_manager.stop()
     try:
         from app.mixer.service import mixer_service
@@ -155,19 +164,29 @@ async def health_live():
 async def health_ready():
     """Readiness probe - application can handle requests."""
     from app.atem.service import AtemService
+    from app.config import settings
     from app.dependencies import get_atem_service
     
     # Could add checks for:
     # - Database connectivity
     # - ATEM bridge availability
-    # - Anthropic API availability
     
+    # Cheap presence check only; use GET /health/anthropic to actually call the API.
     return {
         "status": "ready",
         "checks": {
             "api": "ok",
-        }
+            "anthropic": "configured" if settings.anthropic_api_key else "not configured",
+        },
     }
+
+
+@app.get("/health/anthropic")
+async def health_anthropic():
+    """On-demand check that makes a real Claude API call to verify connectivity."""
+    from app.agents.llm import check_anthropic_connection
+
+    return await check_anthropic_connection()
 
 
 # Root endpoint

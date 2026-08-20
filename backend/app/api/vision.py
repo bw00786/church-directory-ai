@@ -46,6 +46,14 @@ async def get_camera_detail(camera_id: int, vision_manager=Depends(get_vision_ma
     return camera_quality[0]
 
 
+@router.get("/cameras/{camera_id}/tracks")
+async def get_camera_tracks(camera_id: int, vision_manager=Depends(get_vision_manager)):
+    """Live detections (bounding boxes + any identity matches) for the
+    frontend's detection overlay -- empty lists when vision isn't running
+    or nothing's been detected yet."""
+    return vision_manager.get_camera_tracks(camera_id)
+
+
 @router.get("/recommendations")
 async def get_vision_recommendations(vision_manager=Depends(get_vision_manager)):
     return {"recommendations": vision_manager.get_recommendations()}

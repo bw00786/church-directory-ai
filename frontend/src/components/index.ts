@@ -8,10 +8,7 @@ export { AiObservation } from './AiObservation'
 export { CameraJoystick } from './CameraJoystick'
 export { CueSheet } from './CueSheet'
 export { SlidesPanel } from './SlidesPanel'
-
-export function AtemPanel() {
-  return createElement('div', null, 'ATEM Panel - TODO')
-}
+export { AtemPanel } from './AtemPanel'
 
 export function CameraGrid() {
   return createElement('div', null, 'Camera Grid - TODO')

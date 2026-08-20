@@ -8,7 +8,7 @@ import httpx
 
 from app.config import settings
 from app.logging_config import get_logger
-from .models import AtemStateModel, AtemInputModel
+from .models import AtemStateModel, AtemInputModel, AtemAudioChannelModel
 
 logger = get_logger(__name__)
 
@@ -20,20 +20,38 @@ class AtemService:
         """Initialize ATEM service.
         
         Args:
-            mock: If True, use mock ATEM for testing.
+            mock: If True, force the mock ATEM client (disables auto-detect).
         """
         self.bridge_url = settings.atem_bridge_url
-        self.mock = mock or settings.enable_mock_atem
+        # Explicit mock=True (e.g. tests) always wins and skips auto-detect entirely.
+        self.auto_detect = settings.atem_auto_detect and not mock
+        self.mock = mock or (settings.enable_mock_atem and not self.auto_detect)
         self._connected = False
         self._state: Optional[AtemStateModel] = None
         self._client = httpx.AsyncClient(timeout=10.0)
+        self._mock_client = None
         
-        if self.mock:
+        if self.mock or self.auto_detect:
             from .mock import MockAtemClient
             self._mock_client = MockAtemClient()
+        
+        if self.auto_detect:
+            logger.info("ATEM Service initialized with auto-detect (real bridge preferred, mock fallback)")
+        elif self.mock:
             logger.info("ATEM Service initialized with MOCK bridge")
         else:
             logger.info("ATEM Service initialized with real bridge")
+    
+    async def _probe_real_bridge(self) -> bool:
+        """Quick reachability check for the real ATEM bridge, used by auto-detect."""
+        try:
+            response = await self._client.get(
+                f"{self.bridge_url}/status",
+                timeout=settings.atem_probe_timeout_seconds,
+            )
+            return response.status_code == 200
+        except Exception:
+            return False
     
     async def connect(self, atem_ip: Optional[str] = None) -> bool:
         """Connect to ATEM via the bridge.
@@ -47,6 +65,15 @@ class AtemService:
         try:
             ip = atem_ip or settings.atem_ip
             
+            if self.auto_detect:
+                real_available = await self._probe_real_bridge()
+                self.mock = not real_available
+                logger.info(
+                    "ATEM auto-detect probe",
+                    real_bridge_available=real_available,
+                    using_mock=self.mock,
+                )
+            
             if self.mock:
                 self._connected = await self._mock_client.connect(ip)
             else:
@@ -59,7 +86,7 @@ class AtemService:
             if self._connected:
                 # Refresh state
                 self._state = await self.get_state()
-                logger.info("ATEM connected", atem_ip=ip)
+                logger.info("ATEM connected", atem_ip=ip, mock=self.mock)
             else:
                 logger.warning("Failed to connect to ATEM", atem_ip=ip)
             
@@ -123,6 +150,9 @@ class AtemService:
                 recording=data.get("recording", False),
                 inputs=[
                     AtemInputModel(**inp) for inp in data.get("inputs", [])
+                ],
+                audio_channels=[
+                    AtemAudioChannelModel(**chan) for chan in data.get("audio_channels", [])
                 ],
                 transition_in_progress=data.get("transition_in_progress", False),
                 timestamp=datetime.now(),
@@ -297,6 +327,39 @@ class AtemService:
             logger.error("Error performing auto", error=str(e))
             raise
     
+    async def set_mic_muted(self, mic_id: int, muted: bool) -> AtemStateModel:
+        """Mute/unmute a mic channel.
+
+        Args:
+            mic_id: Audio channel id (e.g. 1 for Mic 1, 2 for Mic 2).
+            muted: True to mute, False to unmute.
+
+        Returns:
+            Updated ATEM state.
+        """
+        try:
+            if not self._connected:
+                raise ConnectionError("ATEM not connected")
+
+            if self.mock:
+                result = await self._mock_client.set_mic_muted(mic_id, muted)
+            else:
+                response = await self._client.post(
+                    f"{self.bridge_url}/audio/{mic_id}/mute",
+                    json={"muted": muted},
+                )
+                result = response.json()
+
+            if not result.get("ok", False):
+                raise ValueError(result.get("error", "Failed to set mic mute"))
+
+            state = await self.get_state()
+            logger.info("Mic mute changed", mic_id=mic_id, muted=muted)
+            return state
+        except Exception as e:
+            logger.error("Error setting mic mute", mic_id=mic_id, error=str(e))
+            raise
+
     async def start_stream(self) -> bool:
         """Start streaming.
         

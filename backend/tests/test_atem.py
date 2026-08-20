@@ -88,3 +88,46 @@ async def test_atem_invalid_input(mock_atem):
     
     with pytest.raises(ValueError):
         await mock_atem.set_program(999)
+
+
+@pytest.mark.asyncio
+async def test_atem_stream_and_record(mock_atem):
+    """Test starting/stopping streaming and recording."""
+    await mock_atem.connect()
+
+    assert await mock_atem.start_stream() is True
+    state = await mock_atem.get_state()
+    assert state.streaming is True
+
+    assert await mock_atem.stop_stream() is True
+    state = await mock_atem.get_state()
+    assert state.streaming is False
+
+    assert await mock_atem.start_recording() is True
+    state = await mock_atem.get_state()
+    assert state.recording is True
+
+    assert await mock_atem.stop_recording() is True
+    state = await mock_atem.get_state()
+    assert state.recording is False
+
+
+@pytest.mark.asyncio
+async def test_atem_mic_mute(mock_atem):
+    """Test muting/unmuting mic channels."""
+    await mock_atem.connect()
+
+    state = await mock_atem.get_state()
+    assert len(state.audio_channels) == 2
+    assert all(not chan.muted for chan in state.audio_channels)
+
+    state = await mock_atem.set_mic_muted(1, True)
+    mic1 = next(c for c in state.audio_channels if c.id == 1)
+    assert mic1.muted is True
+
+    state = await mock_atem.set_mic_muted(1, False)
+    mic1 = next(c for c in state.audio_channels if c.id == 1)
+    assert mic1.muted is False
+
+    with pytest.raises(ValueError):
+        await mock_atem.set_mic_muted(999, True)

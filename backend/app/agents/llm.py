@@ -58,3 +58,35 @@ def build_llm(
 def get_llm() -> ChatAnthropic:
     """Return a process-wide cached Claude client."""
     return build_llm()
+
+
+@lru_cache(maxsize=1)
+def get_fast_llm() -> ChatAnthropic:
+    """Return a process-wide cached Claude client using the fast/small model.
+
+    Intended for quick classification tasks (e.g. cue-advance decisions) where
+    low latency matters more than deep reasoning.
+    """
+    return build_llm(model=settings.anthropic_fast_model)
+
+
+async def check_anthropic_connection() -> dict:
+    """Make a minimal real API call to verify the Claude connection works.
+
+    Returns a dict like {"ok": True, "model": "..."} or {"ok": False, "error": "..."}.
+    Safe to call even when no API key is configured.
+    """
+    try:
+        llm = build_llm(model=settings.anthropic_fast_model, max_tokens=8)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+
+    try:
+        response = await llm.ainvoke([("user", "Reply with just the word: pong")])
+        content = getattr(response, "content", response)
+        if isinstance(content, list):
+            content = " ".join(str(part) for part in content)
+        return {"ok": True, "model": settings.anthropic_fast_model, "reply": str(content).strip()}
+    except Exception as e:
+        logger.warning("Anthropic connectivity check failed", error=str(e))
+        return {"ok": False, "error": str(e)}

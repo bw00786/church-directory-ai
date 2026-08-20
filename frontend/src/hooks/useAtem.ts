@@ -14,6 +14,12 @@ interface AtemInput {
   connected: boolean
 }
 
+interface AtemAudioChannel {
+  id: number
+  name: string
+  muted: boolean
+}
+
 interface AtemState {
   connected: boolean
   program_input: number
@@ -21,6 +27,7 @@ interface AtemState {
   streaming: boolean
   recording: boolean
   inputs: AtemInput[]
+  audio_channels: AtemAudioChannel[]
   transition_in_progress: boolean
 }
 
@@ -31,6 +38,8 @@ export function useAtem() {
 
   useEffect(() => {
     refreshStatus()
+    const id = setInterval(refreshStatus, 3000)
+    return () => clearInterval(id)
   }, [])
 
   const refreshStatus = async () => {
@@ -83,6 +92,33 @@ export function useAtem() {
     }
   }
 
+  const setStreaming = async (streaming: boolean) => {
+    try {
+      await (streaming ? atemAPI.startStream() : atemAPI.stopStream())
+      await refreshStatus()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to change streaming state')
+    }
+  }
+
+  const setRecording = async (recording: boolean) => {
+    try {
+      await (recording ? atemAPI.startRecording() : atemAPI.stopRecording())
+      await refreshStatus()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to change recording state')
+    }
+  }
+
+  const setMicMuted = async (micId: number, muted: boolean) => {
+    try {
+      await atemAPI.setMicMuted(micId, muted)
+      await refreshStatus()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to change mic mute state')
+    }
+  }
+
   return {
     state,
     loading,
@@ -92,5 +128,8 @@ export function useAtem() {
     setPreview,
     performCut,
     performAuto,
+    setStreaming,
+    setRecording,
+    setMicMuted,
   }
 }

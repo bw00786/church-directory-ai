@@ -10,6 +10,7 @@ import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord'
 import ChurchIcon from '@mui/icons-material/Church'
 
 import { AiObservation } from './components/AiObservation'
+import { AtemPanel } from './components/AtemPanel'
 import { CameraJoystick } from './components/CameraJoystick'
 import { CameraObservation } from './components/CameraObservation'
 import { CueSheet } from './components/CueSheet'
@@ -69,11 +70,13 @@ export function App() {
               alignItems: 'start',
               gridTemplateColumns: {
                 xs: '1fr',
-                lg: '2fr 1fr 1fr',
+                md: '1fr 1fr',
+                lg: '2fr 1fr 1fr 1fr',
               },
             }}
           >
             <CueSheet />
+            <AtemPanel />
             <CameraJoystick cameraId={1} />
             <SlidesPanel />
           </Box>
