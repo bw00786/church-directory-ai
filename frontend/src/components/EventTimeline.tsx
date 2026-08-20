@@ -1,4 +1,13 @@
 import React from 'react'
+import Card from '@mui/material/Card'
+import CardHeader from '@mui/material/CardHeader'
+import Table from '@mui/material/Table'
+import TableBody from '@mui/material/TableBody'
+import TableCell from '@mui/material/TableCell'
+import TableHead from '@mui/material/TableHead'
+import TableRow from '@mui/material/TableRow'
+import Chip from '@mui/material/Chip'
+import TimelineIcon from '@mui/icons-material/Timeline'
 
 export function EventTimeline() {
   const events = [
@@ -9,17 +18,32 @@ export function EventTimeline() {
   ]
 
   return (
-    <div className="bg-gray-800 p-4 rounded border border-gray-700">
-      <h2 className="text-lg font-semibold mb-2">Event Timeline</h2>
-      <ul className="space-y-2 text-sm text-gray-200">
-        {events.map((event, index) => (
-          <li key={index} className="flex justify-between border-b border-gray-700 pb-2">
-            <span>{event.time}</span>
-            <span>{event.type}</span>
-            <span>{event.confidence}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
+    <Card>
+      <CardHeader
+        avatar={<TimelineIcon color="primary" />}
+        title="Event Timeline"
+        titleTypographyProps={{ variant: 'subtitle2' }}
+      />
+      <Table size="small">
+        <TableHead>
+          <TableRow>
+            <TableCell>Time</TableCell>
+            <TableCell>Event</TableCell>
+            <TableCell align="right">Confidence</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {events.map((event, index) => (
+            <TableRow key={index}>
+              <TableCell sx={{ fontVariantNumeric: 'tabular-nums' }}>{event.time}</TableCell>
+              <TableCell>{event.type}</TableCell>
+              <TableCell align="right">
+                <Chip label={event.confidence} size="small" variant="outlined" />
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </Card>
   )
 }

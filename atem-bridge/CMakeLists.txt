@@ -49,15 +49,20 @@ if(WIN32)
         message(FATAL_ERROR "midl.exe not found. Run CMake from a Visual Studio Developer Command Prompt.")
     endif()
 
-    add_custom_command(
-        OUTPUT ${GENERATED_HEADER} ${GENERATED_IID}
-        COMMAND ${MIDL_EXECUTABLE} /nologo /header BMDSwitcherAPI.h /iid BMDSwitcherAPI_i.c
-                /I "${BLACKMAGIC_IDL_DIR}" "${BLACKMAGIC_IDL}"
-        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-        DEPENDS ${BLACKMAGIC_IDL}
-        COMMENT "Compiling BMDSwitcherAPI.idl with MIDL"
-        VERBATIM
-    )
+   add_custom_command(
+    OUTPUT ${GENERATED_HEADER} ${GENERATED_IID}
+    COMMAND ${MIDL_EXECUTABLE}
+            /nologo
+            /env x64
+            /header BMDSwitcherAPI.h
+            /iid BMDSwitcherAPI_i.c
+            /I "${BLACKMAGIC_IDL_DIR}"
+            "${BLACKMAGIC_IDL}"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    DEPENDS ${BLACKMAGIC_IDL}
+    COMMENT "Compiling BMDSwitcherAPI.idl with MIDL"
+    VERBATIM
+)
     list(APPEND SOURCES ${GENERATED_HEADER})
 endif()
 
@@ -77,6 +82,7 @@ target_link_libraries(atem-bridge PRIVATE
 # --- Platform specifics ------------------------------------------------------
 if(WIN32)
     target_compile_definitions(atem-bridge PRIVATE
+        interface=struct
         WIN32_LEAN_AND_MEAN
         NOMINMAX
         _CRT_SECURE_NO_WARNINGS

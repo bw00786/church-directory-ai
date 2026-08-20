@@ -3,13 +3,16 @@
 Write-Host "Starting ATEM Bridge..." -ForegroundColor Green
 
 # Check if bridge is built
-if (-not (Test-Path "atem-bridge\bin\atem-bridge.exe")) {
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$bridgeExecutable = Join-Path $repoRoot "atem-bridge\build\bin\Release\atem-bridge.exe"
+
+if (-not (Test-Path $bridgeExecutable)) {
     Write-Host "ERROR: ATEM bridge not built" -ForegroundColor Red
-    Write-Host "Build with: cd atem-bridge && cmake . && cmake --build . --config Release" -ForegroundColor Yellow
+    Write-Host "Build with: cd atem-bridge; cmake --build build --config Release" -ForegroundColor Yellow
     exit 1
 }
 
 Write-Host "Starting ATEM Bridge on http://127.0.0.1:8090" -ForegroundColor Cyan
 Write-Host ""
 
-.\atem-bridge\bin\atem-bridge.exe
+& $bridgeExecutable

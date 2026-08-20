@@ -31,6 +31,11 @@ class CueAction(BaseModel):
     atem_input: Optional[int] = None
     camera_id: Optional[int] = None
     preset_id: Optional[int] = None
+    # Optional role hint (e.g. "pastor", "liturgist"): when set on a
+    # PTZ_PRESET action, the director prefers the preset most often learned
+    # from identity recognition for that role (see app.identity role/preset
+    # stats), falling back to `preset_id` when nothing's been learned yet.
+    role: Optional[str] = None
     slide_op: Optional[str] = None  # EasyWorship action name (e.g. "next_item")
     note: Optional[str] = None
     description: str = ""

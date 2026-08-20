@@ -3,6 +3,9 @@
 from typing import AsyncGenerator
 
 from app.atem.service import AtemService
+from app.identity.audio_capture import AudioCaptureService, audio_capture_service
+from app.identity.service import IdentityService, identity_service
+from app.memory.production_memory import MemoryManager, memory_manager
 from app.policy.engine import PolicyEngine
 from app.vision.manager import VisionManager, vision_manager
 
@@ -52,3 +55,18 @@ async def get_vision_manager() -> AsyncGenerator[VisionManager, None]:
         _vision_manager = vision_manager
     
     yield _vision_manager
+
+
+async def get_identity_service() -> AsyncGenerator[IdentityService, None]:
+    """Get IdentityService dependency (face/voice recognition + roster memory)."""
+    yield identity_service
+
+
+async def get_audio_capture_service() -> AsyncGenerator[AudioCaptureService, None]:
+    """Get AudioCaptureService dependency (local mic/line-in voice diarization)."""
+    yield audio_capture_service
+
+
+async def get_memory_manager() -> AsyncGenerator[MemoryManager, None]:
+    """Get MemoryManager dependency (production memory / past-service search)."""
+    yield memory_manager

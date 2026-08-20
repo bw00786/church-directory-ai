@@ -4,33 +4,59 @@
  */
 
 import React from 'react'
+import Card from '@mui/material/Card'
+import CardHeader from '@mui/material/CardHeader'
+import CardContent from '@mui/material/CardContent'
+import CardActions from '@mui/material/CardActions'
+import Box from '@mui/material/Box'
+import Paper from '@mui/material/Paper'
+import Typography from '@mui/material/Typography'
+import Chip from '@mui/material/Chip'
+import Stack from '@mui/material/Stack'
+import Button from '@mui/material/Button'
+import Alert from '@mui/material/Alert'
+import EventNoteIcon from '@mui/icons-material/EventNote'
+import PlayArrowIcon from '@mui/icons-material/PlayArrow'
+import SkipNextIcon from '@mui/icons-material/SkipNext'
+import StopIcon from '@mui/icons-material/Stop'
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome'
 
 import { useDirector, Cue } from '@/hooks/useDirector'
 
 function CueCard({ label, cue }: { label: string; cue: Cue | null }) {
   return (
-    <div className="bg-gray-900 rounded p-3 border border-gray-700">
-      <div className="text-xs uppercase text-gray-500 mb-1">{label}</div>
+    <Paper variant="outlined" sx={{ p: 2, bgcolor: 'background.default' }}>
+      <Typography variant="overline" color="text.secondary">
+        {label}
+      </Typography>
       {cue ? (
-        <>
-          <div className="font-semibold">{cue.name}</div>
-          {cue.description && <p className="text-sm text-gray-400">{cue.description}</p>}
-          {cue.actions?.length > 0 && (
-            <ul className="mt-2 text-xs text-gray-400 list-disc list-inside">
-              {cue.actions.map((a, i) => (
-                <li key={i}>{a.description || a.type}</li>
-              ))}
-            </ul>
+        <Stack spacing={1}>
+          <Typography variant="subtitle2">{cue.name}</Typography>
+          {cue.description && (
+            <Typography variant="body2" color="text.secondary">
+              {cue.description}
+            </Typography>
           )}
-          <div className="mt-2 flex gap-2 text-xs">
-            <span className="px-2 py-0.5 rounded bg-gray-700">advance: {cue.advance}</span>
-            {cue.ai_enabled && <span className="px-2 py-0.5 rounded bg-purple-700">AI</span>}
-          </div>
-        </>
+          {cue.actions?.length > 0 && (
+            <Box component="ul" sx={{ m: 0, pl: 2.5, color: 'text.secondary' }}>
+              {cue.actions.map((a, i) => (
+                <Typography key={i} component="li" variant="caption">
+                  {a.description || a.type}
+                </Typography>
+              ))}
+            </Box>
+          )}
+          <Stack direction="row" spacing={1}>
+            <Chip label={`advance: ${cue.advance}`} size="small" />
+            {cue.ai_enabled && <Chip label="AI" color="secondary" size="small" />}
+          </Stack>
+        </Stack>
       ) : (
-        <div className="text-gray-600 text-sm">—</div>
+        <Typography variant="body2" color="text.disabled">
+          —
+        </Typography>
       )}
-    </div>
+    </Paper>
   )
 }
 
@@ -46,61 +72,78 @@ export function CueSheet() {
     | undefined
 
   return (
-    <div className="bg-gray-800 p-4 rounded border border-gray-700 w-full max-w-xl">
-      <div className="flex items-center justify-between mb-3">
-        <div>
-          <h2 className="text-lg font-semibold">Service Cue Sheet</h2>
-          <p className="text-xs text-gray-400">{status?.script_name ?? 'No script'}</p>
-        </div>
-        <span
-          className={`text-xs px-2 py-0.5 rounded ${connected ? 'bg-green-700' : 'bg-red-700'}`}
+    <Card>
+      <CardHeader
+        avatar={<EventNoteIcon color="primary" />}
+        title="Service Cue Sheet"
+        subheader={status?.script_name ?? 'No script'}
+        titleTypographyProps={{ variant: 'subtitle2' }}
+        action={
+          <Chip
+            label={connected ? (running ? `cue ${index + 1}/${total}` : 'idle') : 'offline'}
+            color={connected ? (running ? 'primary' : 'default') : 'error'}
+            size="small"
+            sx={{ mt: 1, mr: 1 }}
+          />
+        }
+      />
+      <CardContent>
+        <Box
+          sx={{
+            display: 'grid',
+            gap: 2,
+            gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' },
+          }}
         >
-          {connected ? (running ? `cue ${index + 1}/${total}` : 'idle') : 'offline'}
-        </span>
-      </div>
+          <CueCard label="Now" cue={status?.current_cue ?? null} />
+          <CueCard label="Next" cue={status?.next_cue ?? null} />
+        </Box>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <CueCard label="Now" cue={status?.current_cue ?? null} />
-        <CueCard label="Next" cue={status?.next_cue ?? null} />
-      </div>
+        {suggestion && (
+          <Alert severity="info" icon={<AutoAwesomeIcon fontSize="inherit" />} sx={{ mt: 2 }}>
+            AI suggests advancing: {suggestion.reason}
+            {typeof suggestion.confidence === 'number' &&
+              ` (${Math.round(suggestion.confidence * 100)}%)`}
+          </Alert>
+        )}
 
-      {suggestion && (
-        <div className="mt-3 p-2 rounded bg-purple-900/50 border border-purple-700 text-sm">
-          AI suggests advancing: {suggestion.reason}
-          {typeof suggestion.confidence === 'number' &&
-            ` (${Math.round(suggestion.confidence * 100)}%)`}
-        </div>
-      )}
-
-      <div className="flex gap-2 mt-4">
-        <button
-          className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-40 rounded py-2 font-semibold"
+        {lastAction && (
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 2, display: 'block' }}>
+            {lastAction.action}: {lastAction.detail}
+          </Typography>
+        )}
+      </CardContent>
+      <CardActions sx={{ px: 2, pb: 2, gap: 1 }}>
+        <Button
+          fullWidth
+          variant="contained"
+          color="success"
+          startIcon={<PlayArrowIcon />}
           onClick={() => start(true)}
           disabled={running}
         >
           Start
-        </button>
-        <button
-          className="flex-1 bg-blue-700 hover:bg-blue-600 disabled:opacity-40 rounded py-2 font-semibold"
+        </Button>
+        <Button
+          fullWidth
+          variant="contained"
+          startIcon={<SkipNextIcon />}
           onClick={() => next()}
           disabled={!running}
         >
-          Next ▶
-        </button>
-        <button
-          className="flex-1 bg-red-700 hover:bg-red-600 disabled:opacity-40 rounded py-2 font-semibold"
+          Next
+        </Button>
+        <Button
+          fullWidth
+          variant="contained"
+          color="error"
+          startIcon={<StopIcon />}
           onClick={() => stop()}
           disabled={!running}
         >
           Stop
-        </button>
-      </div>
-
-      {lastAction && (
-        <p className="text-xs text-gray-500 mt-2">
-          {lastAction.action}: {lastAction.detail}
-        </p>
-      )}
-    </div>
+        </Button>
+      </CardActions>
+    </Card>
   )
 }

@@ -1,3 +1,5 @@
+import { createElement } from 'react'
+
 export { VisionPanel } from './VisionPanel'
 export { DetectionOverlay } from './DetectionOverlay'
 export { EventTimeline } from './EventTimeline'
@@ -8,33 +10,33 @@ export { CueSheet } from './CueSheet'
 export { SlidesPanel } from './SlidesPanel'
 
 export function AtemPanel() {
-  return <div>ATEM Panel - TODO</div>
+  return createElement('div', null, 'ATEM Panel - TODO')
 }
 
 export function CameraGrid() {
-  return <div>Camera Grid - TODO</div>
+  return createElement('div', null, 'Camera Grid - TODO')
 }
 
 export function ProgramPreview() {
-  return <div>Program/Preview - TODO</div>
+  return createElement('div', null, 'Program/Preview - TODO')
 }
 
 export function StreamControl() {
-  return <div>Stream Control - TODO</div>
+  return createElement('div', null, 'Stream Control - TODO')
 }
 
 export function RecordingControl() {
-  return <div>Recording Control - TODO</div>
+  return createElement('div', null, 'Recording Control - TODO')
 }
 
 export function AiDirectorPanel() {
-  return <div>AI Director - TODO</div>
+  return createElement('div', null, 'AI Director - TODO')
 }
 
 export function EventLog() {
-  return <div>Event Log - TODO</div>
+  return createElement('div', null, 'Event Log - TODO')
 }
 
 export function SystemStatus() {
-  return <div>System Status - TODO</div>
+  return createElement('div', null, 'System Status - TODO')
 }

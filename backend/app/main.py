@@ -42,6 +42,21 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Failed to start mixer service")
 
+    # Start local microphone/line-in capture for real-audio voice diarization
+    # (disabled by default; requires ENABLE_AUDIO_CAPTURE=true and hardware).
+    try:
+        from app.identity.audio_capture import audio_capture_service
+        await audio_capture_service.start()
+    except Exception:
+        logger.exception("Failed to start audio capture service")
+
+    # Start recording director cue activity into production memory.
+    try:
+        from app.memory.event_recorder import memory_event_recorder
+        await memory_event_recorder.start()
+    except Exception:
+        logger.exception("Failed to start memory event recorder")
+
     # Start the scheduled auto-start loop for the service director.
     try:
         from app.director.scheduler import service_scheduler
@@ -87,6 +102,16 @@ async def lifespan(app: FastAPI):
         await mixer_service.stop()
     except Exception:
         logger.exception("Failed to stop mixer service")
+    try:
+        from app.identity.audio_capture import audio_capture_service
+        await audio_capture_service.stop()
+    except Exception:
+        logger.exception("Failed to stop audio capture service")
+    try:
+        from app.memory.event_recorder import memory_event_recorder
+        await memory_event_recorder.stop()
+    except Exception:
+        logger.exception("Failed to stop memory event recorder")
     try:
         from app.director.scheduler import service_scheduler
         await service_scheduler.stop()

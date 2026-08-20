@@ -21,6 +21,8 @@ class CameraService:
         self._cameras: dict[int, dict] = {}
         # camera_id -> driver instance
         self._drivers: dict[int, PTZOpticsDriver] = {}
+        # camera_id -> last preset_id commanded via move_to_preset
+        self._current_preset: dict[int, int] = {}
         logger.info("Camera service initialized")
 
     def register_camera(
@@ -123,7 +125,14 @@ class CameraService:
         if not driver:
             logger.warning("No driver for camera", camera_id=camera_id)
             return False
-        return await driver.move_to_preset(preset_id)
+        ok = await driver.move_to_preset(preset_id)
+        if ok:
+            self._current_preset[camera_id] = preset_id
+        return ok
+
+    def get_current_preset(self, camera_id: int) -> int | None:
+        """Last preset_id successfully commanded on this camera, if any."""
+        return self._current_preset.get(camera_id)
 
     async def save_preset(self, camera_id: int, preset_id: int) -> bool:
         """Save the camera's current position as a preset."""

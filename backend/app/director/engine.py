@@ -16,6 +16,7 @@ from app.config import settings
 from app.dependencies import get_atem_service_instance
 from app.easyworship.service import easyworship_service
 from app.events.bus import event_bus
+from app.identity.service import identity_service
 from app.logging_config import get_logger
 from app.mixer.service import mixer_service
 
@@ -164,15 +165,27 @@ class ServiceDirector:
                 await atem.set_program(action.atem_input)
                 self._publish("atem_program", f"Program -> input {action.atem_input}", action)
 
-            elif action.type == ActionType.PTZ_PRESET and action.preset_id is not None:
-                ok = await camera_service.move_to_preset(
-                    action.camera_id or 1, action.preset_id
-                )
-                self._publish(
-                    "ptz_preset",
-                    f"Preset {action.preset_id} ({'ok' if ok else 'failed'})",
-                    action,
-                )
+            elif action.type == ActionType.PTZ_PRESET and (action.preset_id is not None or action.role):
+                camera_id = action.camera_id or 1
+                preset_id = action.preset_id
+                resolution = "configured"
+                if action.role:
+                    learned = identity_service.best_preset_for_role(action.role, camera_id)
+                    if learned is not None:
+                        preset_id, resolution = learned, "learned from identity recognition"
+                if preset_id is None:
+                    self._publish(
+                        "ptz_preset",
+                        f"No preset available for role '{action.role}' (nothing learned yet, no fallback)",
+                        action,
+                    )
+                else:
+                    ok = await camera_service.move_to_preset(camera_id, preset_id)
+                    self._publish(
+                        "ptz_preset",
+                        f"Preset {preset_id} via {resolution} ({'ok' if ok else 'failed'})",
+                        action,
+                    )
 
             elif action.type == ActionType.SLIDE and action.slide_op is not None:
                 ok = await easyworship_service.action(action.slide_op)

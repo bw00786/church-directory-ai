@@ -19,6 +19,9 @@ langchain-anthropic==0.3.15
 opencv-python==4.10.0.84
 numpy==2.2.0
 
+# Audio (local mic/line-in capture for real-PCM voice diarization)
+sounddevice==0.4.6
+
 # HTTP
 httpx==0.25.2
 requests==2.31.0

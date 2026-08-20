@@ -18,11 +18,12 @@ def _atem(input_id: int, description: str) -> CueAction:
     return CueAction(type=ActionType.ATEM_PROGRAM, atem_input=input_id, description=description)
 
 
-def _preset(preset_id: int, description: str) -> CueAction:
+def _preset(preset_id: int, description: str, role: str | None = None) -> CueAction:
     return CueAction(
         type=ActionType.PTZ_PRESET,
         camera_id=settings.ptz_camera_id,
         preset_id=preset_id,
+        role=role,
         description=description,
     )
 
@@ -72,7 +73,7 @@ def build_default_service_script() -> ServiceScript:
             description="Pastor (between the altar rails) gives announcements.",
             actions=[
                 _atem(cam1, "Switch to PTZOptics camera"),
-                _preset(23, "Preset 23 — pastor at altar rails"),
+                _preset(23, "Preset 23 — pastor at altar rails", role="pastor"),
             ],
             advance=AdvanceTrigger.MANUAL,
             ai_enabled=True,
@@ -94,7 +95,7 @@ def build_default_service_script() -> ServiceScript:
             name="Call to Worship — Liturgist",
             description="Liturgist at the podium reads the call to worship.",
             actions=[
-                _preset(4, "Preset 4 — liturgist's podium"),
+                _preset(4, "Preset 4 — liturgist's podium", role="liturgist"),
             ],
             advance=AdvanceTrigger.MANUAL,
             ai_enabled=True,
@@ -141,7 +142,7 @@ def build_default_service_script() -> ServiceScript:
             description="Pastor speaks.",
             actions=[
                 _atem(cam1, "Switch to PTZOptics camera"),
-                _preset(3, "Preset 3 — pastor speaking"),
+                _preset(3, "Preset 3 — pastor speaking", role="pastor"),
             ],
             advance=AdvanceTrigger.MANUAL,
         ),

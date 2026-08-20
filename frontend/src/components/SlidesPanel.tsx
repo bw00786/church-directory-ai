@@ -4,6 +4,21 @@
  */
 
 import React, { useEffect, useState } from 'react'
+import Card from '@mui/material/Card'
+import CardHeader from '@mui/material/CardHeader'
+import CardContent from '@mui/material/CardContent'
+import Box from '@mui/material/Box'
+import Button from '@mui/material/Button'
+import Chip from '@mui/material/Chip'
+import Typography from '@mui/material/Typography'
+import SlideshowIcon from '@mui/icons-material/Slideshow'
+import ArrowBackIcon from '@mui/icons-material/ArrowBack'
+import ArrowForwardIcon from '@mui/icons-material/ArrowForward'
+import SkipPreviousIcon from '@mui/icons-material/SkipPrevious'
+import SkipNextIcon from '@mui/icons-material/SkipNext'
+import PlayArrowIcon from '@mui/icons-material/PlayArrow'
+import ClearIcon from '@mui/icons-material/Clear'
+import VisibilityOffIcon from '@mui/icons-material/VisibilityOff'
 
 import { easyworshipAPI } from '@/api/atem'
 
@@ -36,49 +51,63 @@ export function SlidesPanel() {
     }
   }
 
-  const btn = 'bg-gray-700 hover:bg-gray-600 active:bg-blue-600 rounded py-2 font-semibold'
-
   return (
-    <div className="bg-gray-800 p-4 rounded border border-gray-700 w-64">
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-lg font-semibold">Slides</h2>
-        <span
-          className={`text-xs px-2 py-0.5 rounded ${
-            connected ? 'bg-green-700' : 'bg-red-700'
-          }`}
-        >
-          {connected == null ? '…' : connected ? 'connected' : 'offline'}
-        </span>
-      </div>
+    <Card>
+      <CardHeader
+        avatar={<SlideshowIcon color="primary" />}
+        title="Slides"
+        titleTypographyProps={{ variant: 'subtitle2' }}
+        action={
+          <Chip
+            label={connected == null ? '…' : connected ? 'connected' : 'offline'}
+            color={connected == null ? 'default' : connected ? 'success' : 'error'}
+            size="small"
+            sx={{ mt: 1, mr: 1 }}
+          />
+        }
+      />
+      <CardContent>
+        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 1, mb: 1 }}>
+          <Button variant="outlined" startIcon={<ArrowBackIcon />} onClick={() => run('prev_slide')}>
+            Prev
+          </Button>
+          <Button
+            variant="outlined"
+            endIcon={<ArrowForwardIcon />}
+            onClick={() => run('next_slide')}
+          >
+            Next
+          </Button>
+          <Button
+            variant="outlined"
+            startIcon={<SkipPreviousIcon />}
+            onClick={() => run('prev_item')}
+          >
+            Item
+          </Button>
+          <Button variant="outlined" endIcon={<SkipNextIcon />} onClick={() => run('next_item')}>
+            Item
+          </Button>
+        </Box>
 
-      <div className="grid grid-cols-2 gap-2 mb-2">
-        <button className={btn} onClick={() => run('prev_slide')}>
-          ◀ Prev
-        </button>
-        <button className={btn} onClick={() => run('next_slide')}>
-          Next ▶
-        </button>
-        <button className={btn} onClick={() => run('prev_item')}>
-          ◀◀ Item
-        </button>
-        <button className={btn} onClick={() => run('next_item')}>
-          Item ▶▶
-        </button>
-      </div>
+        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 1 }}>
+          <Button variant="contained" color="success" startIcon={<PlayArrowIcon />} onClick={() => run('live')}>
+            Live
+          </Button>
+          <Button variant="outlined" startIcon={<ClearIcon />} onClick={() => run('clear')}>
+            Clear
+          </Button>
+          <Button variant="outlined" startIcon={<VisibilityOffIcon />} onClick={() => run('black')}>
+            Black
+          </Button>
+        </Box>
 
-      <div className="grid grid-cols-3 gap-2">
-        <button className={btn} onClick={() => run('live')}>
-          Live
-        </button>
-        <button className={btn} onClick={() => run('clear')}>
-          Clear
-        </button>
-        <button className={btn} onClick={() => run('black')}>
-          Black
-        </button>
-      </div>
-
-      {lastAction && <p className="text-xs text-gray-500 mt-2">last: {lastAction}</p>}
-    </div>
+        {lastAction && (
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 2, display: 'block' }}>
+            last: {lastAction}
+          </Typography>
+        )}
+      </CardContent>
+    </Card>
   )
 }

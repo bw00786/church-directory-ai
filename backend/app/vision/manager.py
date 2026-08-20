@@ -7,7 +7,9 @@ import time
 from typing import Any
 
 from app.config import settings
+from app.cameras.service import camera_service
 from app.events.bus import event_bus
+from app.identity.service import identity_service
 from app.policy.engine import PolicyEngine
 from app.policy.permissions import Permission
 from .config import VisionSettings
@@ -56,6 +58,8 @@ class VisionManager:
         self.current_person_counts: dict[int, int] = {}
         self.current_program = 1
         self.correlation_id = "vision-0"
+        # (camera_id, track_id) -> rolling grayscale face crops, for liveness.
+        self._face_crop_history: dict[tuple[int, int], list[Any]] = {}
 
     def _build_sources(self) -> list[VideoSource]:
         sources: list[VideoSource] = []
@@ -125,6 +129,49 @@ class VisionManager:
         ]
 
         stable_tracks = self.tracker.update(person_result.objects, timestamp, camera_id)
+
+        identity_matches: list[dict[str, Any]] = []
+        active_history_keys: set[tuple[int, int]] = set()
+        for track in stable_tracks:
+            if not track.active:
+                continue
+            history_key = (camera_id, track.person_id)
+            active_history_keys.add(history_key)
+            prior_crops = self._face_crop_history.get(history_key, [])
+
+            try:
+                match = identity_service.identify_face(
+                    frame, track.bbox, source=f"camera_{camera_id}", liveness_crop_history=prior_crops
+                )
+            except Exception:
+                match = None
+
+            try:
+                history = self._face_crop_history.setdefault(history_key, [])
+                history.append(identity_service.face_embedder.gray_crop(frame, track.bbox))
+                del history[:-5]  # keep only the most recent few frames
+            except Exception:
+                pass
+
+            if match is not None:
+                identity_matches.append(match)
+                event_bus.publish({
+                    "event": "IDENTITY_MATCHED",
+                    "payload": {"camera_id": camera_id, **match},
+                })
+                role = match.get("role")
+                current_preset = camera_service.get_current_preset(camera_id)
+                if role and current_preset is not None and match.get("live", True):
+                    try:
+                        identity_service.record_role_preset_observation(role, camera_id, current_preset)
+                    except Exception:
+                        pass  # learning is best-effort; never block the vision loop
+
+        # Drop face-crop history for tracks that are no longer active.
+        stale_keys = [key for key in self._face_crop_history if key[0] == camera_id and key not in active_history_keys]
+        for key in stale_keys:
+            del self._face_crop_history[key]
+
         quality = score_camera_quality(
             camera_id=camera_id,
             tracks=stable_tracks,
@@ -204,6 +251,7 @@ class VisionManager:
                 "quality_score": quality.overall_score,
                 "shot": quality.shot,
                 "confidence": 1.0,
+                "identities": identity_matches,
                 "audio": {
                     "channel": audio_observation.channel if audio_observation else None,
                     "active": audio_observation.active if audio_observation else False,
