@@ -73,7 +73,7 @@ def build_default_service_script() -> ServiceScript:
             description="Pastor (between the altar rails) gives announcements.",
             actions=[
                 _atem(cam1, "Switch to PTZOptics camera"),
-                _preset(23, "Preset 23 — pastor at altar rails", role="pastor"),
+                _preset(3, "Preset 3 — pastor at altar rails", role="pastor"),
             ],
             advance=AdvanceTrigger.MANUAL,
             ai_enabled=True,
