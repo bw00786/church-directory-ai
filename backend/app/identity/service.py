@@ -57,6 +57,28 @@ class IdentityService:
             logger.exception("Identity observations unavailable (database unreachable)")
             return []
 
+    def who_was_seen(self, role: str, service_date: str) -> dict[str, Any] | None:
+        """Best-confidence identity match for `role` (e.g. "pastor") on a
+        given service date -- the answer to "who preached on <date>?".
+        Returns None if nobody matching that role was recognized that day.
+        """
+        try:
+            with get_session() as session:
+                observations = PersonRepository(session).observations_by_role_on_date(role, service_date)
+        except Exception:
+            logger.exception("Identity observations unavailable (database unreachable)")
+            return None
+        if not observations:
+            return None
+        best = observations[0]
+        return {
+            "person_name": best.person_name,
+            "role": best.role,
+            "confidence": best.confidence,
+            "service_date": service_date,
+            "sighting_count": len(observations),
+        }
+
     # -- Role -> preset learning (links identity recognition to the cue sheet) --
 
     def record_role_preset_observation(self, role: str, camera_id: int, preset_id: int) -> None:

@@ -9,6 +9,7 @@ export { CameraJoystick } from './CameraJoystick'
 export { CueSheet } from './CueSheet'
 export { SlidesPanel } from './SlidesPanel'
 export { AtemPanel } from './AtemPanel'
+export { AssistantChat } from './AssistantChat'
 
 export function CameraGrid() {
   return createElement('div', null, 'Camera Grid - TODO')

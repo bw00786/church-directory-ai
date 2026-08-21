@@ -173,6 +173,28 @@ class PersonRepository:
         stmt = select(IdentityObservation).order_by(IdentityObservation.timestamp.desc()).limit(limit)
         return list(self.session.scalars(stmt))
 
+    def observations_by_role_on_date(self, role: str, service_date: str) -> list[IdentityObservation]:
+        """Identity matches for `role` (e.g. "pastor") on a given calendar day.
+
+        `IdentityObservation` only stores a timestamp (not a service_date
+        bucket like `ServiceObservation`), so this filters by the day range
+        directly. Ordered by confidence descending so callers can take the
+        top match as "who was recognized as {role}" for that service.
+        """
+        day = date.fromisoformat(service_date)
+        start = datetime(day.year, day.month, day.day)
+        end = datetime(day.year, day.month, day.day, 23, 59, 59, 999999)
+        stmt = (
+            select(IdentityObservation)
+            .where(
+                IdentityObservation.role == role,
+                IdentityObservation.timestamp >= start,
+                IdentityObservation.timestamp <= end,
+            )
+            .order_by(IdentityObservation.confidence.desc())
+        )
+        return list(self.session.scalars(stmt))
+
 
 class RolePresetRepository:
     """Learned mapping of "role X is usually on-camera at preset Y", built
