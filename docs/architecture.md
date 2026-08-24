@@ -1,5 +1,11 @@
 # Architecture Overview
 
+> **Note:** This is the original high-level design doc. For the system as
+> actually implemented today, see [current-architecture.md](current-architecture.md)
+> (pre-AI-Director snapshot) and [ai-director.md](ai-director.md) (the AI
+> Service Director layer added on top of the cue engine — it uses Anthropic
+> Claude directly, not the LangGraph state machine sketched below).
+
 ## System Design
 
 ```

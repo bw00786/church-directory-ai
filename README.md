@@ -13,9 +13,10 @@ This is a production-grade system designed for churches to automate and assist i
 - **Scripted Service Director** — Runs a Sunday cue sheet that drives the ATEM and PTZOptics camera, advancing manually, on a timer, on song-end, or by AI decision
 - **EasyWorship Slide Control** — Advances EasyWorship slides/items from the cue sheet (Windows keystroke injection), so the director controls the screens too
 - **Scheduled Auto-Start** — Optionally starts the service automatically at a configured time on selected weekdays
-- **Yamaha MGX16 Mixer (listen-only)** — Consumes the mixer meter feed to detect song start/end (the desk has no remote-control protocol)
-- **AI Director** — Anthropic Claude decides cue advances from observations (transcript/vision), gated by the policy engine
-- **Production Control Panel** — React/Vite web interface with real-time WebSocket updates (cue sheet + camera joystick)
+- **Yamaha DM3/MGX16 Mixer (listen-only)** — Consumes the mixer meter feed to detect song start/end and per-channel speaking activity (the desk has no remote-control protocol)
+- **Cue-Advance AI** — Anthropic Claude decides cue advances from observations (transcript/vision), gated by the policy engine
+- **AI Service Director** — A reasoning layer above the cue engine: Claude observes a live `ServiceContext` (state, speaker, transcript, camera/ATEM/EasyWorship) and proposes typed actions, executed only after per-category confidence checks in `manual`/`assisted`/`ai_directed` mode
+- **Production Control Panel** — React/Vite web interface with real-time WebSocket updates (cue sheet, camera joystick, AI Director panel)
 - **Event Audit Trail** — Complete logging of all production actions and AI decisions
 - **Production Memory** — PostgreSQL + pgvector for semantic retrieval of past services
 - **Policy Engine** — Granular permission control on AI and human actions
@@ -85,6 +86,22 @@ when the backend runs on a different machine. See [docs/director.md](docs/direct
 > **listen-only** (via the companion `mgx-ai-mixer` meter WebSocket) to detect
 > when songs end.
 
+## AI Service Director
+
+Above the scripted cue engine, an **AI Service Director** reasons over the live
+service: per-channel voice activity from the Yamaha DM3 (pastor/liturgist/
+vocalist/congregation, channels 1/2/4/8 by default) feeds a `ServiceContext`
+(current `ServiceState`, recent transcript, camera/ATEM/EasyWorship state),
+which Claude uses to propose typed actions (camera role, ATEM cut/auto,
+EasyWorship advance). Every action passes per-category confidence thresholds in
+the policy engine before executing — Claude never touches hardware directly.
+
+Operating modes (`manual` / `assisted` / `ai_directed`) and pending-action
+approval are controlled via `/director/ai/*` and shown in the frontend's **AI
+Service Director** panel. See [docs/ai-director.md](docs/ai-director.md) for
+the full design and [docs/current-architecture.md](docs/current-architecture.md)
+for the system as it existed before this layer was added.
+
 ## Quick Start
 
 ### Prerequisites
@@ -145,10 +162,11 @@ variables, and troubleshooting.
 ## Documentation
 
 - [Architecture](docs/architecture.md) — System design and data flow
+- [Current Architecture (pre-AI-Director)](docs/current-architecture.md) — System snapshot before the AI Service Director layer
 - [ATEM Integration](docs/atem.md) — ATEM bridge and control
 - [Camera Control](docs/cameras.md) — PTZOptics VISCA/HTTP-CGI driver, joystick, calibration
 - [Service Director](docs/director.md) — Cue sheet, scheduler, AI advances, mixer wiring
-- [AI Director](docs/ai-director.md) — LangGraph agent behavior and tools
+- [AI Service Director](docs/ai-director.md) — Audio VAD, Claude decisions, action engine, modes, replay
 - [Database](docs/database.md) — PostgreSQL schema and migrations
 - [Security](docs/security.md) — Authentication, authorization, audit
 - [Network](docs/network.md) — Local network topology
@@ -185,15 +203,19 @@ backend/           Python FastAPI application
     api/           REST endpoints (incl. director, cameras, websocket)
     atem/          ATEM control service
     agents/        Claude LLM client + director AI decisions
+    ai/            AI Service Director (Claude reasoning -> DirectorDecision)
+    audio/         Yamaha channel VAD, audio observer, Whisper service
+    domain/        ServiceState, ServiceContext, ServicePlan
     cameras/       PTZOptics driver (VISCA + HTTP-CGI) and service
-    director/      Scripted service engine, cue sheet, scheduler
+    director/      Scripted service engine, cue sheet, scheduler, action engine
     easyworship/   EasyWorship slide control (keystroke injection)
-    mixer/         Yamaha MGX16 meter listener (song-end detection)
+    mixer/         Yamaha MGX16/DM3 meter listener (song-end detection)
     policy/        Permission engine
     database/      PostgreSQL models
     memory/        Production memory
     services/      Event bus, audit, health
   easyworship_agent/  Standalone Windows agent for remote EasyWorship control
+  scripts/         CLI utilities (incl. replay_service.py for AI Director replay)
   tests/           Unit and integration tests
 
 atem-bridge/       C++ native ATEM bridge (Windows) — implemented

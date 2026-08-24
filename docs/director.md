@@ -4,11 +4,17 @@ The service director runs a **scripted Sunday service** as a cue sheet, driving
 the ATEM and the PTZOptics camera. Human and AI share the same engine, so the
 operator can always override.
 
+> This is the deterministic cue engine. A separate reasoning layer, the **AI
+> Service Director**, now sits above it (audio VAD, Claude decisions, typed
+> policy-gated actions, manual/assisted/ai_directed modes) — see
+> [docs/ai-director.md](ai-director.md).
+
 - Engine: [backend/app/director/engine.py](../backend/app/director/engine.py)
 - Cue sheet: [backend/app/director/script.py](../backend/app/director/script.py)
 - Scheduler: [backend/app/director/scheduler.py](../backend/app/director/scheduler.py)
 - AI decisions: [backend/app/agents/director_ai.py](../backend/app/agents/director_ai.py)
 - Mixer listener: [backend/app/mixer/service.py](../backend/app/mixer/service.py)
+
 
 ## Cameras and channels
 
