@@ -57,6 +57,7 @@ CMakeCache.txt
 *.cmake
 build/
 out/
+preprocessed.txt
 
 # Database
 *.db

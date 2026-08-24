@@ -11,7 +11,11 @@ alembic==1.12.1
 pgvector==0.2.4
 
 # AI/LangChain
-langgraph==1.0.0
+# langgraph-prebuilt is pinned separately: newer prebuilt releases (>=1.0.1) import
+# ExecutionInfo/ServerInfo from langgraph.runtime, which isn't defined until a
+# later langgraph core release than the one langchain==1.0.0 allows (<1.1.0).
+langgraph==1.0.10
+langgraph-prebuilt==1.0.0
 langchain==1.0.0
 langchain-anthropic==0.3.15
 
