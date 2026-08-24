@@ -134,6 +134,22 @@ class CameraService:
         """Last preset_id successfully commanded on this camera, if any."""
         return self._current_preset.get(camera_id)
 
+    async def move_to_role(self, role: str) -> bool:
+        """Move to the camera/preset configured for a service-plan role
+        (e.g. "pastor", "liturgist", "vocalist", "congregation", "choir",
+        "wide") — see app.config's camera_role_* settings. Keeps the AI
+        Director hardware-independent (it selects roles, never raw PTZ
+        coordinates or camera ids); see docs/ai-director.md.
+        """
+        from app.config import settings
+
+        camera_id = getattr(settings, f"camera_role_{role}_camera", None)
+        preset_id = getattr(settings, f"camera_role_{role}_preset", None)
+        if camera_id is None or preset_id is None:
+            logger.warning("Unknown camera role", role=role)
+            return False
+        return await self.move_to_preset(camera_id, preset_id)
+
     async def save_preset(self, camera_id: int, preset_id: int) -> bool:
         """Save the camera's current position as a preset."""
         logger.info("Saving camera preset", camera_id=camera_id, preset_id=preset_id)

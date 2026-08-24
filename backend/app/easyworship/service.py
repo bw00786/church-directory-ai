@@ -19,6 +19,11 @@ class EasyWorshipService:
         self._driver = driver or build_driver()
         self._connected = False
         self._last_action: Optional[str] = None
+        # Best-effort item tracking: EasyWorship has no read-back API, so this
+        # only reflects actions *this service* has issued (index into the
+        # service plan's easyworship_item order). See select_item().
+        self._current_item_index = 0
+        self._current_item_label: Optional[str] = None
 
     async def start(self) -> None:
         self._connected = await self._driver.connect()
@@ -27,6 +32,39 @@ class EasyWorshipService:
     @property
     def connected(self) -> bool:
         return self._connected
+
+    def _item_labels(self) -> list[str]:
+        from app.domain.service_plan import build_default_service_plan
+
+        return [
+            el.easyworship_item
+            for el in build_default_service_plan().elements
+            if el.easyworship_item
+        ]
+
+    async def select_item(self, label: str) -> bool:
+        """Advance/rewind to the item matching ``label`` in the service plan's
+        EasyWorship order, using only next_item/prev_item presses (EasyWorship
+        has no direct "jump to slide" API). Best-effort: assumes the tracked
+        current index is accurate, which only holds if all navigation goes
+        through this service.
+        """
+        labels = self._item_labels()
+        if label not in labels:
+            logger.warning("Unknown EasyWorship item label", label=label)
+            return False
+
+        target_index = labels.index(label)
+        delta = target_index - self._current_item_index
+        step_action = "next_item" if delta > 0 else "prev_item"
+
+        ok = True
+        for _ in range(abs(delta)):
+            ok = await self.action(step_action) and ok
+
+        self._current_item_index = target_index
+        self._current_item_label = label
+        return ok
 
     async def action(self, name: str) -> bool:
         """Perform a named action (see ``ACTIONS``)."""
@@ -39,6 +77,10 @@ class EasyWorshipService:
         ok = await self._driver.send_action(name)
         if ok:
             self._last_action = name
+            if name == "next_item":
+                self._current_item_index += 1
+            elif name == "prev_item":
+                self._current_item_index = max(0, self._current_item_index - 1)
         return ok
 
     async def next_slide(self) -> bool:
@@ -60,8 +102,14 @@ class EasyWorshipService:
         return await self.action("live")
 
     def status(self) -> dict:
-        return {"connected": self._connected, "last_action": self._last_action}
+        return {
+            "connected": self._connected,
+            "last_action": self._last_action,
+            "current_item_index": self._current_item_index,
+            "current_item_label": self._current_item_label,
+        }
 
 
 # Module-level singleton
 easyworship_service = EasyWorshipService()
+

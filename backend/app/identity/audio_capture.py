@@ -20,6 +20,9 @@ from typing import Any
 
 import numpy as np
 
+from app.config import settings as app_settings
+from app.domain.observations import AudioObservation
+from app.domain.service_context import service_context
 from app.events.bus import event_bus
 from app.identity.config import IdentitySettings
 from app.identity.service import identity_service
@@ -43,6 +46,7 @@ class AudioCaptureService:
         self.sample_rate = settings.audio_capture_sample_rate
         self.window_seconds = settings.audio_capture_window_seconds
         self.channel_name = settings.audio_capture_channel_name
+        self.role = settings.audio_capture_role or settings.audio_capture_channel_name
 
         self._stream: Any = None
         self._queue: "queue.Queue[np.ndarray]" = queue.Queue()
@@ -122,10 +126,31 @@ class AudioCaptureService:
                 logger.exception("Voice identification failed on captured audio")
                 continue
 
+            transcript = ""
+            if app_settings.enable_whisper:
+                from app.audio.whisper_service import get_whisper_service
+
+                transcribed = get_whisper_service().transcribe(window, self.sample_rate)
+                if transcribed is not None:
+                    transcript = transcribed.text
+
             result["timestamp"] = time.time()
+            result["transcript"] = transcript
             self.recent.append(result)
             self.recent = self.recent[-50:]
             event_bus.publish({"event": "VOICE_OBSERVATION", "payload": result})
+
+            speaking = result.get("activity") != "silence"
+            service_context.record_audio(
+                AudioObservation(
+                    channel=-1,
+                    speaker_role=self.role,
+                    speaking=speaking,
+                    transcript=transcript,
+                    confidence=float(result.get("confidence", 0.0) or 0.0),
+                    duration_ms=int(self.window_seconds * 1000),
+                )
+            )
 
     def get_recent(self, limit: int = 50) -> list[dict[str, Any]]:
         return self.recent[-limit:]

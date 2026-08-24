@@ -5,8 +5,10 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from app.director.ai_director_runtime import ai_director_runtime
 from app.director.engine import service_director
 from app.director.scheduler import service_scheduler
+from app.domain.service_context import service_context
 from app.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -34,6 +36,10 @@ class SuggestRequest(BaseModel):
 
 class ObserveRequest(BaseModel):
     text: str
+
+
+class AiModeRequest(BaseModel):
+    mode: str  # "manual" | "assisted" | "ai_directed"
 
 
 @router.get("/status")
@@ -114,3 +120,55 @@ async def observe(request: ObserveRequest):
     from app.agents.director_ai import director_ai
 
     return await director_ai.observe(request.text)
+
+
+# -- AI Service Director (reasoning layer above the cue engine) --------------
+
+
+@router.get("/ai/status")
+async def ai_status():
+    """Current AI Director mode, service context snapshot, and pending actions."""
+    return {
+        "mode": ai_director_runtime.mode,
+        "context": service_context.snapshot(),
+        "pending_actions": [a.model_dump(mode="json") for a in ai_director_runtime.pending_actions],
+    }
+
+
+@router.get("/ai/mode")
+async def get_ai_mode():
+    """Current AI Director operating mode."""
+    return {"mode": ai_director_runtime.mode}
+
+
+@router.post("/ai/mode")
+async def set_ai_mode(request: AiModeRequest):
+    """Set the AI Director operating mode (manual | assisted | ai_directed)."""
+    try:
+        ai_director_runtime.set_mode(request.mode)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"mode": ai_director_runtime.mode}
+
+
+@router.post("/ai/tick")
+async def ai_tick():
+    """Manually trigger one AI Director decision cycle (mainly for testing)."""
+    decision = await ai_director_runtime.tick()
+    return decision.model_dump(mode="json")
+
+
+@router.post("/ai/pending/{index}/approve")
+async def approve_pending_action(index: int):
+    """Approve and execute a pending (assisted-mode) AI-proposed action."""
+    try:
+        return await ai_director_runtime.approve_pending(index)
+    except IndexError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/ai/pending/{index}/reject")
+async def reject_pending_action(index: int):
+    """Reject (discard) a pending AI-proposed action."""
+    ai_director_runtime.reject_pending(index)
+    return {"ok": True}

@@ -43,6 +43,20 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Failed to start mixer service")
 
+    # Start the AI Director's audio observer (per-channel VAD on the Yamaha
+    # DM3/MGX16 meter feed) and its decision-loop runtime.
+    try:
+        from app.audio.audio_observer import audio_observer
+        await audio_observer.start()
+    except Exception:
+        logger.exception("Failed to start audio observer")
+
+    try:
+        from app.director.ai_director_runtime import ai_director_runtime
+        await ai_director_runtime.start()
+    except Exception:
+        logger.exception("Failed to start AI Director runtime")
+
     # Start local microphone/line-in capture for real-audio voice diarization
     # (disabled by default; requires ENABLE_AUDIO_CAPTURE=true and hardware).
     try:
@@ -111,6 +125,16 @@ async def lifespan(app: FastAPI):
         await mixer_service.stop()
     except Exception:
         logger.exception("Failed to stop mixer service")
+    try:
+        from app.audio.audio_observer import audio_observer
+        await audio_observer.stop()
+    except Exception:
+        logger.exception("Failed to stop audio observer")
+    try:
+        from app.director.ai_director_runtime import ai_director_runtime
+        await ai_director_runtime.stop()
+    except Exception:
+        logger.exception("Failed to stop AI Director runtime")
     try:
         from app.identity.audio_capture import audio_capture_service
         await audio_capture_service.stop()

@@ -32,8 +32,13 @@ def get_atem_service_instance() -> AtemService:
 
 async def get_policy_engine() -> AsyncGenerator[PolicyEngine, None]:
     """Get policy engine dependency."""
+    yield get_policy_engine_instance()
+
+
+def get_policy_engine_instance() -> PolicyEngine:
+    """Get the shared PolicyEngine singleton (non-generator accessor)."""
     global _policy_engine
-    
+
     if _policy_engine is None:
         from app.config import settings
         _policy_engine = PolicyEngine(
@@ -42,9 +47,14 @@ async def get_policy_engine() -> AsyncGenerator[PolicyEngine, None]:
             autonomous_stream_start=settings.autonomous_stream_start,
             autonomous_stream_stop=settings.autonomous_stream_stop,
             autonomous_recording=settings.autonomous_recording,
+            action_confidence_thresholds={
+                "camera_change": settings.confidence_camera_change,
+                "slide_change": settings.confidence_slide_change,
+                "atem_transition": settings.confidence_atem_transition,
+            },
         )
-    
-    yield _policy_engine
+
+    return _policy_engine
 
 
 async def get_vision_manager() -> AsyncGenerator[VisionManager, None]:

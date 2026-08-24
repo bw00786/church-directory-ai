@@ -10,6 +10,7 @@ import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord'
 import ChurchIcon from '@mui/icons-material/Church'
 
 import { AiObservation } from './components/AiObservation'
+import { AIDirectorPanel } from './components/AIDirectorPanel'
 import { AssistantChat } from './components/AssistantChat'
 import { AtemPanel } from './components/AtemPanel'
 import { CameraJoystick } from './components/CameraJoystick'
@@ -81,6 +82,8 @@ export function App() {
             <CameraJoystick cameraId={1} />
             <SlidesPanel />
           </Box>
+
+          <AIDirectorPanel />
 
           <RosterPanel />
 

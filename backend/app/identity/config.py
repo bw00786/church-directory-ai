@@ -59,3 +59,7 @@ class IdentitySettings(BaseSettings):
     audio_capture_sample_rate: int = 16000
     audio_capture_window_seconds: float = 2.0
     audio_capture_channel_name: str = "room_mic"
+    # Service-plan role this capture device represents ("pastor", "liturgist",
+    # "vocalist", "congregation"), used to tag AudioObservations for the AI
+    # Director's ServiceContext. None = use audio_capture_channel_name as-is.
+    audio_capture_role: str | None = None

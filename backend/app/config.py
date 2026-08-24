@@ -92,7 +92,7 @@ class Settings(BaseSettings):
     service_start_days: str = "sun"
     service_autonomous: bool = True  # AI may auto-advance eligible cues
 
-    # Yamaha MGX16 mixer (listen-only; the desk has no remote-control protocol).
+    # Yamaha DM3/MGX16 mixer (listen-only; the desk has no remote-control protocol).
     # Consumes the mgx-ai-mixer meter WebSocket to detect song start/end.
     enable_mock_mixer: bool = True
     mixer_ws_url: str = "ws://127.0.0.1:9000/ws"
@@ -100,6 +100,27 @@ class Settings(BaseSettings):
     song_end_hold_seconds: float = 3.0   # sustained silence that ends a song
     song_max_wait_seconds: float = 900.0  # give up auto-advance after this
     mock_song_seconds: float = 8.0       # simulated song length in mock mode
+
+    # Yamaha DM3 channel -> role mapping (configuration, not hard-coded).
+    mixer_pastor_channel: int = 1
+    mixer_liturgist_channel: int = 2
+    mixer_vocalist_channel: int = 4
+    mixer_congregation_channel: int = 8
+
+    # Voice-activity detection (energy threshold on the mixer RMS meter feed).
+    # A channel is "speaking" once its RMS rises above the threshold, and stays
+    # "speaking" until it holds below threshold for `speech_silence_hold_seconds`.
+    speech_active_db: float = -40.0
+    speech_silence_hold_seconds: float = 1.5
+
+    # Whisper transcription (only meaningful for channels with real PCM, i.e.
+    # local mic/line-in capture via app.identity.audio_capture — the Yamaha
+    # meter feed itself has no raw audio). Disabled unless a whisper backend
+    # (faster-whisper or openai-whisper) is installed.
+    enable_whisper: bool = False
+    whisper_model_size: str = "base"
+    whisper_device: str = "cpu"
+    whisper_compute_type: str = "int8"
 
     # EasyWorship slide control (Windows desktop; driven by keystroke injection).
     enable_mock_easyworship: bool = True
@@ -117,6 +138,31 @@ class Settings(BaseSettings):
     ew_key_logo: str = "f6"
     ew_key_black: str = "f7"
     ew_key_live: str = "f9"
+
+    # PTZ camera roles (config, not hard-coded): role -> camera id + preset id.
+    camera_role_pastor_camera: int = 1
+    camera_role_pastor_preset: int = 1
+    camera_role_liturgist_camera: int = 1
+    camera_role_liturgist_preset: int = 4
+    camera_role_vocalist_camera: int = 1
+    camera_role_vocalist_preset: int = 2
+    camera_role_congregation_camera: int = 1
+    camera_role_congregation_preset: int = 6
+    camera_role_choir_camera: int = 1
+    camera_role_choir_preset: int = 5
+    camera_role_wide_camera: int = 1
+    camera_role_wide_preset: int = 6
+
+    # AI Service Director (reasoning layer above the cue engine; see
+    # docs/ai-director.md). Modes: "manual" (observe only), "assisted"
+    # (propose, human approves), "ai_directed" (execute automatically,
+    # still gated by the policy engine).
+    ai_director_mode: str = "assisted"
+    ai_director_poll_seconds: float = 4.0
+    ai_director_min_confidence: float = 0.80
+    confidence_camera_change: float = 0.85
+    confidence_slide_change: float = 0.85
+    confidence_atem_transition: float = 0.90
 
     class Config:
         env_file = ".env"

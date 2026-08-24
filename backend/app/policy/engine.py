@@ -42,6 +42,7 @@ class PolicyEngine:
         min_ai_action_confidence: float = 0.85,
         max_consecutive_switches: int = 3,
         camera_switch_cooldown_seconds: int = 5,
+        action_confidence_thresholds: Optional[Dict[str, float]] = None,
     ):
         """Initialize policy engine.
         
@@ -55,6 +56,10 @@ class PolicyEngine:
             min_ai_action_confidence: Minimum confidence for AI action
             max_consecutive_switches: Max consecutive switches
             camera_switch_cooldown_seconds: Cooldown between switches
+            action_confidence_thresholds: Per-action-category minimum
+                confidence (e.g. {"camera_change": 0.85, "slide_change": 0.85,
+                "atem_transition": 0.90}), used by the AI Director's action
+                engine (see app.director.action_engine).
         """
         self.policy = PermissionPolicy(
             autonomous_camera_switching=autonomous_camera_switching,
@@ -67,6 +72,7 @@ class PolicyEngine:
             max_consecutive_switches=max_consecutive_switches,
             camera_switch_cooldown_seconds=camera_switch_cooldown_seconds,
         )
+        self.action_confidence_thresholds: Dict[str, float] = action_confidence_thresholds or {}
         
         # Track action history for constraints
         self._action_history: Dict[str, list[tuple[datetime, int]]] = {}
@@ -216,3 +222,34 @@ class PolicyEngine:
             )
         else:
             return ActionConstraints(permitted=False)
+
+    def check_ai_decision(
+        self,
+        action_category: str,
+        confidence: float,
+        *,
+        actor: str = "ai",
+    ) -> tuple[bool, Optional[str]]:
+        """Validate a proposed AI Director action against its category's
+        confidence threshold (see ``action_confidence_thresholds``).
+
+        Args:
+            action_category: e.g. "camera_change", "slide_change",
+                "atem_transition".
+            confidence: The AI's confidence for this specific decision.
+            actor: "ai" enforces the threshold; any other actor (human) passes.
+
+        Returns:
+            (allowed, reason).
+        """
+        if actor != "ai":
+            return True, None
+
+        threshold = self.action_confidence_thresholds.get(
+            action_category, self.policy.min_ai_action_confidence
+        )
+        if confidence < threshold:
+            return False, (
+                f"Confidence {confidence:.2f} below '{action_category}' threshold {threshold:.2f}"
+            )
+        return True, None
