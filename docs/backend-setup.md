@@ -160,6 +160,9 @@ pgvector = "^0.2"  # Vector search
 langgraph = "^1.0"
 langchain = "^1.0"
 langchain-anthropic = "^0.3"  # Anthropic Claude
+voyageai = "^0.3"  # Voyage AI embeddings (production memory retrieval)
+sentence-transformers = "^3.3"  # local nomic-embed-text-v1.5 fallback
+einops = "^0.8"  # required by nomic-embed-text-v1.5
 
 # Utilities
 python-dotenv = "^1.0"
@@ -189,6 +192,11 @@ POSTGRES_PASSWORD=changeme
 ANTHROPIC_API_KEY=sk-ant-...
 ANTHROPIC_MODEL=claude-sonnet-4-5
 ANTHROPIC_FAST_MODEL=claude-haiku-4-5-20251001
+
+# Production memory embeddings (see docs/ai-director.md) -- optional, falls
+# back to a free local model / hashed embedding if unset
+VOYAGE_API_KEY=
+EMBEDDING_PROVIDER=auto
 
 # Policy
 AUTONOMOUS_CAMERA_SWITCHING=true

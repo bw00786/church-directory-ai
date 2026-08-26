@@ -77,6 +77,10 @@ ANTHROPIC_MODEL=claude-sonnet-4-5
 ANTHROPIC_FAST_MODEL=claude-haiku-4-5-20251001
 ```
 
+Optionally, set `VOYAGE_API_KEY` in `.env` for higher-quality production
+memory search (past-service recall). Without it, the app automatically falls
+back to a free local embedding model — no setup required.
+
 ## Common Commands
 
 ```powershell

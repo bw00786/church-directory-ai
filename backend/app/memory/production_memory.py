@@ -1,10 +1,11 @@
 """Production memory and service history.
 
 Records observations (cue advances, vision events, identity matches, ...)
-tagged by calendar date, embeds them with `VoyageTextEmbedder` (see
-app.memory.embeddings), and supports similarity search across past services.
-Storage is Postgres via the existing SQLAlchemy session/engine (see
-app.database).
+tagged by calendar date, embeds them with `TextEmbedder` (see
+app.memory.embeddings -- tries Voyage AI, then a local nomic-embed-text-v1.5
+model, then a hashed fallback), and supports similarity search across past
+services. Storage is Postgres via the existing SQLAlchemy session/engine
+(see app.database).
 """
 
 from __future__ import annotations
