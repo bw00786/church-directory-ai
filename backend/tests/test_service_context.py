@@ -32,3 +32,22 @@ def test_recent_transcript_text_formats_speaker_and_text():
     ctx.record_audio(AudioObservation(channel=1, speaker_role="pastor", speaking=True, transcript="Good morning"))
     text = ctx.recent_transcript_text()
     assert "pastor: Good morning" in text
+
+
+def test_multi_role_transcripts_interleave_by_arrival(monkeypatch):
+    """Role-tagged transcript lines from simultaneous roles interleave in order."""
+    from datetime import datetime, timedelta, timezone
+
+    ctx = ServiceContext()
+    base = datetime(2026, 8, 26, 10, 0, 0, tzinfo=timezone.utc)
+    # Emit in timestamp order across two roles (as the transcriber would).
+    ctx.record_audio(AudioObservation(channel=2, speaker_role="liturgist", speaking=True,
+                                      transcript="the word of the Lord", timestamp=base))
+    ctx.record_audio(AudioObservation(channel=1, speaker_role="pastor", speaking=True,
+                                      transcript="thank you", timestamp=base + timedelta(seconds=1)))
+    ctx.record_audio(AudioObservation(channel=4, speaker_role="vocalist", speaking=True,
+                                      transcript="hallelujah", timestamp=base + timedelta(seconds=2)))
+
+    lines = list(ctx.transcript)
+    assert [line.speaker_role for line in lines] == ["liturgist", "pastor", "vocalist"]
+    assert [line.text for line in lines] == ["the word of the Lord", "thank you", "hallelujah"]

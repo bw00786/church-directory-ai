@@ -118,7 +118,10 @@ class Settings(BaseSettings):
     song_max_wait_seconds: float = 900.0  # give up auto-advance after this
     mock_song_seconds: float = 8.0       # simulated song length in mock mode
 
-    # Yamaha DM3 channel -> role mapping (configuration, not hard-coded).
+    # MGX16 channel -> role mapping (configuration, not hard-coded). These are
+    # 1-based channel indices. They serve two consumers: the meter feed
+    # (RMS-only) and, when MGX_USB_ENABLED, the USB MAIN multichannel PCM
+    # stream (channel N of the device == desk channel N). Keep them aligned.
     mixer_pastor_channel: int = 1
     mixer_liturgist_channel: int = 2
     mixer_vocalist_channel: int = 4
@@ -138,6 +141,25 @@ class Settings(BaseSettings):
     whisper_model_size: str = "base"
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"
+
+    # MGX16 USB MAIN multichannel PCM capture (WO-MGX-USB-1). The MGX16's USB
+    # interface delivers per-channel PCM to the host as a standard multichannel
+    # USB audio device — real waveform for VAD/ASR, replacing meter-only RMS.
+    # The meter feed remains as a degraded fallback (see AudioObserver arbiter).
+    mgx_usb_enabled: bool = False
+    mgx_usb_device_name: str = "MGX"       # device-name substring match
+    mgx_usb_device_index: int | None = None  # explicit PortAudio index override
+    mgx_usb_sample_rate: int = 48000       # raw capture rate; negotiated w/ driver
+    mgx_usb_stall_seconds: float = 2.0     # no frames within this => degraded
+
+    # Voice-activity detection provider. "auto" uses Silero when USB capture is
+    # active and the energy detector otherwise; "silero"/"energy" force one.
+    vad_provider: str = "auto"             # auto | silero | energy
+    vad_silero_threshold: float = 0.5
+
+    # Which role channels get per-channel Whisper ASR (comma-separated). The
+    # congregation channel is VAD-only by default (no ASR).
+    whisper_roles: str = "pastor,liturgist,vocalist"
 
     # EasyWorship slide control (Windows desktop; driven by keystroke injection).
     enable_mock_easyworship: bool = True

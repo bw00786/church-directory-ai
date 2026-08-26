@@ -128,10 +128,13 @@ async def observe(request: ObserveRequest):
 @router.get("/ai/status")
 async def ai_status():
     """Current AI Director mode, service context snapshot, and pending actions."""
+    from app.audio.audio_observer import audio_observer
+
     return {
         "mode": ai_director_runtime.mode,
         "context": service_context.snapshot(),
         "pending_actions": [a.model_dump(mode="json") for a in ai_director_runtime.pending_actions],
+        "perception": audio_observer.perception_status(),
     }
 
 

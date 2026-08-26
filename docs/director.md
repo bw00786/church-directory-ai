@@ -103,17 +103,36 @@ since this is a quick classification task); otherwise the keyword heuristic
 (e.g. "amen", "the word of the Lord", "please stand") is used so the pipeline
 still functions.
 
-## Mixer wiring (Yamaha MGX16, listen-only)
+## Mixer wiring (Yamaha MGX16)
 
 **The MGX16 has no remote-control protocol** — software cannot move faders or
-mute channels. So:
+mute channels (mixer control is out of scope pending Yamaha's announced Stream
+Deck remote support). The desk is used two ways for *listening*:
+
+### USB MAIN — per-channel PCM (preferred)
+
+The MGX16 **USB MAIN** interface (USB-C) presents 22 in / 22 out per-channel PCM
+to the host as a standard multichannel USB audio device. Wire the console's
+**USB MAIN (USB-C)** port to the machine running the backend; enable capture
+with `MGX_USB_ENABLED=true`. [`UsbMultichannelCapture`](../backend/app/audio/usb_capture.py)
+opens it, extracts the configured role channels, and feeds real Silero VAD +
+per-role Whisper (see [ai-director.md](ai-director.md)).
+
+Run any **streaming / ATEM audio consumer on the USB SUB** (2x2) port instead of
+USB MAIN so the two consumers don't contend for the same interface. The console
+also records 16-track multitrack to microSD standalone — enable that every
+service to accumulate the replay corpus (ingest with
+[`scripts/ingest_mgx_recording.py`](../backend/scripts/ingest_mgx_recording.py)).
+
+### Meter feed — RMS only (fallback)
 
 - Mic/fader actions in the script are **advisory notes** shown to the operator.
-- The desk is used **listen-only**: [MixerService](../backend/app/mixer/service.py)
-  connects to the companion [`mgx-ai-mixer`](https://github.com/bw00786/ai-yamaha-mixer-control)
-  app's meter WebSocket, which streams `{"type":"meters","data":[{channel, rms_db, ...}]}`
+- [MixerService](../backend/app/mixer/service.py) connects to the companion
+  [`mgx-ai-mixer`](https://github.com/bw00786/ai-yamaha-mixer-control) app's meter
+  WebSocket, which streams `{"type":"meters","data":[{channel, rms_db, ...}]}`
   at ~12 Hz (it also sends `"analysis"`/`"dsp"` messages on the same socket,
-  which `MixerService` ignores), and tracks per-channel RMS.
+  which `MixerService` ignores), and tracks per-channel RMS. This is the degraded
+  fallback when USB capture is unavailable or a channel stalls.
 
 Both apps run on the **same machine** (the one with the MGX16's USB-C MAIN
 port plugged in). `mgx-ai-mixer`'s own default is `--port 8000`, which collides

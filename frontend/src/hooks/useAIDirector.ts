@@ -35,10 +35,25 @@ export interface PendingAction {
   reason: string
 }
 
+export interface PerceptionChannel {
+  channel: number
+  source: 'usb' | 'meter'
+  vad_provider: 'silero' | 'energy'
+  asr: boolean
+  last_frame_age: number | null
+}
+
+export interface PerceptionStatus {
+  usb_enabled: boolean
+  usb_active: boolean
+  channels: Record<string, PerceptionChannel>
+}
+
 export interface AiDirectorStatus {
   mode: AiDirectorMode
   context: ServiceContextSnapshot
   pending_actions: PendingAction[]
+  perception?: PerceptionStatus
 }
 
 async function getJSON<T>(path: string): Promise<T> {

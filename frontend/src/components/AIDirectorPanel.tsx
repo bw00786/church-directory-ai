@@ -123,6 +123,34 @@ export function AIDirectorPanel() {
           </Paper>
         )}
 
+        {status?.perception && (
+          <Paper
+            variant="outlined"
+            sx={{
+              p: 1.5,
+              mt: 2,
+              borderColor: Object.values(status.perception.channels).some((c) => c.source !== 'usb')
+                ? 'error.main'
+                : undefined,
+            }}
+          >
+            <Typography variant="overline" color="text.secondary">
+              Perception
+            </Typography>
+            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              {Object.entries(status.perception.channels).map(([role, ch]) => (
+                <Chip
+                  key={role}
+                  size="small"
+                  color={ch.source === 'usb' ? 'success' : 'error'}
+                  variant={ch.source === 'usb' ? 'filled' : 'outlined'}
+                  label={`${role}: ${ch.source}/${ch.vad_provider}${ch.asr ? '+asr' : ''}`}
+                />
+              ))}
+            </Stack>
+          </Paper>
+        )}
+
         {status && status.pending_actions.length > 0 && (
           <>
             <Divider sx={{ my: 2 }} />

@@ -1,11 +1,15 @@
 """Audio intelligence package.
 
-Pipeline (see docs/ai-director.md):
+Pipeline (see docs/ai-director.md), preferred path first:
 
-    Yamaha DM3 channel (RMS meter feed, via app.mixer.service)
-        -> ChannelVAD (energy threshold + hold time)
-        -> AudioObserver (per configured role/channel)
-        -> optional WhisperService transcript (only for channels with real
-           PCM, i.e. wired to app.identity.audio_capture's local capture)
+    MGX16 USB MAIN per-channel PCM (app.audio.usb_capture)
+        -> SileroChannelVAD (neural VAD, app.audio.silero_vad)
+        -> MultiChannelTranscriber (per-role Whisper, VAD-gated)
         -> AudioObservation -> event bus -> ServiceContext
+
+    Fallback per channel when USB stalls (app.audio.audio_observer arbiter):
+
+    Meter feed RMS (app.mixer.service / app.audio.yamaha_capture)
+        -> ChannelVAD (energy threshold + hold time)
+        -> AudioObservation (no transcript) -> ServiceContext
 """

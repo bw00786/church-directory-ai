@@ -7,9 +7,10 @@ authoritative `ServiceState`, asks **Anthropic Claude** for a structured
 decision, and executes typed actions through the policy engine.
 
 ```
-Yamaha DM3 channels (1=pastor, 2=liturgist, 4=vocalist, 8=congregation)
-    -> ChannelVAD (per-channel speaking/silence)
+MGX16 USB MAIN PCM (ch 1=pastor, 2=liturgist, 4=vocalist, 8=congregation)
+    -> Silero VAD (per-channel speaking/silence) + per-role Whisper ASR
     -> AudioObserver -> ServiceContext (authoritative rolling state)
+       (meter feed = energy VAD, no ASR: degraded fallback per channel)
                               |
                               v
                      AIServiceDirector (Claude) -> DirectorDecision
@@ -32,7 +33,7 @@ every action in it is validated by [`PolicyEngine.check_ai_decision`](../backend
 before [`ActionEngine`](../backend/app/director/action_engine.py) calls a real
 service.
 
-## Audio channel mapping (Yamaha DM3 / MGX16)
+## Audio channel mapping (Yamaha MGX16)
 
 Configurable, not hard-coded (`app/config.py`):
 
@@ -43,19 +44,29 @@ Configurable, not hard-coded (`app/config.py`):
 | `MIXER_VOCALIST_CHANNEL` | 4 | Vocalist |
 | `MIXER_CONGREGATION_CHANNEL` | 8 | Congregation mic |
 
-[`AudioObserver`](../backend/app/audio/audio_observer.py) polls each channel's
-RMS (via the existing listen-only `mixer_service`/`mgx-ai-mixer` feed — see
-[docs/director.md](director.md#mixer-wiring-yamaha-mgx16-listen-only)) through
-a [`ChannelVAD`](../backend/app/audio/vad.py) (energy threshold +
-`SPEECH_SILENCE_HOLD_SECONDS` hold time) and publishes `AudioObservation`s into
-the shared [`ServiceContext`](../backend/app/domain/service_context.py).
+[`AudioObserver`](../backend/app/audio/audio_observer.py) is a source arbiter.
+When `MGX_USB_ENABLED=true` it captures per-channel PCM from the MGX16 **USB
+MAIN** interface ([`usb_capture.py`](../backend/app/audio/usb_capture.py)), runs
+real [Silero VAD](../backend/app/audio/silero_vad.py) and per-role Whisper, and
+publishes role-attributed `AudioObservation`s into the shared
+[`ServiceContext`](../backend/app/domain/service_context.py). If USB frames stall
+(`MGX_USB_STALL_SECONDS`) it falls back **per channel** to the listen-only
+meter feed (energy [`ChannelVAD`](../backend/app/audio/vad.py), no ASR) and emits
+`PERCEPTION_DEGRADED`; on recovery it emits `PERCEPTION_RESTORED`.
 
-**Transcription caveat:** the Yamaha meter feed has no raw PCM, so Whisper
-cannot transcribe those four channels directly. When `ENABLE_WHISPER=true`,
-transcripts instead come from [`app/identity/audio_capture.py`](../backend/app/identity/audio_capture.py)'s
-local mic/line-in capture (tag the captured channel with a role via
-`AUDIO_CAPTURE_ROLE`) — see [`app/audio/whisper_service.py`](../backend/app/audio/whisper_service.py)
-(lazy-loads `faster-whisper` or `openai-whisper`; a no-op otherwise).
+**Transcription (corrected):** the MGX16 USB MAIN interface *does* deliver raw
+per-channel PCM, so Whisper transcribes the role channels directly
+([`WHISPER_ROLES`](../backend/app/audio/whisper_service.py), default
+`pastor,liturgist,vocalist`; congregation is VAD-only). The earlier claim that
+"the Yamaha meter feed has no raw PCM so Whisper cannot transcribe those
+channels" applied only to the meter feed, which remains the degraded fallback.
+The legacy local mic/line-in path
+([`app/identity/audio_capture.py`](../backend/app/identity/audio_capture.py)) is
+still supported.
+
+**Mixer control:** still unavailable — the MGX16 has no published remote-control
+protocol. Fader/mute automation is out of scope pending Yamaha's announced
+Stream Deck / remote operation support (tracked as WO-MGX-CTRL-1).
 
 ## Service state & plan
 
