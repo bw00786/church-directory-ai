@@ -20,6 +20,10 @@ langchain==1.0.0
 langchain-anthropic==0.3.15
 voyageai==0.3.2
 
+# Local (free) embeddings fallback: nomic-embed-text-v1.5
+sentence-transformers==3.3.1
+einops==0.8.0
+
 # Vision
 opencv-python==4.10.0.84
 numpy==2.2.0

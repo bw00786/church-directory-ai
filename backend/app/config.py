@@ -42,6 +42,16 @@ class Settings(BaseSettings):
     voyage_api_key: str = ""
     voyage_embedding_model: str = "voyage-4-large"
 
+    # Embedding provider selection (app.memory.embeddings): "auto" uses Voyage
+    # (if VOYAGE_API_KEY is set) -> nomic-embed-text-v1.5 (free, local, no API
+    # key) -> hashed bag-of-words (last resort). Force a specific tier for
+    # testing/ops with "voyage" | "nomic" | "hashed".
+    embedding_provider: str = "auto"
+    nomic_model_name: str = "nomic-ai/nomic-embed-text-v1.5"
+    # Pin a specific revision (git commit) for reproducibility/supply-chain
+    # safety -- loading uses trust_remote_code=True (see app.memory.embeddings).
+    nomic_model_revision: str = ""
+
     # Production Policy
     autonomous_camera_switching: bool = True
     autonomous_transitions: bool = True

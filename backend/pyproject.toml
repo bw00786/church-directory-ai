@@ -32,6 +32,8 @@ dependencies = [
     "langchain>=1.0.0",
     "langchain-anthropic>=0.3.0",
     "voyageai>=0.3.0",
+    "sentence-transformers>=3.3.0",
+    "einops>=0.8.0",
     
     # Vision
     "opencv-python>=4.10.0",
