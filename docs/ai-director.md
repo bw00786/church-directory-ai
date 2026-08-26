@@ -197,6 +197,12 @@ which walks `next_item`/`prev_item` the right number of times based on the
 service plan's `easyworship_item` order — this only stays accurate if all
 navigation goes through this service.
 
+An optional OCR check ([`app/easyworship/slide_verification.py`](../backend/app/easyworship/slide_verification.py),
+`EASYWORSHIP_SLIDE_VERIFY_ENABLED`) independently confirms a commanded slide
+change actually took visible effect, using a dedicated camera-2 capture — see
+[docs/director.md](director.md#slide-change-verification-via-ocr-wo-ewverify-1).
+It cannot confirm the slide is semantically *correct*, only that something changed.
+
 ## Operating modes
 
 Set via `AI_DIRECTOR_MODE` or `POST /director/ai/mode {"mode": "..."}`:

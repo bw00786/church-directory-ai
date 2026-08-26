@@ -235,6 +235,38 @@ EASYWORSHIP_AGENT_URL=http://<ew-machine-ip>:8091
 The backend's `HttpAgentDriver` health-checks the agent and forwards each action
 to `POST /action/{name}`; the agent injects the configured keystroke locally.
 
+### Slide-change verification via OCR (WO-EWVERIFY-1)
+
+EasyWorship has no read-back API, so the item/index tracking above is
+**best-effort keystroke counting only** — it silently drifts if a keystroke is
+dropped, or if someone operates EasyWorship manually at the same time.
+[`app/easyworship/slide_verification.py`](../backend/app/easyworship/slide_verification.py)
+adds an independent visual check on top of that: after each
+`next_slide`/`prev_slide`/`next_item`/`prev_item` action,
+[`SlideOCR`](../backend/app/vision/slide_ocr.py) (via `easyocr`) reads the
+on-screen text from a **dedicated camera-2 capture** — not the switched ATEM
+program (which may be showing camera 1 instead) — and compares it to what was
+on screen just before the action. If the text is unchanged, the keystroke
+almost certainly didn't register, and an `EASYWORSHIP_SLIDE_STUCK` event is
+published so an operator/AI can notice and retry.
+
+**Important limitation:** this confirms a commanded change visibly took
+effect — it does **not** verify the slide is semantically *correct* for that
+point in the service. There's no authoritative source of expected on-screen
+text (lyrics/scripture aren't stored anywhere in this app) to compare against.
+The extracted text is exposed via `GET /easyworship/status` so a human
+operator can cross-check it against what the congregation should be reading.
+
+Requires a separate hardware tap of the EasyWorship laptop's own video output
+(e.g. an HDMI splitter + USB capture card), independent of the ATEM program
+capture used for PTZ verification. Configuration:
+
+```
+EASYWORSHIP_SLIDE_VERIFY_ENABLED=false   # off by default
+VISION_SLIDES_DEVICE=                    # cv2 device index/name for the camera-2 tap
+SLIDE_VERIFY_DELAY_SECONDS=1.5           # settle time before OCR-checking the change
+```
+
 ### EasyWorship API
 
 | Method | Path                          | Description                     |

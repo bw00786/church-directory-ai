@@ -244,6 +244,18 @@ class Settings(BaseSettings):
     vision_llm_max_px: int = 1024
     vision_llm_max_per_min: int = 2
 
+    # EasyWorship slide-change verification via OCR (WO-EWVERIFY-1).
+    # Independent of vision_enabled -- this only confirms a commanded
+    # next/prev slide/item action visibly changed the on-screen text,
+    # captured from a *dedicated* camera-2/EasyWorship-laptop tap (separate
+    # from the switched ATEM program feed, e.g. an HDMI splitter + capture
+    # device on the laptop's own output). It cannot verify the slide is
+    # semantically *correct* -- there's no authoritative source of expected
+    # on-screen text to compare against, only whether a change took effect.
+    easyworship_slide_verify_enabled: bool = False
+    vision_slides_device: str | None = None  # cv2 device index/name for the camera-2/slides tap
+    slide_verify_delay_seconds: float = 1.5  # settle time before OCR-checking the change
+
     class Config:
         env_file = ".env"
         case_sensitive = False

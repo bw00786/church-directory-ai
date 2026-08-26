@@ -83,7 +83,7 @@ export function AIDirectorPanel() {
             <Typography variant="overline" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
               Camera / ATEM / EasyWorship
             </Typography>
-            <Stack direction="row" spacing={1} flexWrap="wrap">
+            <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
               <Chip label={`camera: ${context?.camera_role ?? '—'}`} size="small" />
               <Chip label={`atem: ${context?.atem_program ?? '—'}`} size="small" />
               <Chip label={`slide: ${context?.easyworship_item ?? '—'}`} size="small" />
@@ -137,7 +137,7 @@ export function AIDirectorPanel() {
             <Typography variant="overline" color="text.secondary">
               Perception
             </Typography>
-            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+            <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
               {Object.entries(status.perception.channels).map(([role, ch]) => (
                 <Chip
                   key={role}
@@ -163,7 +163,7 @@ export function AIDirectorPanel() {
             <Typography variant="overline" color="text.secondary">
               Vision · detector {status.vision.detector ?? 'none'}
             </Typography>
-            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+            <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
               {Object.entries(status.vision.occupancy).map(([key, o]) => (
                 <Chip
                   key={key}

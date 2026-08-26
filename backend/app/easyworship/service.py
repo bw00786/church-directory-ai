@@ -1,10 +1,13 @@
 """EasyWorship slide-control service."""
 
+import asyncio
 from typing import Optional
 
+from app.config import settings
 from app.logging_config import get_logger
 
 from .driver import EasyWorshipDriver, build_driver
+from .slide_verification import SLIDE_CHANGE_ACTIONS, slide_verifier
 
 logger = get_logger(__name__)
 
@@ -81,6 +84,8 @@ class EasyWorshipService:
                 self._current_item_index += 1
             elif name == "prev_item":
                 self._current_item_index = max(0, self._current_item_index - 1)
+            if name in SLIDE_CHANGE_ACTIONS and settings.easyworship_slide_verify_enabled:
+                asyncio.create_task(slide_verifier.verify_after_action(name))
         return ok
 
     async def next_slide(self) -> bool:
@@ -107,6 +112,7 @@ class EasyWorshipService:
             "last_action": self._last_action,
             "current_item_index": self._current_item_index,
             "current_item_label": self._current_item_label,
+            "slide_verification": slide_verifier.snapshot(),
         }
 
 
