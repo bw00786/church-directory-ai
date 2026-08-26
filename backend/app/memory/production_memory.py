@@ -1,9 +1,10 @@
 """Production memory and service history.
 
 Records observations (cue advances, vision events, identity matches, ...)
-tagged by calendar date, embeds them with the dependency-free `TextEmbedder`,
-and supports similarity search across past services. Storage is Postgres via
-the existing SQLAlchemy session/engine (see app.database).
+tagged by calendar date, embeds them with `VoyageTextEmbedder` (see
+app.memory.embeddings), and supports similarity search across past services.
+Storage is Postgres via the existing SQLAlchemy session/engine (see
+app.database).
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ class MemoryManager:
     ) -> dict[str, Any] | None:
         occurred_at = occurred_at or datetime.utcnow()
         service_date = service_date or occurred_at.date().isoformat()
-        embedding = text_embedder.embed(text).tolist()
+        embedding = text_embedder.embed(text, input_type="document").tolist()
         try:
             with get_session() as session:
                 observation = MemoryRepository(session).add_observation(
@@ -50,7 +51,7 @@ class MemoryManager:
             return None
 
     def search(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
-        query_embedding = text_embedder.embed(query).tolist()
+        query_embedding = text_embedder.embed(query, input_type="query").tolist()
         try:
             with get_session() as session:
                 results = MemoryRepository(session).search(query_embedding, limit=limit)

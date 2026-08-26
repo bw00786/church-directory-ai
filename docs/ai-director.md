@@ -111,6 +111,15 @@ existed. Config: `AI_DIRECTOR_USE_MEMORY_RAG` (default `true`),
 `AI_DIRECTOR_MEMORY_RESULTS` (default `5`), `AI_DIRECTOR_MEMORY_MIN_SIMILARITY`
 (default `0.15`).
 
+Retrieval quality depends on [`app/memory/embeddings.py`](../backend/app/memory/embeddings.py):
+with `VOYAGE_API_KEY` set, it embeds with Voyage AI's `voyage-4-large`
+(Anthropic's recommended embeddings partner — Anthropic doesn't offer its own
+embeddings API); without a key, or if a Voyage call fails, it falls back to a
+deterministic local hashed bag-of-words embedding so retrieval keeps working
+(at lower quality) with no external dependency. The retrieval call itself
+runs off the event loop (`asyncio.to_thread`) so a slow/blocked network call
+never stalls the live decision loop.
+
 ## Action engine & policy thresholds
 
 [`ActionEngine`](../backend/app/director/action_engine.py) maps each
@@ -191,5 +200,6 @@ All hardware is mocked; no live ATEM/PTZ/EasyWorship/mixer required:
 - [`tests/test_service_context.py`](../backend/tests/test_service_context.py) — rolling context memory.
 - [`tests/test_ai_policy.py`](../backend/tests/test_ai_policy.py) — per-category confidence thresholds.
 - [`tests/test_ai_service_director.py`](../backend/tests/test_ai_service_director.py) — Claude response parsing + safe fallback (mocked LLM); retrieved-history inclusion/filtering/failure handling.
+- [`tests/test_embeddings.py`](../backend/tests/test_embeddings.py) — Voyage AI embedding + local hashed fallback.
 - [`tests/test_action_engine.py`](../backend/tests/test_action_engine.py) — policy-gated dispatch to mocked ATEM/PTZ/EasyWorship.
 - [`tests/test_ai_director_runtime.py`](../backend/tests/test_ai_director_runtime.py) — manual/assisted/ai_directed mode gating.

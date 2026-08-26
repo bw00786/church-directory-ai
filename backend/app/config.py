@@ -34,7 +34,14 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 1024
     llm_temperature: float = 0.0
     llm_timeout_seconds: int = 30
-    
+
+    # Voyage AI (Anthropic's recommended embeddings partner -- Anthropic does
+    # not offer its own embeddings API). Used for production-memory retrieval
+    # (app.memory.embeddings). Falls back to a local deterministic embedding
+    # if unset, so the app still works without this key.
+    voyage_api_key: str = ""
+    voyage_embedding_model: str = "voyage-4-large"
+
     # Production Policy
     autonomous_camera_switching: bool = True
     autonomous_transitions: bool = True

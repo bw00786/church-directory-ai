@@ -12,6 +12,7 @@ prompt. This never bypasses the policy engine -- it only informs the
 reasoning behind the DirectorDecision, which is still gated like any other.
 """
 
+import asyncio
 import json
 import re
 from functools import lru_cache
@@ -47,11 +48,13 @@ class AIServiceDirector:
             reason="AI Director unavailable (no API key or parse failure); no action taken",
         )
 
-    def _retrieve_history(self, context: ServiceContext, snapshot: dict) -> str:
+    async def _retrieve_history(self, context: ServiceContext, snapshot: dict) -> str:
         """Retrieval-augmented context: similar past-service observations,
         advisory only. Never raises -- a retrieval failure (e.g. no
         database) just means Claude reasons without history, same as before
-        this feature existed."""
+        this feature existed. Runs in a thread since embedding/search may now
+        involve a real network call to Voyage AI, and this must never block
+        the live director's event loop."""
         if not settings.ai_director_use_memory_rag:
             return "None (memory retrieval disabled)."
 
@@ -62,7 +65,9 @@ class AIServiceDirector:
         try:
             from app.memory.production_memory import memory_manager
 
-            results = memory_manager.search(query, limit=settings.ai_director_memory_results)
+            results = await asyncio.to_thread(
+                memory_manager.search, query, limit=settings.ai_director_memory_results
+            )
         except Exception:
             logger.warning("AI Director memory retrieval failed", exc_info=True)
             return "None (retrieval unavailable)."
@@ -89,7 +94,7 @@ class AIServiceDirector:
             f"- {el.id} ({el.type.value}); speaker={el.speaker}; camera={el.camera_role}"
             for el in context.plan.elements
         )
-        history = self._retrieve_history(context, snapshot)
+        history = await self._retrieve_history(context, snapshot)
         user = (
             f"Service plan (guide only):\n{plan_summary}\n\n"
             f"Current state: {snapshot['service_state']}\n"
