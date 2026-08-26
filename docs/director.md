@@ -252,19 +252,28 @@ published so an operator/AI can notice and retry.
 
 **Important limitation:** this confirms a commanded change visibly took
 effect — it does **not** verify the slide is semantically *correct* for that
-point in the service. There's no authoritative source of expected on-screen
-text (lyrics/scripture aren't stored anywhere in this app) to compare against.
-The extracted text is exposed via `GET /easyworship/status` so a human
-operator can cross-check it against what the congregation should be reading.
+point in the service for non-lyric items (sermon slides, announcements). For
+congregational singing, lyric-aware semantic verification (WO-EWVERIFY-3,
+`SLIDE_VERIFY_SEMANTIC_ENABLED`) additionally fuzzy-matches the OCR text
+against the expected lyric of the current song position. The extracted text is
+exposed via `GET /easyworship/status` so a human operator can cross-check it
+against what the congregation should be reading.
 
 Requires a separate hardware tap of the EasyWorship laptop's own video output
 (e.g. an HDMI splitter + USB capture card), independent of the ATEM program
-capture used for PTZ verification. Configuration:
+capture used for PTZ verification. After a slide action the OCR text is polled
+until it stabilizes and differs from the pre-action text; if it never does
+within the timeout (or, with semantic on, doesn't match the expected lyric),
+automation is halted for operator attention and the keystroke is never
+auto-retried. Configuration:
 
 ```
-EASYWORSHIP_SLIDE_VERIFY_ENABLED=false   # off by default
-VISION_SLIDES_DEVICE=                    # cv2 device index/name for the camera-2 tap
-SLIDE_VERIFY_DELAY_SECONDS=1.5           # settle time before OCR-checking the change
+SLIDE_VERIFY_ENABLED=false               # off by default
+SLIDE_VERIFY_DEVICE=                      # cv2 device index/name for the camera-2 tap
+SLIDE_VERIFY_POLL_MS=400                  # stabilization poll interval (ms)
+SLIDE_VERIFY_TIMEOUT_SECONDS=4.0          # give up -> alert + halt automation
+SLIDE_VERIFY_SEMANTIC_ENABLED=false       # lyric-aware correctness check (WO-EWVERIFY-3)
+SLIDE_VERIFY_SEMANTIC_THRESHOLD=0.75      # fuzzy-match acceptance threshold
 ```
 
 ### EasyWorship API

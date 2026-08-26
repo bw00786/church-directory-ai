@@ -2,25 +2,18 @@
 
 import asyncio
 
-import pytest
-
 from app.config import settings
 from app.easyworship.driver import MockDriver
 from app.easyworship.service import EasyWorshipService
 
 
-@pytest.fixture(autouse=True)
-def _fast_delay(monkeypatch):
-    monkeypatch.setattr(settings, "slide_verify_delay_seconds", 0.0)
-
-
 async def test_action_triggers_verification_when_enabled(monkeypatch):
-    monkeypatch.setattr(settings, "easyworship_slide_verify_enabled", True)
+    monkeypatch.setattr(settings, "slide_verify_enabled", True)
     from app.easyworship import service as service_module
 
     calls = []
 
-    async def fake_verify(action):
+    async def fake_verify(action, *args, **kwargs):
         calls.append(action)
 
     monkeypatch.setattr(service_module.slide_verifier, "verify_after_action", fake_verify)
@@ -34,12 +27,12 @@ async def test_action_triggers_verification_when_enabled(monkeypatch):
 
 
 async def test_action_skips_verification_when_disabled(monkeypatch):
-    monkeypatch.setattr(settings, "easyworship_slide_verify_enabled", False)
+    monkeypatch.setattr(settings, "slide_verify_enabled", False)
     from app.easyworship import service as service_module
 
     calls = []
 
-    async def fake_verify(action):
+    async def fake_verify(action, *args, **kwargs):
         calls.append(action)
 
     monkeypatch.setattr(service_module.slide_verifier, "verify_after_action", fake_verify)

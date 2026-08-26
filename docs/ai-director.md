@@ -198,10 +198,12 @@ service plan's `easyworship_item` order — this only stays accurate if all
 navigation goes through this service.
 
 An optional OCR check ([`app/easyworship/slide_verification.py`](../backend/app/easyworship/slide_verification.py),
-`EASYWORSHIP_SLIDE_VERIFY_ENABLED`) independently confirms a commanded slide
-change actually took visible effect, using a dedicated camera-2 capture — see
+`SLIDE_VERIFY_ENABLED`) independently confirms a commanded slide
+change actually took visible effect, using a dedicated camera-2 capture -- see
 [docs/director.md](director.md#slide-change-verification-via-ocr-wo-ewverify-1).
-It cannot confirm the slide is semantically *correct*, only that something changed.
+Change-detection alone cannot confirm the slide is semantically *correct*;
+lyric-aware semantic verification (`SLIDE_VERIFY_SEMANTIC_ENABLED`) closes that
+gap for congregational singing.
 
 ## Operating modes
 

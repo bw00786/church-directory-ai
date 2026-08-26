@@ -1,5 +1,7 @@
 """Application configuration from environment."""
 
+import sys
+
 from pydantic_settings import BaseSettings
 
 
@@ -244,17 +246,24 @@ class Settings(BaseSettings):
     vision_llm_max_px: int = 1024
     vision_llm_max_per_min: int = 2
 
-    # EasyWorship slide-change verification via OCR (WO-EWVERIFY-1).
-    # Independent of vision_enabled -- this only confirms a commanded
-    # next/prev slide/item action visibly changed the on-screen text,
-    # captured from a *dedicated* camera-2/EasyWorship-laptop tap (separate
-    # from the switched ATEM program feed, e.g. an HDMI splitter + capture
-    # device on the laptop's own output). It cannot verify the slide is
-    # semantically *correct* -- there's no authoritative source of expected
-    # on-screen text to compare against, only whether a change took effect.
-    easyworship_slide_verify_enabled: bool = False
-    vision_slides_device: str | None = None  # cv2 device index/name for the camera-2/slides tap
-    slide_verify_delay_seconds: float = 1.5  # settle time before OCR-checking the change
+    # EasyWorship slide-change verification via OCR (WO-EWVERIFY-1/-2/-3).
+    # Independent of vision_enabled -- confirms a commanded next/prev
+    # slide/item action visibly changed the on-screen text, captured from a
+    # *dedicated* camera-2/EasyWorship-laptop tap (separate from the switched
+    # ATEM program feed, e.g. an HDMI splitter + capture device on the
+    # laptop's own output). When enabled with an empty/unopenable device the
+    # app hard-fails at startup (a verification feature that never runs is a
+    # green light wired to nothing).
+    slide_verify_enabled: bool = False
+    slide_verify_device: str = ""          # cv2 device index/name for the slides feed
+    slide_verify_poll_ms: int = 400        # stabilization poll interval
+    slide_verify_timeout_seconds: float = 4.0  # give up -> alert + halt automation
+    # Lyric-aware semantic verification (WO-EWVERIFY-3). Independent toggle on
+    # top of SLIDE_VERIFY_ENABLED; enabling it without change-detection is a
+    # startup error. Compares stable post-action OCR text to the expected
+    # lyric text via fuzzy match; below SEMANTIC_THRESHOLD -> alert + halt.
+    slide_verify_semantic_enabled: bool = False
+    slide_verify_semantic_threshold: float = 0.75
 
     class Config:
         env_file = ".env"
@@ -274,5 +283,11 @@ class Settings(BaseSettings):
         )
 
 
-# Global settings instance
-settings = Settings()
+# Global settings instance. Constructing this parses every env/.env value; an
+# unparseable numeric/boolean value raises here (pydantic names the offending
+# field) -- fail loud at startup, never silently fall back to defaults.
+try:
+    settings = Settings()
+except Exception as exc:  # pragma: no cover - exercised via subprocess in tests
+    print(f"FATAL: invalid configuration -- {exc}", file=sys.stderr)
+    raise

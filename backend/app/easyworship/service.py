@@ -84,7 +84,7 @@ class EasyWorshipService:
                 self._current_item_index += 1
             elif name == "prev_item":
                 self._current_item_index = max(0, self._current_item_index - 1)
-            if name in SLIDE_CHANGE_ACTIONS and settings.easyworship_slide_verify_enabled:
+            if name in SLIDE_CHANGE_ACTIONS and settings.slide_verify_enabled:
                 asyncio.create_task(slide_verifier.verify_after_action(name))
         return ok
 

@@ -67,15 +67,15 @@ async def lifespan(app: FastAPI):
         except Exception:
             logger.exception("Failed to start vision layer")
 
-    # EasyWorship slide-change verification via OCR (WO-EWVERIFY-1). Gated
-    # independently by EASYWORSHIP_SLIDE_VERIFY_ENABLED (not VISION_ENABLED).
-    if settings.easyworship_slide_verify_enabled:
-        try:
-            from app.easyworship.slide_verification import start_slide_verification
+    # Slide-change verification (WO-EWVERIFY-1/-2/-3). Gated independently by
+    # SLIDE_VERIFY_ENABLED (not VISION_ENABLED). Config is validated here and
+    # an enabled-but-unusable capture (empty/unopenable device) is a hard
+    # startup failure -- intentionally NOT wrapped in try/except: a
+    # verification feature that is "on" but never runs is a green light wired
+    # to nothing.
+    from app.easyworship.slide_verification import start_slide_verification
 
-            await start_slide_verification()
-        except Exception:
-            logger.exception("Failed to start slide verification")
+    await start_slide_verification()
 
     # Start local microphone/line-in capture for real-audio voice diarization
     # (disabled by default; requires ENABLE_AUDIO_CAPTURE=true and hardware).
@@ -147,7 +147,7 @@ async def lifespan(app: FastAPI):
             await stop_vision_layer()
         except Exception:
             logger.exception("Failed to stop vision layer")
-    if settings.easyworship_slide_verify_enabled:
+    if settings.slide_verify_enabled:
         try:
             from app.easyworship.slide_verification import stop_slide_verification
 
