@@ -49,11 +49,18 @@ export interface PerceptionStatus {
   channels: Record<string, PerceptionChannel>
 }
 
+export interface VisionStatus {
+  detector: string | null
+  inputs: Record<string, { healthy: boolean; fps: number; age: number | null }>
+  occupancy: Record<string, { person_in_roi: boolean; frame_health: string }>
+}
+
 export interface AiDirectorStatus {
   mode: AiDirectorMode
   context: ServiceContextSnapshot
   pending_actions: PendingAction[]
   perception?: PerceptionStatus
+  vision?: VisionStatus
 }
 
 async function getJSON<T>(path: string): Promise<T> {

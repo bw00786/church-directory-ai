@@ -68,6 +68,36 @@ still supported.
 protocol. Fader/mute automation is out of scope pending Yamaha's announced
 Stream Deck / remote operation support (tracked as WO-MGX-CTRL-1).
 
+## Vision observation & PTZ verification (WO-VISION-1)
+
+Vision is an **observation and verification** source only — never an actor.
+Gated by `VISION_ENABLED` (off = byte-identical to pre-WO).
+
+- [`FrameCaptureService`](../backend/app/vision/frame_capture.py) — multi-input
+  capture (`program` via USB/HDMI, per-camera `camera_<id>` via the PTZOptics
+  `snapshot.jpg` endpoint at `VISION_SNAPSHOT_HZ`, or a `dir` replay source).
+  Bounded diagnostic ring only; nothing persisted. Per-input stall emits
+  `PERCEPTION_DEGRADED(vision:<input>)`.
+- [`perception.py`](../backend/app/vision/perception.py) — anonymous person
+  detection (`VISION_DETECTOR=auto|yolo|opencv_hog`, health-only fallthrough),
+  per-role ROI (`VISION_ROLE_ROI_<ROLE>`), normalized subject offset, and
+  black/frozen frame health. Publishes `VisionObservation`s into `ServiceContext`
+  (`snapshot()["vision"]`).
+- [`verification.py`](../backend/app/vision/verification.py) — after a PTZ preset
+  recall, waits `PTZ_VERIFY_DELAY_MS`, grabs a frame, and classifies
+  `verified` / `bad_framing` / `subject_absent` (empty-stage wait up to
+  `PTZ_SUBJECT_WAIT_SECONDS`) / `unverified`. On `bad_framing`/black while on
+  **preview**, a pending ATEM cut/auto is blocked for `PTZ_BLOCK_SECONDS`
+  (operator override via `override`). The consecutive-`unverified` ladder
+  (`PTZ_UNVERIFIED_MAX`) drops `camera_change` to assisted. `PTZ_VERIFY_ACTION=log`
+  is observation-only.
+- [`semantic.py`](../backend/app/vision/semantic.py) — optional Claude-vision tier
+  (`VISION_LLM_ENABLED`, rate-limited), fires only on defined triggers and parses
+  a whitelist of typed context fields — **never actions**.
+- [`evidence.py`](../backend/app/vision/evidence.py) — registers `person_in_roi`
+  corroboration and a `black`-frame veto with WO-CONF-1's evidence engine when
+  present; otherwise verdicts go to `ServiceContext` only (one-line wire-up later).
+
 ## Service state & plan
 
 [`ServiceState`](../backend/app/domain/service_state.py) is the formal state

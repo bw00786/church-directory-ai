@@ -86,9 +86,15 @@ class ActionEngine:
         atem = get_atem_service_instance()
 
         if action.type == DirectorActionType.ATEM_CUT:
+            blocked = await self._blocked_preview(atem, action)
+            if blocked:
+                return blocked
             await atem.cut()
             return "cut"
         if action.type == DirectorActionType.ATEM_AUTO:
+            blocked = await self._blocked_preview(atem, action)
+            if blocked:
+                return blocked
             await atem.auto()
             return "auto"
         if action.type == DirectorActionType.ATEM_SET_PROGRAM:
@@ -111,6 +117,7 @@ class ActionEngine:
             ok = await camera_service.move_to_role(role)
             if ok:
                 service_context.current_camera_role = role
+                self._schedule_ptz_verify(role, self._camera_for_role(role))
             return f"camera -> {role} ({'ok' if ok else 'failed'})"
         if action.type == DirectorActionType.PTZ_PRESET:
             camera_id = action.parameters.get("camera_id")
@@ -118,6 +125,10 @@ class ActionEngine:
             if camera_id is None or preset_id is None:
                 return "no camera_id/preset_id given"
             ok = await camera_service.move_to_preset(int(camera_id), int(preset_id))
+            if ok:
+                role = self._role_for_preset(int(camera_id), int(preset_id))
+                if role:
+                    self._schedule_ptz_verify(role, int(camera_id))
             return f"preset {preset_id} on camera {camera_id} ({'ok' if ok else 'failed'})"
         if action.type == DirectorActionType.EASYWORSHIP_NEXT:
             ok = await easyworship_service.next_item()
@@ -146,6 +157,65 @@ class ActionEngine:
             return "no service state given"
 
         return "unhandled action type"
+
+    # -- PTZ verification hooks (WO-VISION-1; gated by vision_enabled) --------
+    @staticmethod
+    def _camera_for_role(role: str):
+        from app.config import settings
+
+        return getattr(settings, f"camera_role_{role}_camera", None)
+
+    @staticmethod
+    def _role_for_preset(camera_id: int, preset_id: int):
+        from app.config import settings
+
+        for role in ("pastor", "liturgist", "vocalist", "congregation", "choir", "wide"):
+            if (
+                getattr(settings, f"camera_role_{role}_camera", None) == camera_id
+                and getattr(settings, f"camera_role_{role}_preset", None) == preset_id
+            ):
+                return role
+        return None
+
+    def _schedule_ptz_verify(self, role, camera_id) -> None:
+        from app.config import settings
+
+        if not settings.vision_enabled or camera_id is None:
+            return
+        import asyncio
+
+        from app.vision.verification import camera_to_atem_input, ptz_verifier
+
+        atem_input = camera_to_atem_input(camera_id)
+        on_program = atem_input is not None and service_context.current_atem_program == atem_input
+        with_loop = True
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            with_loop = False
+        if with_loop:
+            asyncio.create_task(
+                ptz_verifier.verify(role, camera_id, on_program=on_program, on_preview=not on_program)
+            )
+
+    async def _blocked_preview(self, atem, action) -> Optional[str]:
+        from app.config import settings
+
+        if not settings.vision_enabled or action.parameters.get("override"):
+            return None
+        from app.vision.verification import ptz_verifier
+
+        try:
+            state = await atem.get_state()
+            preview = getattr(state, "preview_input", None)
+        except Exception:
+            return None
+        if preview is not None and ptz_verifier.is_blocked(int(preview)):
+            event_bus.publish(
+                {"event": "ATEM_CUT_BLOCKED", "payload": {"preview_input": int(preview), "reason": "ptz_verify_failed"}}
+            )
+            return f"blocked: preview input {preview} failed PTZ verification"
+        return None
 
 
 def build_action_engine() -> ActionEngine:

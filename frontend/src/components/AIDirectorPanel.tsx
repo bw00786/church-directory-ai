@@ -151,6 +151,32 @@ export function AIDirectorPanel() {
           </Paper>
         )}
 
+        {status?.vision && (status.vision.detector || Object.keys(status.vision.occupancy).length > 0) && (
+          <Paper
+            variant="outlined"
+            sx={{
+              p: 1.5,
+              mt: 2,
+              borderColor: status.vision.occupancy.program?.frame_health === 'black' ? 'error.main' : undefined,
+            }}
+          >
+            <Typography variant="overline" color="text.secondary">
+              Vision · detector {status.vision.detector ?? 'none'}
+            </Typography>
+            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              {Object.entries(status.vision.occupancy).map(([key, o]) => (
+                <Chip
+                  key={key}
+                  size="small"
+                  color={o.frame_health !== 'ok' ? 'error' : o.person_in_roi ? 'success' : 'default'}
+                  variant={o.person_in_roi ? 'filled' : 'outlined'}
+                  label={`${key}: ${o.frame_health}${o.person_in_roi ? ' · in-roi' : ''}`}
+                />
+              ))}
+            </Stack>
+          </Paper>
+        )}
+
         {status && status.pending_actions.length > 0 && (
           <>
             <Divider sx={{ my: 2 }} />

@@ -212,6 +212,38 @@ class Settings(BaseSettings):
     ai_director_memory_results: int = 5
     ai_director_memory_min_similarity: float = 0.15
 
+    # Vision observation & PTZ verification layer (WO-VISION-1). Gated by
+    # vision_enabled (VISION_ENABLED); byte-identical to pre-WO when off.
+    vision_detector: str = "auto"          # auto | yolo | opencv_hog
+    vision_snapshot_hz: float = 1.0        # PTZOptics snapshot poll rate
+    vision_ring_minutes: int = 10          # diagnostic frame ring buffer (memory)
+    vision_min_fps: float = 0.2            # below this -> degradation event
+    vision_stall_seconds: float = 3.0      # per-input no-frame stall threshold
+    vision_program_device: str | None = None  # cv2 device index/name for program
+    vision_frame_source: str = "live"      # live | dir
+    vision_frame_dir: str | None = None    # FRAME_SOURCE=dir root (per-tag subdirs)
+
+    # Per-role expected-subject ROI as fractional "x,y,w,h" (all in [0,1]).
+    vision_role_roi_pastor: str = "0.30,0.15,0.40,0.75"
+    vision_role_roi_liturgist: str = "0.30,0.15,0.40,0.75"
+    vision_role_roi_vocalist: str = "0.25,0.15,0.50,0.75"
+    vision_role_roi_congregation: str = "0.05,0.20,0.90,0.70"
+    vision_role_roi_choir: str = "0.10,0.15,0.80,0.75"
+    vision_role_roi_wide: str = "0.05,0.10,0.90,0.85"
+
+    # PTZ verification (FR-3).
+    ptz_verify_action: str = "enforce"     # enforce | log (observation-only)
+    ptz_verify_delay_ms: int = 1500        # motor-settle delay before checking
+    ptz_offset_max: float = 0.25           # max |subject offset| for a pass
+    ptz_block_seconds: float = 8.0         # block preview->program on bad framing
+    ptz_unverified_max: int = 5            # consecutive unverified -> assisted
+    ptz_subject_wait_seconds: float = 30.0  # empty-stage re-check window
+
+    # Claude-vision escalation (FR-4). Optional, off by default, out of hot loop.
+    vision_llm_enabled: bool = False
+    vision_llm_max_px: int = 1024
+    vision_llm_max_per_min: int = 2
+
     class Config:
         env_file = ".env"
         case_sensitive = False

@@ -23,13 +23,26 @@ class AudioObservation(BaseModel):
 
 
 class VisionObservation(BaseModel):
-    """Verification signal from the vision subsystem (not the primary driver)."""
+    """A verification signal from the vision subsystem (WO-VISION-1).
 
-    camera_id: int
-    person_detected: bool
+    Never an actor: this only *observes* (occupancy, framing, output health) so
+    Claude can reason and PTZ actions can be verified. Anonymous — no identity.
+    """
+
+    input: str = "program"                 # capture input tag
+    camera_id: Optional[int] = None
     role: Optional[str] = None
+    person_present: bool = False
+    person_in_roi: bool = False
+    subject_dx: float = 0.0                 # normalized offset from ROI center
+    subject_dy: float = 0.0
+    frame_health: str = "ok"               # ok | black | frozen | no_frame
     confidence: float = 0.0
     timestamp: datetime = Field(default_factory=_utcnow)
+
+    @property
+    def offset_magnitude(self) -> float:
+        return (self.subject_dx ** 2 + self.subject_dy ** 2) ** 0.5
 
 
 class TranscriptResult(BaseModel):

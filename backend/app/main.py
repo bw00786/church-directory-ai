@@ -57,6 +57,16 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Failed to start AI Director runtime")
 
+    # Vision observation & PTZ verification (WO-VISION-1). Gated by
+    # VISION_ENABLED; when off, nothing here runs (regression gate).
+    if settings.vision_enabled:
+        try:
+            from app.vision.startup import start_vision_layer
+
+            await start_vision_layer()
+        except Exception:
+            logger.exception("Failed to start vision layer")
+
     # Start local microphone/line-in capture for real-audio voice diarization
     # (disabled by default; requires ENABLE_AUDIO_CAPTURE=true and hardware).
     try:
@@ -120,6 +130,13 @@ async def lifespan(app: FastAPI):
     
     if settings.vision_enabled or vision_manager.has_real_camera_source():
         await vision_manager.stop()
+    if settings.vision_enabled:
+        try:
+            from app.vision.startup import stop_vision_layer
+
+            await stop_vision_layer()
+        except Exception:
+            logger.exception("Failed to stop vision layer")
     try:
         from app.mixer.service import mixer_service
         await mixer_service.stop()
