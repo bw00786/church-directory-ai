@@ -95,6 +95,22 @@ strict-JSON `DirectorDecision`:
 If Claude is unavailable or the response can't be parsed, it falls back to
 `{"decision": "continue", "confidence": 0.0}` — never a fabricated action.
 
+## Retrieval-augmented context (production memory)
+
+Each decision cycle, [`AIServiceDirector._retrieve_history()`](../backend/app/ai/service_director.py)
+searches production memory ([`app/memory/production_memory.py`](../backend/app/memory/production_memory.py),
+the same store [`search_past_services`](../backend/app/agents/assistant_tools.py) uses for the
+chat assistant) for past observations similar to the current state + recent
+transcript, and includes any results above `AI_DIRECTOR_MEMORY_MIN_SIMILARITY`
+(default `0.15`) in the prompt as **advisory-only history** — the
+[system prompt](../backend/app/ai/prompts/service_director.txt) explicitly
+tells Claude to prefer live signals over it when they conflict. This is
+retrieval, not training: nothing is fine-tuned, and a retrieval failure (e.g.
+no database) just means Claude reasons without history, same as before this
+existed. Config: `AI_DIRECTOR_USE_MEMORY_RAG` (default `true`),
+`AI_DIRECTOR_MEMORY_RESULTS` (default `5`), `AI_DIRECTOR_MEMORY_MIN_SIMILARITY`
+(default `0.15`).
+
 ## Action engine & policy thresholds
 
 [`ActionEngine`](../backend/app/director/action_engine.py) maps each
@@ -174,6 +190,6 @@ All hardware is mocked; no live ATEM/PTZ/EasyWorship/mixer required:
 - [`tests/test_audio_vad.py`](../backend/tests/test_audio_vad.py) — VAD speaking/silence transitions.
 - [`tests/test_service_context.py`](../backend/tests/test_service_context.py) — rolling context memory.
 - [`tests/test_ai_policy.py`](../backend/tests/test_ai_policy.py) — per-category confidence thresholds.
-- [`tests/test_ai_service_director.py`](../backend/tests/test_ai_service_director.py) — Claude response parsing + safe fallback (mocked LLM).
+- [`tests/test_ai_service_director.py`](../backend/tests/test_ai_service_director.py) — Claude response parsing + safe fallback (mocked LLM); retrieved-history inclusion/filtering/failure handling.
 - [`tests/test_action_engine.py`](../backend/tests/test_action_engine.py) — policy-gated dispatch to mocked ATEM/PTZ/EasyWorship.
 - [`tests/test_ai_director_runtime.py`](../backend/tests/test_ai_director_runtime.py) — manual/assisted/ai_directed mode gating.

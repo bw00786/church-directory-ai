@@ -164,6 +164,15 @@ class Settings(BaseSettings):
     confidence_slide_change: float = 0.85
     confidence_atem_transition: float = 0.90
 
+    # Retrieval-augmented context: on each decision cycle, search production
+    # memory (past cue/AI actions + decisions, see app.memory) for similar
+    # past moments and hand them to Claude as advisory-only history. Never
+    # bypasses the policy engine -- it only informs the reasoning that
+    # produces a DirectorDecision, which is gated exactly like any other.
+    ai_director_use_memory_rag: bool = True
+    ai_director_memory_results: int = 5
+    ai_director_memory_min_similarity: float = 0.15
+
     class Config:
         env_file = ".env"
         case_sensitive = False
