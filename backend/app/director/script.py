@@ -146,6 +146,74 @@ def build_default_service_script() -> ServiceScript:
             ],
             advance=AdvanceTrigger.MANUAL,
         ),
+        Cue(
+            id="communion_pastor",
+            name="Communion — Pastor",
+            description="Pastor speaks during the introduction of communion",
+            actions=[
+                _atem(cam1, "Switch to PTZOptics camera"),
+                _preset(2, "Preset 2 — pastor speaking", role="pastor"),
+            ],
+            ai_enabled=True,
+            advance=AdvanceTrigger.MANUAL,
+        ),
+        Cue(
+            id="communion_congregation",
+            name="Communion — Congregation",
+            description="Congregation participates in the communion.",
+            actions=[
+                _atem(cam1, "Switch to PTZOptics camera"),
+                _preset(6, "Preset 6 — congregation participating", role="congregation"),
+            ],
+            ai_enabled=True,
+            advance=AdvanceTrigger.MANUAL,
+        ),
+        Cue(
+            id="community_prayers",
+            name="Community Prayer — Pastor",
+            description="Pastor speaks.",
+            actions=[
+                _atem(cam1, "Switch to PTZOptics camera"),
+                _preset(3, "Preset 3 — pastor speaking", role="pastor"),
+            ],
+            advance=AdvanceTrigger.MANUAL,
+        ),
+        Cue(
+            id="offertory_liturgist",
+            name="Offertory — Liturgist",
+            description="Liturgist at the podium for the offertory.",
+            actions=[
+                _atem(cam1, "Switch to PTZOptics camera"),
+                _preset(4, "Preset 4 — liturgist's podium", role="liturgist"),
+            ],
+            advance=AdvanceTrigger.MANUAL,
+            ai_enabled=True,
+            exit_hint="Advance when the liturgist begins the offertory.",
+        ),
+        Cue(
+            id="final_song",
+            name="Final Song — Congregation",
+            description="Congregation sings the final song.",
+            actions=[
+                _atem(cam2, "Switch to slides for the final song"),
+                _slide("next_item", "EasyWorship: advance to the final song"),
+            ],
+            advance=AdvanceTrigger.MANUAL,
+            ai_enabled=True,
+            exit_hint="Advance when the congregation ends singing the final song.",
+        ),
+        Cue(
+            id="benediction",
+            name="Benediction — Pastor",
+            description="Pastor gives the benediction.",
+            actions=[
+                _atem(cam1, "Switch to PTZOptics camera"),
+                _preset(3, "Preset 3 — pastor speaking", role="pastor"),
+            ],
+            advance=AdvanceTrigger.MANUAL,
+            ai_enabled=True,
+            exit_hint="Advance when the pastor finishes the benediction.",
+        ),
     ]
 
     return ServiceScript(name="Vernon UMC — Sunday Service", cues=cues)
