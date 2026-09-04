@@ -29,7 +29,14 @@ async def lifespan(app: FastAPI):
         "configuration",
         atem_ip=settings.atem_ip,
         mock_atem_enabled=settings.enable_mock_atem,
+        mock_mixer_enabled=settings.enable_mock_mixer,
+        mock_easyworship_enabled=settings.enable_mock_easyworship,
+        easyworship_driver=settings.easyworship_driver,
+        camera_1_host=settings.camera_1_host,
         ai_director_enabled=settings.enable_ai_director,
+        ai_director_mode=settings.ai_director_mode,
+        service_autonomous=settings.service_autonomous,
+        service_auto_start=settings.service_auto_start_enabled,
         vision_enabled=settings.vision_enabled,
     )
 
@@ -99,7 +106,8 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Failed to start service scheduler")
 
-    # Connect EasyWorship slide control (mock unless on the Windows desktop).
+    # Connect EasyWorship slide control (mock, native remote protocol, HTTP
+    # agent, or local keystrokes -- see EASYWORSHIP_DRIVER).
     try:
         from app.easyworship.service import easyworship_service
         await easyworship_service.start()
@@ -184,6 +192,11 @@ async def lifespan(app: FastAPI):
         await service_scheduler.stop()
     except Exception:
         logger.exception("Failed to stop service scheduler")
+    try:
+        from app.easyworship.service import easyworship_service
+        await easyworship_service.stop()
+    except Exception:
+        logger.exception("Failed to stop EasyWorship service")
     logger.info("Church Production Director shutting down...")
 
 

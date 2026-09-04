@@ -1,4 +1,9 @@
-"""Standalone EasyWorship control agent (run on the Windows EW desktop).
+"""Standalone EasyWorship keystroke agent (run on the Windows EW desktop).
+
+FALLBACK ONLY. EasyWorship 7.3+ has a native Remote Control TCP protocol that
+the backend speaks directly (EASYWORSHIP_DRIVER=remote; enable it in EasyWorship
+under Edit > Options > Advanced > "Enable Remote Control"). Use this agent only
+when that is unavailable.
 
 A tiny HTTP service that injects keystrokes into the EasyWorship window, so the
 church-production backend can control slides remotely when it runs on a
@@ -15,10 +20,11 @@ Then point the backend at it:
 
 Endpoints:
     GET  /health          -> {"ok": true}
-    POST /action/{name}   -> inject the configured key for {name}
+    POST /action/{name}   -> inject the configured key(s) for {name}
 
 Actions: next_slide, prev_slide, next_item, prev_item, clear, logo, black, live.
-Key mappings and window title come from environment variables (see DEFAULTS).
+Key mappings (EasyWorship 7.3+ defaults) and window title come from environment
+variables (see DEFAULTS). Comma-separated specs are sent in sequence.
 """
 
 import ctypes
@@ -28,15 +34,17 @@ import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # Action -> default key spec. Override via EW_KEY_<ACTION> env vars.
+# EW 7.3+: Down/Up = slide, Right/Left = select schedule item, Page Down = Go Live,
+# Ctrl+C clear, Ctrl+L logo, Ctrl+B black. The Live pane must have focus.
 DEFAULTS = {
-    "next_slide": "pagedown",
-    "prev_slide": "pageup",
-    "next_item": "ctrl+pagedown",
-    "prev_item": "ctrl+pageup",
-    "clear": "f5",
-    "logo": "f6",
-    "black": "f7",
-    "live": "f9",
+    "next_slide": "down",
+    "prev_slide": "up",
+    "next_item": "right,pagedown",
+    "prev_item": "left,pagedown",
+    "clear": "ctrl+c",
+    "logo": "ctrl+l",
+    "black": "ctrl+b",
+    "live": "pagedown",
 }
 
 WINDOW_TITLE = os.environ.get("EASYWORSHIP_WINDOW_TITLE", "EasyWorship")
@@ -77,6 +85,13 @@ def parse_key_spec(spec: str):
     return mods, key_vk
 
 
+def parse_key_sequence(spec: str):
+    steps = [s for s in (p.strip() for p in spec.split(",")) if s]
+    if not steps:
+        raise ValueError("empty key sequence")
+    return [parse_key_spec(step) for step in steps]
+
+
 def find_window():
     if sys.platform != "win32":
         return None
@@ -103,28 +118,29 @@ def inject(action: str) -> bool:
     spec = key_spec_for(action)
     if not spec:
         return False
-    mods, key_vk = parse_key_spec(spec)
+    sequence = parse_key_sequence(spec)
     hwnd = find_window()
     if hwnd is None:
         return False
     user32 = ctypes.windll.user32
     KEYUP = 0x0002
-    if SEND_MODE == "postmessage":
-        WM_KEYDOWN, WM_KEYUP = 0x0100, 0x0101
-        for m in mods:
-            user32.PostMessageW(hwnd, WM_KEYDOWN, m, 0)
-        user32.PostMessageW(hwnd, WM_KEYDOWN, key_vk, 0)
-        user32.PostMessageW(hwnd, WM_KEYUP, key_vk, 0)
-        for m in reversed(mods):
-            user32.PostMessageW(hwnd, WM_KEYUP, m, 0)
-    else:
-        user32.SetForegroundWindow(hwnd)
-        for m in mods:
-            user32.keybd_event(m, 0, 0, 0)
-        user32.keybd_event(key_vk, 0, 0, 0)
-        user32.keybd_event(key_vk, 0, KEYUP, 0)
-        for m in reversed(mods):
-            user32.keybd_event(m, 0, KEYUP, 0)
+    for mods, key_vk in sequence:
+        if SEND_MODE == "postmessage":
+            WM_KEYDOWN, WM_KEYUP = 0x0100, 0x0101
+            for m in mods:
+                user32.PostMessageW(hwnd, WM_KEYDOWN, m, 0)
+            user32.PostMessageW(hwnd, WM_KEYDOWN, key_vk, 0)
+            user32.PostMessageW(hwnd, WM_KEYUP, key_vk, 0)
+            for m in reversed(mods):
+                user32.PostMessageW(hwnd, WM_KEYUP, m, 0)
+        else:
+            user32.SetForegroundWindow(hwnd)
+            for m in mods:
+                user32.keybd_event(m, 0, 0, 0)
+            user32.keybd_event(key_vk, 0, 0, 0)
+            user32.keybd_event(key_vk, 0, KEYUP, 0)
+            for m in reversed(mods):
+                user32.keybd_event(m, 0, KEYUP, 0)
     return True
 
 

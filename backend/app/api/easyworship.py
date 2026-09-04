@@ -43,3 +43,23 @@ async def previous_slide():
     if not ok:
         raise HTTPException(status_code=502, detail="EasyWorship command failed")
     return {"ok": True}
+
+
+@router.post("/item/{label}")
+async def select_item(label: str):
+    """Go live on the service-plan item with this EasyWorship label."""
+    ok = await easyworship_service.select_item(label)
+    if not ok:
+        raise HTTPException(status_code=502, detail="EasyWorship item selection failed")
+    return {"ok": True, "item": label}
+
+
+@router.post("/slide/{number}")
+async def goto_slide(number: int):
+    """Jump to slide `number` (1-based) in the live item. Remote protocol only."""
+    if number < 1:
+        raise HTTPException(status_code=400, detail="slide number must be >= 1")
+    ok = await easyworship_service.goto_slide(number)
+    if not ok:
+        raise HTTPException(status_code=502, detail="EasyWorship slide jump failed or unsupported")
+    return {"ok": True, "slide": number}

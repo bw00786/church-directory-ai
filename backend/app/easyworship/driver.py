@@ -1,10 +1,11 @@
 """EasyWorship control drivers.
 
-EasyWorship has no public API, so control is done by injecting keystrokes into
-its window on the Windows desktop (the standard approach, as used by AutoHotkey
-and Stream Deck setups). The ``KeyboardDriver`` targets the EasyWorship window by
-title and sends the configured key for each action; a ``MockDriver`` is used for
-development and on non-Windows machines.
+Preferred: EasyWorship 7.3+'s native Remote Control TCP protocol
+(``RemoteProtocolDriver`` in :mod:`app.easyworship.remote_protocol`), which
+needs no window focus, supports absolute jumps and reports the live slide
+position back. Fallbacks inject keystrokes into the EasyWorship window, either
+locally (``KeyboardDriver``) or through a small HTTP agent on the EW machine
+(``HttpAgentDriver``). ``MockDriver`` is used for development and tests.
 """
 
 import sys
@@ -14,7 +15,7 @@ from typing import Optional
 from app.config import settings
 from app.logging_config import get_logger
 
-from .keys import parse_key_spec
+from .keys import parse_key_sequence
 
 logger = get_logger(__name__)
 
@@ -46,6 +47,11 @@ class EasyWorshipDriver(ABC):
     @abstractmethod
     async def send_action(self, action: str) -> bool:
         """Send a named action (e.g. ``next_slide``). Returns success."""
+
+    @property
+    def supports_confirmation(self) -> bool:
+        """True when the driver reads EasyWorship state back (see remote_protocol)."""
+        return False
 
 
 class MockDriver(EasyWorshipDriver):
@@ -91,7 +97,7 @@ class KeyboardDriver(EasyWorshipDriver):
             logger.warning("No key mapping for EasyWorship action", action=action)
             return False
         try:
-            mods, key_vk = parse_key_spec(spec)
+            sequence = parse_key_sequence(spec)
         except ValueError as e:
             logger.warning("Bad EasyWorship key spec", action=action, error=str(e))
             return False
@@ -103,10 +109,11 @@ class KeyboardDriver(EasyWorshipDriver):
             return False
 
         try:
-            if self.send_mode == "postmessage":
-                self._post_keys(self._hwnd, mods, key_vk)
-            else:
-                self._foreground_send(self._hwnd, mods, key_vk)
+            for mods, key_vk in sequence:
+                if self.send_mode == "postmessage":
+                    self._post_keys(self._hwnd, mods, key_vk)
+                else:
+                    self._foreground_send(self._hwnd, mods, key_vk)
             logger.info("EasyWorship action sent", action=action, spec=spec)
             return True
         except Exception as e:
@@ -209,13 +216,40 @@ class HttpAgentDriver(EasyWorshipDriver):
             return False
 
 
+def _zeroconf_available() -> bool:
+    try:
+        import zeroconf  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
 def build_driver(mock: Optional[bool] = None) -> EasyWorshipDriver:
-    """Select a driver: mock, remote agent, local keystrokes, or mock fallback."""
+    """Select a driver per ``settings.easyworship_driver`` (see config.py)."""
     use_mock = settings.enable_mock_easyworship if mock is None else mock
     if use_mock:
         return MockDriver()
+
+    from .remote_protocol import RemoteProtocolDriver
+
+    mode = (settings.easyworship_driver or "auto").lower()
+    if mode == "mock":
+        return MockDriver()
+    if mode == "remote":
+        return RemoteProtocolDriver()
+    if mode == "agent":
+        return HttpAgentDriver()
+    if mode == "keyboard":
+        return KeyboardDriver() if sys.platform == "win32" else MockDriver()
+    if mode != "auto":
+        logger.warning("Unknown EASYWORSHIP_DRIVER; using auto", value=mode)
+
+    if settings.easyworship_remote_host:
+        return RemoteProtocolDriver()
     if settings.easyworship_agent_url:
         return HttpAgentDriver()
+    if _zeroconf_available():
+        return RemoteProtocolDriver()
     if sys.platform == "win32":
         return KeyboardDriver()
     return MockDriver()

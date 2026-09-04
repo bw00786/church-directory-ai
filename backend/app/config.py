@@ -111,10 +111,14 @@ class Settings(BaseSettings):
     service_start_days: str = "sun"
     service_autonomous: bool = True  # AI may auto-advance eligible cues
 
-    # Yamaha DM3/MGX16 mixer (listen-only; the desk has no remote-control protocol).
-    # Consumes the mgx-ai-mixer meter WebSocket to detect song start/end.
+    # Yamaha MGX16 mixer. The desk itself has no remote-control protocol
+    # (faders/preamps/mutes/pan stay on the console), but the companion
+    # mgx-ai-mixer app can sit in the USB MAIN return path as a software DSP
+    # (per-channel HPF/EQ/comp/trim/FX, feedback guard, mix keeper). We consume
+    # its WebSocket for meters/analysis/dsp state and drive its REST API.
     enable_mock_mixer: bool = True
     mixer_ws_url: str = "ws://127.0.0.1:9000/ws"
+    mixer_api_url: str | None = None  # defaults to the http:// form of mixer_ws_url
     song_end_silence_db: float = -45.0   # RMS below this counts as "silent"
     song_end_hold_seconds: float = 3.0   # sustained silence that ends a song
     song_max_wait_seconds: float = 900.0  # give up auto-advance after this
@@ -163,22 +167,50 @@ class Settings(BaseSettings):
     # congregation channel is VAD-only by default (no ASR).
     whisper_roles: str = "pastor,liturgist,vocalist"
 
-    # EasyWorship slide control (Windows desktop; driven by keystroke injection).
+    # EasyWorship slide control.
     enable_mock_easyworship: bool = True
+    # Driver selection. "remote" = EasyWorship 7.3+ native Remote Control TCP
+    # protocol (preferred: no window focus needed, absolute jumps, state
+    # read-back). "agent" = HTTP keystroke agent on the EW machine. "keyboard"
+    # = local keystroke injection. "auto" prefers remote when a host is
+    # configured, then agent when EASYWORSHIP_AGENT_URL is set, then remote
+    # via mDNS discovery (needs `zeroconf`), then keyboard on Windows.
+    easyworship_driver: str = "auto"  # auto | remote | agent | keyboard | mock
+    # Remote protocol: host/port of the EasyWorship PC (port is announced via
+    # mDNS and may change; leave unset to discover). Enable in EasyWorship under
+    # Edit > Options > Advanced > "Enable Remote Control", then approve the
+    # pairing request once via the Remote toolbar button.
+    easyworship_remote_host: str | None = None
+    easyworship_remote_port: int | None = None
+    easyworship_remote_server_name: str | None = None  # mDNS name filter (multi-EW sites)
+    easyworship_remote_device_name: str = "Church Production Director"
+    easyworship_remote_uid: str | None = None  # pairing identity; auto-generated + persisted if unset
+    easyworship_remote_uid_file: str = ".easyworship_remote_uid"
+    easyworship_remote_discovery_seconds: float = 5.0
+    # Confirm each navigation command against EasyWorship's pushed status
+    # (pres_no/slide_no) and report failure if it never takes effect.
+    easyworship_confirm_actions: bool = True
+    easyworship_confirm_timeout_seconds: float = 1.5
+    # Schedule items in EasyWorship that precede the first service-plan item
+    # (e.g. 1 for a standalone countdown slide at the top of the schedule).
+    easyworship_schedule_offset: int = 0
+    # Keystroke drivers only:
     easyworship_window_title: str = "EasyWorship"
     easyworship_send_mode: str = "foreground"  # "foreground" or "postmessage"
     # When set, control EasyWorship via a remote agent on the EW machine
     # instead of local keystroke injection (e.g. "http://192.168.30.40:8091").
     easyworship_agent_url: str | None = None
-    # Key specs per action (e.g. "pagedown", "ctrl+pagedown", "f5").
-    ew_key_next_slide: str = "pagedown"
-    ew_key_prev_slide: str = "pageup"
-    ew_key_next_item: str = "ctrl+pagedown"
-    ew_key_prev_item: str = "ctrl+pageup"
-    ew_key_clear: str = "f5"
-    ew_key_logo: str = "f6"
-    ew_key_black: str = "f7"
-    ew_key_live: str = "f9"
+    # Key specs per action, matching EasyWorship 7.3+ default hotkeys
+    # (Hotkeys2.ini). Comma-separated specs are sent in sequence -- selecting a
+    # schedule item (arrow) does not go live by itself, so chain Page Down.
+    ew_key_next_slide: str = "down"
+    ew_key_prev_slide: str = "up"
+    ew_key_next_item: str = "right,pagedown"
+    ew_key_prev_item: str = "left,pagedown"
+    ew_key_clear: str = "ctrl+c"
+    ew_key_logo: str = "ctrl+l"
+    ew_key_black: str = "ctrl+b"
+    ew_key_live: str = "pagedown"
 
     # PTZ camera roles (config, not hard-coded): role -> camera id + preset id.
     camera_role_pastor_camera: int = 1

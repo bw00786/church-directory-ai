@@ -65,3 +65,11 @@ def parse_key_spec(spec: str) -> Tuple[List[int], int]:
     if key_vk is None:
         raise ValueError(f"no main key in spec: {spec}")
     return mods, key_vk
+
+
+def parse_key_sequence(spec: str) -> List[Tuple[List[int], int]]:
+    """Parse a comma-separated sequence of key specs, e.g. "right,pagedown"."""
+    steps = [s for s in (part.strip() for part in spec.split(",")) if s]
+    if not steps:
+        raise ValueError("empty key sequence")
+    return [parse_key_spec(step) for step in steps]

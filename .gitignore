@@ -2,6 +2,8 @@
 .env
 .env.local
 .env.*.local
+# EasyWorship remote-protocol pairing identity (per machine)
+.easyworship_remote_uid
 .venv/
 env/
 venv/

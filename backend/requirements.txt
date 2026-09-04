@@ -39,6 +39,9 @@ httpx==0.25.2
 requests==2.31.0
 websockets==12.0
 
+# EasyWorship remote-protocol mDNS discovery (_ezwremote._tcp)
+zeroconf==0.132.2
+
 # Utilities
 python-dotenv==1.0.0
 structlog==23.2.0

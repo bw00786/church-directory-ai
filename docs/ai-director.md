@@ -191,11 +191,15 @@ configuration (`app/config.py`), e.g. `CAMERA_ROLE_PASTOR_CAMERA=1`,
 
 ## EasyWorship state
 
-EasyWorship has no read-back API, so [`EasyWorshipService`](../backend/app/easyworship/service.py)
-tracks a **best-effort** current-item index and exposes `select_item(label)`,
-which walks `next_item`/`prev_item` the right number of times based on the
-service plan's `easyworship_item` order — this only stays accurate if all
-navigation goes through this service.
+With the EasyWorship 7.3+ remote-protocol driver (the default when reachable,
+see [docs/director.md](director.md#easyworship-slide-control)), EasyWorship
+pushes its live position (`pres_no`, `slide_no`) back to
+[`EasyWorshipService`](../backend/app/easyworship/service.py). `select_item(label)`
+is then an absolute `gotoSchedule N` + presentation start, confirmed against
+the reported `pres_no`; `next_slide`/`next_item` likewise return failure (and
+publish `EASYWORSHIP_UNCONFIRMED`) if EasyWorship never reflects the change.
+Only with the keystroke fallbacks does the service revert to best-effort
+index counting, which stays accurate only if all navigation goes through it.
 
 An optional OCR check ([`app/easyworship/slide_verification.py`](../backend/app/easyworship/slide_verification.py),
 `SLIDE_VERIFY_ENABLED`) independently confirms a commanded slide

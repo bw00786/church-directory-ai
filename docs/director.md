@@ -105,9 +105,24 @@ still functions.
 
 ## Mixer wiring (Yamaha MGX16)
 
-**The MGX16 has no remote-control protocol** — software cannot move faders or
-mute channels (mixer control is out of scope pending Yamaha's announced Stream
-Deck remote support). The desk is used two ways for *listening*:
+**The MGX16 desk has no remote-control protocol** — software cannot move its
+faders, preamps, mutes, pan or routing (Yamaha has announced Stream Deck remote
+operation but no open API yet). What *is* controllable is the companion
+[`mgx-ai-mixer`](https://github.com/bw00786/ai-yamaha-mixer-control) app's
+**software-DSP takeover**: the USB MAIN interface is bidirectional (22 in / 22
+out), so with channel inputs patched to USB the computer sits inside each
+channel's signal path running HPF → 4-band parametric EQ → compressor → trim →
+reverb/delay, plus an autonomous **feedback guard** (stable narrow ring →
+surgical notch, rate-limited, audited) and a **mix keeper** (hot channel → trim
+−2 dB; low-end mud → HPF 100 Hz; masking → −2 dB on the quieter channel).
+[MixerService](../backend/app/mixer/service.py) consumes that app's WebSocket
+(`meters`, `analysis`, `dsp`) and drives its REST API (`/api/dsp/engage`,
+`/api/moves/apply`, `/api/command`, `/api/autoguard`, `/api/automix`,
+`/api/advise`); the AI assistant exposes these as `mixer_*` tools, with
+engaging the takeover confirmation-gated. Desk-level moves (fader, pan) remain
+advisory notes to the operator.
+
+The desk is also used two ways for *listening*:
 
 ### USB MAIN — per-channel PCM (preferred)
 
@@ -148,8 +163,9 @@ Song-end detection (`wait_for_song_end`) waits for the watched channels to becom
 active (the song starts), then for sustained silence (the song ends):
 
 ```
-ENABLE_MOCK_MIXER=true                 # mock simulates song length
-MIXER_WS_URL=ws://127.0.0.1:9000/ws    # mgx-ai-mixer meter feed (port 9000, see above)
+ENABLE_MOCK_MIXER=true                 # mock simulates song length + DSP state
+MIXER_WS_URL=ws://127.0.0.1:9000/ws    # mgx-ai-mixer meter/analysis/dsp feed (port 9000, see above)
+# MIXER_API_URL=http://127.0.0.1:9000  # REST base for DSP control; defaults to the http form of MIXER_WS_URL
 SONG_END_SILENCE_DB=-45.0              # RMS below this = "silent"
 SONG_END_HOLD_SECONDS=3.0              # sustained silence that ends a song
 ```
@@ -160,10 +176,25 @@ song length so the flow can be exercised without the desk.
 
 ## EasyWorship slide control
 
-EasyWorship has no public API, so slides are controlled by **injecting
-keystrokes** into its window on the Windows desktop (the standard approach, as
-used by AutoHotkey / Stream Deck setups). Implementation:
-[app/easyworship/](../backend/app/easyworship/).
+EasyWorship 7.3+ exposes a native **Remote Control TCP protocol** -- the same
+channel used by EasyWorship's own Stream Deck plug-in, the EasyWorship Remote
+app and the Bitfocus Companion module. The backend speaks it directly
+([app/easyworship/remote_protocol.py](../backend/app/easyworship/remote_protocol.py)),
+which means: no window focus required, absolute jumps (`gotoSchedule N`,
+`gotoSlide N`), and **state read-back** -- EasyWorship pushes its live position
+(`pres_no`, `slide_no`, logo/black/clear), so every navigation command is
+confirmed rather than assumed. Keystroke injection remains only as a fallback.
+
+**Enable it on the EasyWorship PC (one time):**
+
+1. Edit > Options > Advanced > check **Enable Remote Control** (a *Remote*
+   button appears on the toolbar).
+2. Install Apple *Bonjour Print Services* (EasyWorship's mDNS dependency) and
+   allow EasyWorship through Windows Firewall.
+3. Start the backend with `ENABLE_MOCK_EASYWORSHIP=false`. On first connection
+   click *Remote* > **Pair** next to "Church Production Director" and unlock
+   the lock icon. The pairing identity is persisted
+   (`EASYWORSHIP_REMOTE_UID_FILE`), so later connections pair automatically.
 
 The director issues a `SLIDE` cue action at slide-content cues:
 
@@ -176,31 +207,54 @@ The director issues a `SLIDE` cue action at slide-content cues:
 | `scripture_reading`       | `next_item`        |
 
 Supported actions: `next_slide`, `prev_slide`, `next_item`, `prev_item`,
-`clear`, `logo`, `black`, `live`. Each maps to a configurable **key spec**:
+`clear`, `logo`, `black`, `live`; the AI Director's `EASYWORSHIP_SELECT` uses
+`select_item(label)`, which with the remote protocol is an absolute
+`gotoSchedule N` + presentation start confirmed against `pres_no`
+(`N` = position in the service plan + `EASYWORSHIP_SCHEDULE_OFFSET`).
 
 ```
-ENABLE_MOCK_EASYWORSHIP=true         # mock unless on the Windows desktop
+ENABLE_MOCK_EASYWORSHIP=true             # mock unless talking to a real EW
+EASYWORSHIP_DRIVER=auto                  # auto | remote | agent | keyboard | mock
+EASYWORSHIP_REMOTE_HOST=                 # pin host/port, or leave blank to discover
+# EASYWORSHIP_REMOTE_PORT=               # announced via mDNS; may change
+EASYWORSHIP_REMOTE_DEVICE_NAME=Church Production Director
+EASYWORSHIP_CONFIRM_ACTIONS=true         # fail an action EW never reflects
+EASYWORSHIP_CONFIRM_TIMEOUT_SECONDS=1.5
+EASYWORSHIP_SCHEDULE_OFFSET=0            # EW items before the first plan item
+```
+
+Protocol notes (reverse-engineered; no official spec): JSON per line over TCP,
+`\r\n`-delimited; pair with `{"action":"connect","uid":..,"device_type":8}`;
+echo the latest `requestrev`; `heartbeat` every 30 s because EasyWorship is
+silent when idle. Unknown inbound actions are logged, never fatal. Reconnects
+run forever (fast for 3 minutes, then every 30 s).
+
+### Keystroke fallback
+
+If the remote protocol is unavailable, `EASYWORSHIP_DRIVER=keyboard` (backend on
+the EW desktop) or `agent` (below) inject EasyWorship 7.3+'s default hotkeys.
+Comma-separated specs are sent in sequence -- arrow keys only *select* a
+schedule item, `Page Down` sends it live:
+
+```
 EASYWORSHIP_WINDOW_TITLE=EasyWorship
 EASYWORSHIP_SEND_MODE=foreground     # foreground (SetForegroundWindow+keys) | postmessage
-EW_KEY_NEXT_SLIDE=pagedown
-EW_KEY_NEXT_ITEM=ctrl+pagedown
-EW_KEY_CLEAR=f5
-EW_KEY_LIVE=f9
-# ... prev_slide / prev_item / logo / black
+EW_KEY_NEXT_SLIDE=down
+EW_KEY_PREV_SLIDE=up
+EW_KEY_NEXT_ITEM=right,pagedown
+EW_KEY_PREV_ITEM=left,pagedown
+EW_KEY_CLEAR=ctrl+c
+EW_KEY_LOGO=ctrl+l
+EW_KEY_BLACK=ctrl+b
+EW_KEY_LIVE=pagedown
 ```
 
-Key specs are strings like `"pagedown"`, `"ctrl+pagedown"`, or `"ctrl+alt+c"`.
+**Fallback caveats:**
 
-**Setup notes:**
-
-- Run the backend on the same Windows 11 machine as EasyWorship (or provide a
-  remote agent — see below).
-- The default key specs are placeholders; set them (and EasyWorship's own
-  keyboard shortcuts) so each action matches your EasyWorship configuration.
-  Slide navigation (`pagedown`/`pageup`) works when EasyWorship's live output has
-  focus.
-- `foreground` mode steals focus to deliver keys reliably; `postmessage` mode
-  posts keys to the window without stealing focus but is less reliable.
+- The Live pane must have keyboard focus; `foreground` mode steals focus to
+  deliver keys, `postmessage` mode does not but is less reliable.
+- There is no read-back: item tracking is keystroke counting and drifts if a
+  key is dropped or someone operates EasyWorship by hand.
 - The EasyWorship **schedule must be arranged in service order** so `next_item`
   advances to the right presentation at each cue.
 
@@ -237,11 +291,14 @@ to `POST /action/{name}`; the agent injects the configured keystroke locally.
 
 ### Slide-change verification via OCR (WO-EWVERIFY-1)
 
-EasyWorship has no read-back API, so the item/index tracking above is
-**best-effort keystroke counting only** — it silently drifts if a keystroke is
-dropped, or if someone operates EasyWorship manually at the same time.
+With the remote protocol, EasyWorship's pushed `pres_no`/`slide_no` is the
+primary confirmation that a command took effect (an unconfirmed action returns
+failure and publishes `EASYWORSHIP_UNCONFIRMED`). That confirms EasyWorship's
+*internal* state; the OCR check below independently confirms *pixels on the
+projector output*, and is the only confirmation available with the keystroke
+fallbacks, whose item tracking is keystroke counting that silently drifts.
 [`app/easyworship/slide_verification.py`](../backend/app/easyworship/slide_verification.py)
-adds an independent visual check on top of that: after each
+adds that visual check: after each
 `next_slide`/`prev_slide`/`next_item`/`prev_item` action,
 [`SlideOCR`](../backend/app/vision/slide_ocr.py) (via `easyocr`) reads the
 on-screen text from a **dedicated camera-2 capture** — not the switched ATEM
@@ -280,10 +337,12 @@ SLIDE_VERIFY_SEMANTIC_THRESHOLD=0.75      # fuzzy-match acceptance threshold
 
 | Method | Path                          | Description                     |
 | ------ | ----------------------------- | ------------------------------- |
-| GET    | `/easyworship/status`         | Connection state + last action  |
+| GET    | `/easyworship/status`         | Connection, driver, last action, live `remote_state` |
 | POST   | `/easyworship/action/{name}`  | Perform a named action          |
 | POST   | `/easyworship/next`           | Next slide                      |
 | POST   | `/easyworship/previous`       | Previous slide                  |
+| POST   | `/easyworship/item/{label}`   | Go live on a service-plan item (absolute jump) |
+| POST   | `/easyworship/slide/{n}`      | Jump to slide `n` in the live item (remote only) |
 
 ## API summary
 

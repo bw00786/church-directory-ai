@@ -25,12 +25,17 @@ import { easyworshipAPI } from '@/api/atem'
 export function SlidesPanel() {
   const [connected, setConnected] = useState<boolean | null>(null)
   const [lastAction, setLastAction] = useState<string | null>(null)
+  const [driver, setDriver] = useState<string | null>(null)
+  const [position, setPosition] = useState<{ item: number | null; slide: number | null } | null>(null)
 
   const refresh = async () => {
     try {
       const res = await easyworshipAPI.getStatus()
       setConnected(Boolean(res.data.connected))
       setLastAction(res.data.last_action ?? null)
+      setDriver(res.data.driver ?? null)
+      const remote = res.data.remote_state
+      setPosition(remote ? { item: remote.pres_no ?? null, slide: remote.slide_no ?? null } : null)
     } catch {
       setConnected(false)
     }
@@ -102,9 +107,16 @@ export function SlidesPanel() {
           </Button>
         </Box>
 
-        {lastAction && (
+        {position && (
           <Typography variant="caption" color="text.secondary" sx={{ mt: 2, display: 'block' }}>
-            last: {lastAction}
+            EasyWorship: item {position.item ?? '—'} / slide {position.slide ?? '—'}
+          </Typography>
+        )}
+        {(lastAction || driver) && (
+          <Typography variant="caption" color="text.secondary" sx={{ mt: position ? 0 : 2, display: 'block' }}>
+            {lastAction ? `last: ${lastAction}` : ''}
+            {lastAction && driver ? ' · ' : ''}
+            {driver ?? ''}
           </Typography>
         )}
       </CardContent>

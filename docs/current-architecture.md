@@ -49,6 +49,10 @@ cue's exit hint.
 
 ## Audio (Yamaha MGX16, listen-only)
 
+> **Superseded (2026-09):** the mixer service now also drives the companion
+> app's software-DSP layer (HPF/EQ/comp/trim, feedback guard, mix keeper) —
+> see [docs/director.md](director.md#mixer-wiring-yamaha-mgx16).
+
 The MGX16 exposes **no remote-control protocol** and **no raw per-channel
 audio over the network** — only aggregate RMS meters via the companion
 `mgx-ai-mixer` app's WebSocket
@@ -74,6 +78,10 @@ face/voice recognition history) but there is no first-class **role → camera +
 preset** configuration; the mapping only exists implicitly in `script.py`.
 
 ## EasyWorship
+
+> **Superseded (2026-09):** EasyWorship is now driven over its native 7.3+
+> Remote Control TCP protocol with position read-back; keystrokes are a
+> fallback — see [docs/director.md](director.md#easyworship-slide-control).
 
 [backend/app/easyworship/service.py](../backend/app/easyworship/service.py)
 sends keystrokes for 8 actions (`next_slide`, `prev_slide`, `next_item`,

@@ -11,11 +11,12 @@ This is a production-grade system designed for churches to automate and assist i
 - **Blackmagic ATEM Control** — Program/Preview switching, Cut/Auto transitions, streaming, recording
 - **PTZOptics Camera Control** — Full driver over VISCA-over-IP (TCP/UDP) + HTTP-CGI: pan/tilt/zoom, presets, and press-and-hold joystick
 - **Scripted Service Director** — Runs a Sunday cue sheet that drives the ATEM and PTZOptics camera, advancing manually, on a timer, on song-end, or by AI decision
-- **EasyWorship Slide Control** — Advances EasyWorship slides/items from the cue sheet (Windows keystroke injection), so the director controls the screens too
+- **EasyWorship Slide Control** — Drives EasyWorship 7.3+ over its native Remote Control TCP protocol (the same channel as EW's Stream Deck plug-in): no window focus, absolute `gotoSchedule`/`gotoSlide` jumps, and live position read-back so every slide change is confirmed. Keystroke injection remains as a fallback
 - **Scheduled Auto-Start** — Optionally starts the service automatically at a configured time on selected weekdays
-- **Yamaha MGX16 Mixer** — Captures per-channel PCM from the MGX16 USB MAIN interface for real Silero VAD + per-role Whisper; the listen-only meter feed (RMS-only) is the degraded fallback. Mixer *control* is unavailable pending Yamaha's announced Stream Deck remote support.
+- **Yamaha MGX16 Mixer** — Captures per-channel PCM from the MGX16 USB MAIN interface for real Silero VAD + per-role Whisper, and controls the companion `mgx-ai-mixer` software-DSP layer on the USB return path (per-channel HPF/EQ/comp/trim, feedback guard, mix keeper). The desk's own faders/preamps/mutes have no remote protocol and stay advisory
 - **Cue-Advance AI** — Anthropic Claude decides cue advances from observations (transcript/vision), gated by the policy engine
 - **AI Service Director** — A reasoning layer above the cue engine: Claude observes a live `ServiceContext` (state, speaker, transcript, camera/ATEM/EasyWorship) and proposes typed actions, executed only after per-category confidence checks in `manual`/`assisted`/`ai_directed` mode
+- **AI Assistant** — Chat with Claude to query production history and control every subsystem by name ("frame the pastor", "go to the Sermon slides", "put a 120 Hz high-pass on the vocalist"); high-risk actions (stream, record, mic mute, preset overwrite, mixer DSP engage) require operator confirmation
 - **Production Control Panel** — React/Vite web interface with real-time WebSocket updates (cue sheet, camera joystick, AI Director panel)
 - **Event Audit Trail** — Complete logging of all production actions and AI decisions
 - **Production Memory** — PostgreSQL + pgvector for semantic retrieval of past services
@@ -61,10 +62,13 @@ override. A wall-clock **scheduler** can auto-start the service (default Sundays
 10:00).
 
 At slide cues the director also drives **EasyWorship** (go live on the countdown,
-`next_item` for songs / call to worship / prayer / scripture). EasyWorship is
-controlled by keystroke injection on the Windows desktop, either in-process or
-via a small remote agent ([backend/easyworship_agent/agent.py](backend/easyworship_agent/agent.py))
-when the backend runs on a different machine. See [docs/director.md](docs/director.md).
+`next_item` for songs / call to worship / prayer / scripture). EasyWorship 7.3+
+is controlled over its native **Remote Control TCP protocol** (enable it under
+Edit > Options > Advanced, pair once via the Remote toolbar button); EasyWorship
+reports back the live schedule item and slide number, so each command is
+confirmed rather than assumed. Keystroke injection — in-process or via a small
+remote agent ([backend/easyworship_agent/agent.py](backend/easyworship_agent/agent.py)) —
+remains as a fallback (`EASYWORSHIP_DRIVER`). See [docs/director.md](docs/director.md).
 
 ### Director API
 
@@ -82,10 +86,12 @@ when the backend runs on a different machine. See [docs/director.md](docs/direct
 | WS     | `/ws/director`           | Live cue/action stream for the panel         |
 
 > **Yamaha MGX16 note:** the desk has no published remote-control protocol, so
-> mic/fader actions are **advisory cues** (shown to the operator) — mixer control
-> is out of scope pending Yamaha's announced Stream Deck remote support. Audio is
-> consumed two ways: per-channel **USB MAIN PCM** (real VAD + Whisper, preferred)
-> and the companion `mgx-ai-mixer` **meter WebSocket** (RMS-only, fallback).
+> fader/pan actions are **advisory cues** (shown to the operator). Per-channel
+> tone and dynamics *are* controllable through the companion `mgx-ai-mixer`
+> app's software-DSP takeover on the USB MAIN return path (HPF/EQ/comp/trim,
+> feedback guard, mix keeper) — see [docs/director.md](docs/director.md#mixer-wiring-yamaha-mgx16).
+> Audio is consumed two ways: per-channel **USB MAIN PCM** (real VAD + Whisper,
+> preferred) and the companion app's **meter/analysis WebSocket** (fallback).
 
 ## AI Service Director
 
@@ -102,6 +108,27 @@ approval are controlled via `/director/ai/*` and shown in the frontend's **AI
 Service Director** panel. See [docs/ai-director.md](docs/ai-director.md) for
 the full design and [docs/current-architecture.md](docs/current-architecture.md)
 for the system as it existed before this layer was added.
+
+## AI Assistant
+
+A chat assistant ([backend/app/agents/assistant.py](backend/app/agents/assistant.py),
+`POST /api/assistant/chat`) answers questions about past services and the
+roster, reports live status, and controls every subsystem through typed tools
+([backend/app/agents/assistant_tools.py](backend/app/agents/assistant_tools.py)):
+
+| Subsystem | Tools |
+| --- | --- |
+| ATEM | `atem_show_source("camera"\|"slides", cut\|auto)`, `atem_switch_camera`, `atem_set_preview`, `atem_cut`, `atem_auto`, `get_atem_status` |
+| PTZOptics | `camera_move_to_role` (pastor/liturgist/vocalist/congregation/choir/wide), `camera_move_to_preset`, `camera_move_absolute`, `camera_nudge` (timed, auto-stop), `camera_stop`, `get_camera_state`, `list_camera_roles` |
+| EasyWorship | `easyworship_select_item(label)`, `easyworship_goto_slide(n)`, `easyworship_slide_action`, `get_easyworship_status`, `list_easyworship_items` |
+| Yamaha MGX16 (software-DSP) | `mixer_set_hpf`, `mixer_eq`, `mixer_compressor`, `mixer_trim`, `mixer_kill_feedback`, `mixer_set_feedback_guard`, `mixer_set_mix_keeper`, `mixer_analyze_and_advise`, `mixer_command`, `mixer_reset_dsp`, `get_mixer_status` |
+| Service director | `director_start/stop/next_cue/goto_cue`, `get_director_status` |
+| Memory / roster | `search_past_services`, `list_past_services`, `get_service_summary`, `who_preached`, `who_had_role`, `list_roster` |
+
+High-risk actions — start/stop streaming or recording, ATEM mic mute,
+overwriting a PTZ preset, engaging the mixer DSP takeover — only register a
+pending confirmation (`request_*` tools); nothing executes until the operator
+clicks Confirm in the UI.
 
 ## Quick Start
 
@@ -202,19 +229,19 @@ backend/           Python FastAPI application
   app/
     api/           REST endpoints (incl. director, cameras, websocket)
     atem/          ATEM control service
-    agents/        Claude LLM client + director AI decisions
+    agents/        Claude LLM client, director AI decisions, chat assistant + tools
     ai/            AI Service Director (Claude reasoning -> DirectorDecision)
     audio/         Yamaha channel VAD, audio observer, Whisper service
     domain/        ServiceState, ServiceContext, ServicePlan
     cameras/       PTZOptics driver (VISCA + HTTP-CGI) and service
     director/      Scripted service engine, cue sheet, scheduler, action engine
-    easyworship/   EasyWorship slide control (keystroke injection)
-    mixer/         Yamaha MGX16 meter listener (song-end detection)
+    easyworship/   EasyWorship control: native remote protocol (primary), keystroke fallbacks
+    mixer/         Yamaha MGX16 meter/analysis listener + software-DSP control (mgx-ai-mixer)
     policy/        Permission engine
     database/      PostgreSQL models
     memory/        Production memory
     services/      Event bus, audit, health
-  easyworship_agent/  Standalone Windows agent for remote EasyWorship control
+  easyworship_agent/  Standalone Windows keystroke agent (fallback when the remote protocol is unavailable)
   scripts/         CLI utilities (incl. replay_service.py for AI Director replay)
   tests/           Unit and integration tests
 
