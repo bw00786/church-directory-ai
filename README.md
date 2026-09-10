@@ -288,17 +288,19 @@ tests/
 
 ## Operating Modes
 
-### Manual
+The AI Service Director mode is set via `AI_DIRECTOR_MODE` or `POST /director/ai/mode`.
+
+### Manual (`manual`)
 - Human controls all production decisions
 - AI observes but cannot execute
 - Full ATEM functionality available
 
-### Assisted
+### Assisted (`assisted`, default)
 - AI recommends camera and transition changes
 - Human approves each action
 - Useful for training and verification
 
-### Autonomous
+### AI-directed (`ai_directed`)
 - AI can execute permitted actions automatically
 - Policy engine enforces restrictions
 - Human can pause or take manual control at any time
