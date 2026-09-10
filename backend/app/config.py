@@ -246,6 +246,39 @@ class Settings(BaseSettings):
     ai_director_memory_results: int = 5
     ai_director_memory_min_similarity: float = 0.15
 
+    # -- Autonomy roadmap (docs/ai-director.md). Every flag defaults OFF; with
+    # all off the director behaves exactly as before. Proposals from these
+    # components honor ai_director_mode: "assisted" queues them for operator
+    # approval (the safe default), "ai_directed" executes them policy-gated. --
+
+    # Phase 1: song/reading text-follow slide advance. Aligns the live ASR
+    # transcript to the known slide/lyric text and proposes EASYWORSHIP_NEXT as
+    # the congregation crosses into the next slide.
+    song_follower_enabled: bool = False
+    song_follower_min_confidence: float = 0.72   # ordered-overlap ratio to advance
+    song_follower_min_anchor_words: int = 3      # next-slide opening words that must match
+    song_follower_roles: str = "vocalist,liturgist,congregation"  # transcript sources
+    song_follower_cooldown_seconds: float = 2.5  # min gap between proposed advances
+
+    # Phase 2: event-driven decision ticks + predictive PTZ preview staging.
+    ai_director_event_driven: bool = False       # nudge a decision tick on key events
+    ai_director_event_min_interval_seconds: float = 1.0  # debounce event nudges
+    ptz_predictive_preview: bool = False         # pre-stage PTZ + ATEM preview, never cuts
+
+    # Phase 3: service-end recognition + shutdown bundle.
+    service_end_enabled: bool = False
+    service_end_keywords: str = "benediction,go in peace,amen and amen,depart in peace,you are dismissed"
+    service_end_silence_seconds: float = 45.0    # sustained quiet after arming => ended
+    service_end_auto_shutdown: bool = False      # ai_directed may run the stop bundle
+
+    # Phase 4: learning loop, adaptive confidence, evidence fusion.
+    ai_director_learning_enabled: bool = False   # record operator approvals/rejections to memory
+    ai_director_adaptive_confidence: bool = False
+    ai_director_adaptive_step: float = 0.02      # per-outcome threshold nudge
+    ai_director_adaptive_min: float = 0.60
+    ai_director_adaptive_max: float = 0.98
+    ai_director_evidence_fusion: bool = False    # require vision to corroborate camera cuts
+
     # Vision observation & PTZ verification layer (WO-VISION-1). Gated by
     # vision_enabled (VISION_ENABLED); byte-identical to pre-WO when off.
     vision_detector: str = "auto"          # auto | yolo | opencv_hog
