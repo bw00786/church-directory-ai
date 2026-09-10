@@ -109,6 +109,27 @@ Service Director** panel. See [docs/ai-director.md](docs/ai-director.md) for
 the full design and [docs/current-architecture.md](docs/current-architecture.md)
 for the system as it existed before this layer was added.
 
+### Autonomy roadmap (opt-in, default off)
+
+Four components extend the director toward full autonomy. **All are gated off by
+default**; when enabled their proposals still honor the operating mode (queued
+for approval in `assisted`). See the
+[Autonomy roadmap](docs/ai-director.md#autonomy-roadmap-phases-14) for details.
+
+- **Phase 1 — Song/reading text-follow:** aligns the live transcript to the
+  slide/lyric text and advances EasyWorship as the congregation reaches the next
+  slide (`SONG_FOLLOWER_ENABLED`).
+- **Phase 2 — Event-driven ticks + predictive PTZ:** wakes the decision loop on
+  perception events and pre-stages the next shot on ATEM *preview* without
+  cutting (`AI_DIRECTOR_EVENT_DRIVEN`, `PTZ_PREDICTIVE_PREVIEW`).
+- **Phase 3 — Service-end recognition:** detects the benediction + sustained
+  quiet and proposes the wind-down (stop stream/record, blank slides, home
+  cameras), each step policy-gated (`SERVICE_END_ENABLED`).
+- **Phase 4 — Trust layer:** records operator overrides to memory, adapts
+  per-category confidence from feedback, and requires vision to corroborate
+  camera cuts (`AI_DIRECTOR_LEARNING_ENABLED`, `AI_DIRECTOR_ADAPTIVE_CONFIDENCE`,
+  `AI_DIRECTOR_EVIDENCE_FUSION`).
+
 ## AI Assistant
 
 A chat assistant ([backend/app/agents/assistant.py](backend/app/agents/assistant.py),

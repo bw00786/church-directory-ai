@@ -261,3 +261,78 @@ All hardware is mocked; no live ATEM/PTZ/EasyWorship/mixer required:
 - [`tests/test_embeddings.py`](../backend/tests/test_embeddings.py) — Voyage / nomic / hashed embedding tiering and fallthrough.
 - [`tests/test_action_engine.py`](../backend/tests/test_action_engine.py) — policy-gated dispatch to mocked ATEM/PTZ/EasyWorship.
 - [`tests/test_ai_director_runtime.py`](../backend/tests/test_ai_director_runtime.py) — manual/assisted/ai_directed mode gating.
+- [`tests/test_text_follower.py`](../backend/tests/test_text_follower.py) — ASR→slide alignment, anchor/threshold gating, cooldown (Phase 1).
+- [`tests/test_predictive_ptz.py`](../backend/tests/test_predictive_ptz.py) — preview staging without a program cut (Phase 2).
+- [`tests/test_service_end.py`](../backend/tests/test_service_end.py) — arm/fire recognition and permission-gated shutdown bundle (Phase 3).
+- [`tests/test_autonomy.py`](../backend/tests/test_autonomy.py) — learning recorder, adaptive confidence bounds, evidence-fusion veto (Phase 4).
+- [`tests/test_ai_director_autonomy.py`](../backend/tests/test_ai_director_autonomy.py) — the above wired through the runtime's mode gate.
+
+## Autonomy roadmap (Phases 1–4)
+
+Four components move the director from *assisted* toward trustworthy full
+autonomy. **Every one is gated off by default** (`settings` flags below); with
+all flags off the director behaves exactly as documented above. Proposals from
+these components honor `AI_DIRECTOR_MODE` — in `assisted` (the default) they are
+queued for operator approval, never executed silently.
+
+### Phase 1 — song/reading text-follow slide advance
+
+[`text_follower.py`](../backend/app/director/text_follower.py) aligns the live
+ASR transcript to the known ordered slide text of the live item and proposes an
+`EASYWORSHIP_NEXT` as the congregation crosses into the next slide.
+
+- `TextFollower` is a pure, hardware-free aligner (ordered-overlap ratio plus an
+  opening-anchor-word gate). It also implements the `LyricMatcher` protocol, so
+  the runtime wires it into
+  [`expected_text_provider`](../backend/app/easyworship/slide_expected.py),
+  finally giving the WO-EWVERIFY-3 semantic slide check a real expected-text
+  source.
+- `SongFollowerService` drives it from live transcript, role-filtered and
+  cooldown-limited, and emits policy-gated proposals. It reads the live item's
+  slides from an injectable `SlideTextSource`; until a real source (EasyWorship
+  schedule / songbook) is wired in it stays inert.
+- Config: `SONG_FOLLOWER_ENABLED`, `SONG_FOLLOWER_MIN_CONFIDENCE`,
+  `SONG_FOLLOWER_MIN_ANCHOR_WORDS`, `SONG_FOLLOWER_ROLES`,
+  `SONG_FOLLOWER_COOLDOWN_SECONDS`.
+
+### Phase 2 — event-driven ticks + predictive PTZ preview
+
+- The decision loop ([`ai_director_runtime.py`](../backend/app/director/ai_director_runtime.py))
+  now wakes on meaningful perception events (VAD start/stop, EasyWorship state,
+  perception degraded/restored) via an `asyncio.Event`, debounced by
+  `AI_DIRECTOR_EVENT_MIN_INTERVAL_SECONDS`. With `AI_DIRECTOR_EVENT_DRIVEN=false`
+  nothing nudges and the loop keeps its exact fixed `AI_DIRECTOR_POLL_SECONDS`
+  cadence.
+- [`predictive_ptz.py`](../backend/app/director/predictive_ptz.py) pre-recalls
+  the PTZ preset for a role and points ATEM **preview** at that camera so the
+  eventual take is instant and clean — it **never cuts** or autos, so nothing
+  reaches the program bus. Config: `PTZ_PREDICTIVE_PREVIEW`.
+
+### Phase 3 — service-end recognition + shutdown bundle
+
+[`service_end.py`](../backend/app/director/service_end.py) arms on the
+benediction (a `SERVICE_END_KEYWORDS` match or the `BENEDICTION` state), and once
+the room stays quiet for `SERVICE_END_SILENCE_SECONDS` proposes the transition to
+`POST_SERVICE`. `run_shutdown_bundle()` then stops the ATEM stream/recording,
+blanks EasyWorship, and homes the cameras — **each step gated by the policy
+engine's own permission flags**, so a deployment that hasn't granted autonomous
+stream/record control simply skips those. Config: `SERVICE_END_ENABLED`,
+`SERVICE_END_KEYWORDS`, `SERVICE_END_SILENCE_SECONDS`, `SERVICE_END_AUTO_SHUTDOWN`.
+
+### Phase 4 — the trust layer
+
+[`autonomy.py`](../backend/app/director/autonomy.py):
+
+- `LearningRecorder` writes every operator approval/rejection (and auto-execution)
+  to production memory as a labeled outcome, so the retrieval-augmented context
+  can surface "last time we were here, the operator overrode this."
+  Config: `AI_DIRECTOR_LEARNING_ENABLED`.
+- `AdaptiveConfidence` nudges the per-category confidence threshold from operator
+  feedback — repeated rejections tighten a category. It only *tightens above* the
+  policy base (the engine still enforces the base as a floor), bounded by
+  `AI_DIRECTOR_ADAPTIVE_MIN`/`AI_DIRECTOR_ADAPTIVE_MAX` in `AI_DIRECTOR_ADAPTIVE_STEP`
+  increments. Config: `AI_DIRECTOR_ADAPTIVE_CONFIDENCE`.
+- `EvidenceFusion` requires the vision layer to corroborate a camera cut (a
+  person is framed for the target role and the feed isn't black). *Missing* vision
+  never vetoes — only *contradicting* vision does. Config: `AI_DIRECTOR_EVIDENCE_FUSION`.
+
