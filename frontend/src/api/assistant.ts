@@ -20,21 +20,34 @@ export interface PendingConfirmation {
   description: string
 }
 
+export interface PendingAction extends PendingConfirmation {
+  action: string
+}
+
+interface ActionResponse {
+  ok: boolean
+  error?: string
+}
+
 export interface ChatResponse {
   reply: string
   pending_confirmation: PendingConfirmation | null
 }
 
 export const assistantAPI = {
+  async pending() {
+    return client.get<PendingAction[]>('/api/assistant/pending')
+  },
+
   async chat(messages: ChatMessage[]) {
     return client.post<ChatResponse>('/api/assistant/chat', { messages })
   },
 
   async confirm(token: string) {
-    return client.post(`/api/assistant/confirm/${token}`)
+    return client.post<ActionResponse>(`/api/assistant/confirm/${token}`)
   },
 
   async cancel(token: string) {
-    return client.post(`/api/assistant/cancel/${token}`)
+    return client.post<ActionResponse>(`/api/assistant/cancel/${token}`)
   },
 }

@@ -12,6 +12,14 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      '/api/voice': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/ws/voice': {
+        target: 'ws://localhost:8000',
+        ws: true,
+      },
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,

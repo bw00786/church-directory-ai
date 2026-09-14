@@ -95,6 +95,28 @@ remains as a fallback (`EASYWORSHIP_DRIVER`). See [docs/director.md](docs/direct
 
 ## AI Service Director
 
+### Operator-headset Voice Attention
+
+The dashboard now has a **Voice Attention** panel: enable/disable, mute,
+repeat, test, queue, priority, feedback and read-only routing status. The
+modular backend speaks only deterministic attention/warning/critical events;
+routine decisions and successful operations stay silent. Claude cannot send
+arbitrary speech or execute actions through the voice service.
+
+Playback defaults **disabled**, with `attention_only` as the default mode.
+An initial Azure TTS adapter supports a configurable stock female en-US voice;
+provider replacement uses the `TTSProvider` protocol. No cloned voice is supplied.
+Only a named, physically verified backend headset output can play audio—never
+the browser/system default output, Yamaha, ATEM or a virtual loopback device.
+Physical PA/stream/recording isolation **must be verified onsite** before enabling.
+
+Alerts and feedback use PostgreSQL with a bounded local retry outbox. Voice
+failures do not stop production. Stream/record shutdown proposals now use the
+existing Assistant confirmation panel, even when voice is disabled.
+
+See [voice configuration, APIs and Sunday acceptance tests](docs/ai-director.md#voice-attention-system)
+and [deployment requirements](docs/backend-setup.md#operator-headset-voice-deployment).
+
 Above the scripted cue engine, an **AI Service Director** reasons over the live
 service: per-channel voice activity from the Yamaha MGX16 (pastor/liturgist/
 vocalist/congregation, channels 1/2/4/8 by default) feeds a `ServiceContext`
@@ -124,7 +146,8 @@ for approval in `assisted`). See the
   cutting (`AI_DIRECTOR_EVENT_DRIVEN`, `PTZ_PREDICTIVE_PREVIEW`).
 - **Phase 3 — Service-end recognition:** detects the benediction + sustained
   quiet and proposes the wind-down (stop stream/record, blank slides, home
-  cameras), each step policy-gated (`SERVICE_END_ENABLED`).
+  cameras). Stream/record stops require explicit operator confirmation
+  (`SERVICE_END_ENABLED`).
 - **Phase 4 — Trust layer:** records operator overrides to memory, adapts
   per-category confidence from feedback, and requires vision to corroborate
   camera cuts (`AI_DIRECTOR_LEARNING_ENABLED`, `AI_DIRECTOR_ADAPTIVE_CONFIDENCE`,

@@ -34,9 +34,46 @@ copy ..\.env.example ..\.env
 # Development mode with auto-reload
 python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
-# Production mode
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+# Production mode (hardware directors and voice queues are process-local)
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
 ```
+
+### Operator-headset voice deployment
+
+- Use one backend worker; multiple workers would create competing director and
+    playback instances. Do not run a second backend against the same hardware.
+- `sounddevice` is already in requirements; packaging users can install the
+    `voice` extra. PortAudio and access to the dedicated output device are required.
+    The frontend computer's audio device is **not** the backend headset device.
+- Set `VOICE_OUTPUT_DEVICE` to the exact device name and `VOICE_OUTPUT_HOST_API`
+    to its exact PortAudio host API name. Ambiguous/missing devices fail closed;
+    there is no default-output fallback. Never select Yamaha/ATEM/loopback devices.
+- Verify the headset is physically isolated from PA, ATEM, livestream, recording,
+    OS loopback capture and software mixer routing. Only then set
+    `VOICE_ROUTING_VERIFIED=true`, `VOICE_ENABLED=true` and test at the console.
+- Set `TTS_PROVIDER=azure`, `TTS_AZURE_KEY`, `TTS_AZURE_REGION` and
+    `VOICE_PERSONA__VOICE_ID` to a licensed stock female en-US Azure voice. No
+    particular voice is cloned or bundled. Use `VOICE_MODE=attention_only` live.
+- TTS receives short deterministic notification text (and the optional operator
+    name), not service transcripts. Credentials remain server-side. Stock voice
+    timbre/age impression needs listening acceptance; pitch/breathiness/style
+    support varies by provider. Azure currently applies rate and neutral pitch.
+- The existing PostgreSQL connection creates only the new
+    `voice_attention_events` table with `checkfirst=True`. Schema creation needs
+    the normal application's DDL permissions. Events/feedback survive restarts;
+    runtime mute/settings and queue do not. Set durable defaults in the environment.
+- Mount `VOICE_AUDIT_SPOOL_DIR` on private persistent storage. The 10,000-record
+    outbox retries database outages; protect it as production audit data and retain
+    application logs. Queue/disk exhaustion is reported rather than blocking
+    production, and can leave audit gaps. Monitor `audit_available` and metrics.
+- **Security prerequisite:** this repository's existing REST/WebSocket routes
+    have no authentication mechanism. Voice follows them, not a parallel login.
+    An authenticated reverse proxy/network boundary must protect the entire app
+    before live deployment; CORS alone is not authorization. Do not expose port
+    8000 directly to the Internet. No inbound voice commands are implemented.
+
+See [the voice acceptance checklist](ai-director.md#manual-sunday-acceptance)
+before considering this installation live-ready.
 
 ### API Documentation
 

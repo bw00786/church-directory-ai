@@ -120,8 +120,11 @@ def shutdown_wiring(monkeypatch):
     import app.dependencies as deps
     import app.easyworship.service as ew_mod
     import app.cameras.service as cam_mod
+    from app.agents import assistant_tools
 
     monkeypatch.setattr(deps, "get_atem_service_instance", lambda: _Atem())
+    monkeypatch.setattr(assistant_tools, "get_atem_service_instance", lambda: _Atem())
+    monkeypatch.setattr(assistant_tools, "pending_actions", {})
     monkeypatch.setattr(ew_mod, "easyworship_service", _EW())
     monkeypatch.setattr(cam_mod, "camera_service", _Cam())
     return calls
@@ -134,11 +137,41 @@ async def test_shutdown_bundle_respects_permissions(shutdown_wiring):
     policy = _FakePolicy({Permission.STOP_STREAM})  # recording NOT allowed
     done = await run_shutdown_bundle(policy_engine=policy)
 
-    assert done["stop_stream"] is True
+    from app.agents import assistant_tools
+
+    token = done["stop_stream"]["pending_confirmation"]
+    assert assistant_tools.pending_actions[token]["action"] == "atem_stop_stream"
     assert "stop_recording" not in done
     assert done["easyworship_black"] is True
     assert done["cameras_home"] is True
-    assert "stop_stream" in calls
+    assert "stop_stream" not in calls
     assert "stop_recording" not in calls
     assert "ew:black" in calls
     assert "cam:wide" in calls
+
+
+@pytest.mark.parametrize("voice_enabled", [False, True])
+async def test_shutdown_never_auto_stops_even_when_policy_allows(monkeypatch, shutdown_wiring, voice_enabled):
+    from app.agents import assistant_tools
+    from app.events.bus import EventBus
+    from app.policy.engine import PolicyEngine
+
+    monkeypatch.setenv("VOICE_ENABLED", str(voice_enabled).lower())
+    bus = EventBus()
+    monkeypatch.setattr(assistant_tools, "event_bus", bus)
+    queue = await bus.subscribe()
+    policy = PolicyEngine(autonomous_stream_stop=True, autonomous_recording=True)
+    monkeypatch.setattr(assistant_tools, "get_policy_engine_instance", lambda: policy)
+    done = await run_shutdown_bundle(policy_engine=policy)
+    assert shutdown_wiring == ["ew:black", "cam:wide"]
+    stream_token = done["stop_stream"]["pending_confirmation"]
+    record_token = done["stop_recording"]["pending_confirmation"]
+    assert stream_token != record_token
+    for token, action in [(stream_token, "atem_stop_stream"), (record_token, "atem_stop_recording")]:
+        assert queue.get_nowait() == {
+            "event": "ASSISTANT_CONFIRMATION_REQUIRED", "payload": {"token": token, "action": action},
+        }
+    assert await assistant_tools.execute_pending(stream_token) == {"ok": True}
+    assert assistant_tools.discard_pending(record_token)
+    assert shutdown_wiring == ["ew:black", "cam:wide", "stop_stream"]
+    assert not assistant_tools.pending_actions

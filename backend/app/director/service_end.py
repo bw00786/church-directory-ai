@@ -9,10 +9,9 @@ service has ended and proposes the wind-down:
 2. **Fire** once armed and the room stays quiet for
    ``service_end_silence_seconds`` (the congregation has been dismissed / the
    postlude has faded), proposing a ``SERVICE_STATE_CHANGE`` to ``post_service``.
-3. **Shut down** (optional, ``service_end_auto_shutdown`` + ai_directed): stop
-   the ATEM stream/recording, blank EasyWorship, and home the cameras -- each
-   step guarded by the policy engine's own permission flags, so a deployment
-   that hasn't granted autonomous stream/record control simply skips those.
+3. **Shut down** (optional, ``service_end_auto_shutdown`` + ai_directed): request
+    operator approval to stop the ATEM stream/recording, blank EasyWorship, and
+    home the cameras. Stream/record proposals retain their policy gates.
 
 Gated by ``settings.service_end_enabled`` (default off). The state-change
 proposal itself touches no hardware; the shutdown bundle is separate and
@@ -125,9 +124,7 @@ class ServiceEndRecognizer:
 
 
 async def run_shutdown_bundle(policy_engine=None) -> dict:
-    """Best-effort post-service wind-down. Each step is guarded by the policy
-    engine's permission flags, so steps the deployment hasn't authorized (e.g.
-    stopping the stream) are skipped rather than forced. Never raises."""
+    """Best-effort wind-down; stream/record stops always need operator approval."""
     from app.policy.permissions import Permission
 
     if policy_engine is None:
@@ -144,9 +141,9 @@ async def run_shutdown_bundle(policy_engine=None) -> dict:
     done: dict = {}
 
     if _allowed(Permission.STOP_STREAM):
-        done["stop_stream"] = await _safe(_stop_stream())
+        done["stop_stream"] = _request_stop("atem_stop_stream", "Stop live streaming")
     if _allowed(Permission.STOP_RECORDING):
-        done["stop_recording"] = await _safe(_stop_recording())
+        done["stop_recording"] = _request_stop("atem_stop_recording", "Stop recording")
     done["easyworship_black"] = await _safe(_easyworship_black())
     done["cameras_home"] = await _safe(_cameras_home())
 
@@ -164,16 +161,15 @@ async def _safe(coro) -> bool:
         return False
 
 
-async def _stop_stream():
-    from app.dependencies import get_atem_service_instance
+def _request_stop(action: str, description: str):
+    try:
+        from app.agents.assistant_tools import _register_pending
 
-    return await get_atem_service_instance().stop_stream()
-
-
-async def _stop_recording():
-    from app.dependencies import get_atem_service_instance
-
-    return await get_atem_service_instance().stop_recording()
+        token = _register_pending(action, {}, description)
+        return {"pending_confirmation": token, "action": action}
+    except Exception:
+        logger.warning("Shutdown approval request failed", exc_info=True)
+        return False
 
 
 async def _easyworship_black():

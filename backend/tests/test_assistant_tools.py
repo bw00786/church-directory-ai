@@ -1,10 +1,80 @@
 """Tests for the assistant tools (query + tiered control) and confirmation flow."""
 
 import json
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from app.agents import assistant_tools
+from app.events.bus import EventBus
+from app.policy.permissions import Permission
+
+
+@pytest.fixture
+def confirmation_bus(monkeypatch):
+    bus = EventBus()
+    monkeypatch.setattr(assistant_tools, "event_bus", bus)
+    monkeypatch.setattr(assistant_tools, "pending_actions", {})
+    return bus
+
+
+@pytest.mark.parametrize("action,permission", [
+    ("atem_start_stream", Permission.START_STREAM),
+    ("atem_stop_stream", Permission.STOP_STREAM),
+    ("atem_start_recording", Permission.START_RECORDING),
+    ("atem_stop_recording", Permission.STOP_RECORDING),
+])
+@pytest.mark.parametrize("result", ["success", "false", "exception", "denied"])
+async def test_confirmation_events_and_human_policy(monkeypatch, confirmation_bus, action, permission, result):
+    queue = await confirmation_bus.subscribe()
+    command = AsyncMock(return_value=result == "success")
+    if result == "exception":
+        command.side_effect = RuntimeError("untrusted hardware description")
+    atem = SimpleNamespace(**{permission.value: command})
+    get_atem = Mock(return_value=atem)
+    policy = SimpleNamespace(check_permission=Mock(return_value=result != "denied"))
+    monkeypatch.setattr(assistant_tools, "get_atem_service_instance", get_atem)
+    monkeypatch.setattr(assistant_tools, "get_policy_engine_instance", lambda: policy)
+
+    token = assistant_tools._register_pending(action, {}, "untrusted spoken text")
+    payload = {"token": token, "action": action}
+    assert queue.get_nowait() == {"event": "ASSISTANT_CONFIRMATION_REQUIRED", "payload": payload}
+    command.assert_not_awaited()
+    outcome = await assistant_tools.execute_pending(token)
+    assert outcome["ok"] is (result == "success")
+    policy.check_permission.assert_called_once_with(permission, actor="human")
+    if result == "denied":
+        get_atem.assert_not_called()
+        command.assert_not_awaited()
+    else:
+        command.assert_awaited_once_with()
+    assert queue.get_nowait() == {"event": "ASSISTANT_CONFIRMATION_RESOLVED", "payload": payload}
+    if result != "success":
+        assert queue.get_nowait() == {"event": "TOOL_EXECUTION_FAILED", "payload": payload}
+    assert not (await assistant_tools.execute_pending(token))["ok"]
+    assert not assistant_tools.discard_pending(token)
+    assert queue.empty()
+
+
+async def test_confirmation_register_and_cancel_from_worker(confirmation_bus):
+    queue = await confirmation_bus.subscribe()
+    waiter = asyncio.create_task(queue.get())
+    await asyncio.sleep(0)
+    token = await asyncio.to_thread(
+        assistant_tools._register_pending, "atem_stop_stream", {}, "must not be spoken"
+    )
+    payload = {"token": token, "action": "atem_stop_stream"}
+    assert await asyncio.wait_for(waiter, 1) == {
+        "event": "ASSISTANT_CONFIRMATION_REQUIRED", "payload": payload,
+    }
+    assert await asyncio.to_thread(assistant_tools.discard_pending, token)
+    assert await asyncio.wait_for(queue.get(), 1) == {
+        "event": "ASSISTANT_CONFIRMATION_RESOLVED", "payload": payload,
+    }
+    assert not (await assistant_tools.execute_pending(token))["ok"]
+    assert queue.empty()
 
 
 def _parse(tool_result: str) -> dict:

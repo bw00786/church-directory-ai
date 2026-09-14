@@ -2,9 +2,11 @@
 
 import pytest
 import asyncio
+from unittest.mock import AsyncMock
 
 from app.atem.service import AtemService
 from app.atem.mock import MockAtemClient
+from app.events.bus import EventBus
 
 
 @pytest.fixture
@@ -131,3 +133,92 @@ async def test_atem_mic_mute(mock_atem):
 
     with pytest.raises(ValueError):
         await mock_atem.set_mic_muted(999, True)
+
+
+@pytest.fixture
+async def output_rig(monkeypatch):
+    import app.atem.service as atem_module
+
+    bus = EventBus()
+    monkeypatch.setattr(atem_module, "event_bus", bus)
+    atem = AtemService(mock=True)
+    await atem.connect()
+    try:
+        yield atem, await bus.subscribe()
+    finally:
+        await atem._client.aclose()
+
+
+@pytest.mark.parametrize("output,start,event", [
+    ("streaming", "start_stream", "STREAM_FAILURE"),
+    ("recording", "start_recording", "RECORDING_FAILURE"),
+])
+@pytest.mark.parametrize("failure", ["stopped", "disconnected", "status_error"])
+async def test_detected_output_failure_once_and_recovery(output_rig, monkeypatch, output, start, event, failure):
+    atem, queue = output_rig
+    await atem.get_state()
+    assert queue.empty()  # Idle is not failure.
+    await getattr(atem, start)()
+    await atem.get_state()
+    original_status = atem._mock_client.status
+
+    async def lose_output():
+        if failure == "status_error":
+            monkeypatch.setattr(atem._mock_client, "status", AsyncMock(side_effect=OSError("private")))
+        else:
+            setattr(atem._mock_client, "_connected" if failure == "disconnected" else f"_{output}", False)
+        for _ in range(2):
+            if failure == "status_error":
+                with pytest.raises(ConnectionError):
+                    await atem.get_state()
+            else:
+                await atem.get_state()
+
+    await lose_output()
+    assert queue.get_nowait() == {"event": event, "payload": {}}
+    assert queue.empty()
+    monkeypatch.setattr(atem._mock_client, "status", original_status)
+    atem._mock_client._connected = True
+    setattr(atem._mock_client, f"_{output}", True)
+    await atem.get_state()
+    await lose_output()
+    assert queue.get_nowait() == {"event": event, "payload": {}}
+    assert queue.empty()
+
+
+@pytest.mark.parametrize("start,stop,output,event", [
+    ("start_stream", "stop_stream", "streaming", "STREAM_FAILURE"),
+    ("start_recording", "stop_recording", "recording", "RECORDING_FAILURE"),
+])
+@pytest.mark.parametrize("stop_result", ["success", "false", "exception", "in_flight"])
+async def test_intentional_stops_not_announced(output_rig, monkeypatch, start, stop, output, event, stop_result):
+    atem, queue = output_rig
+    await getattr(atem, start)()
+    await atem.get_state()
+    if stop_result == "false":
+        monkeypatch.setattr(atem._mock_client, stop, AsyncMock(return_value={"ok": False}))
+    elif stop_result == "exception":
+        monkeypatch.setattr(atem._mock_client, stop, AsyncMock(side_effect=OSError("private")))
+    elif stop_result == "in_flight":
+        async def in_flight_stop():
+            setattr(atem._mock_client, f"_{output}", False)
+            await atem.get_state()
+            return {"ok": True}
+        monkeypatch.setattr(atem._mock_client, stop, in_flight_stop)
+
+    if stop_result == "exception":
+        with pytest.raises(OSError):
+            await getattr(atem, stop)()
+    else:
+        assert await getattr(atem, stop)() is (stop_result != "false")
+    setattr(atem._mock_client, f"_{output}", False)
+    await atem.get_state()
+    if stop_result in ("false", "exception"):
+        assert queue.get_nowait() == {"event": event, "payload": {}}
+    assert queue.empty()
+    await getattr(atem, start)()
+    await atem.get_state()
+    setattr(atem._mock_client, f"_{output}", False)
+    await atem.get_state()
+    assert queue.get_nowait() == {"event": event, "payload": {}}
+    assert queue.empty()

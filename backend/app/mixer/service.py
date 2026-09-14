@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit, urlunsplit
 
 from app.config import settings
+from app.events.bus import event_bus
 from app.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -121,9 +122,10 @@ class MixerService:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                self._connected = False
                 logger.warning("Mixer feed reconnecting", error=str(e))
-                await asyncio.sleep(2.0)
+            self._connected = False
+            event_bus.publish({"event": "MIXER_CONNECTION_FAILED", "payload": {}})
+            await asyncio.sleep(2.0)
 
     def _ingest(self, raw: str) -> None:
         try:

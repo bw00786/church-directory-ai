@@ -26,14 +26,16 @@ from langchain_core.tools import tool
 
 from app.cameras.service import camera_service
 from app.config import settings
-from app.dependencies import get_atem_service_instance
+from app.dependencies import get_atem_service_instance, get_policy_engine_instance
 from app.director.engine import service_director
 from app.domain.service_context import service_context
 from app.easyworship.service import ACTIONS as EASYWORSHIP_ACTIONS, easyworship_service
+from app.events.bus import event_bus
 from app.identity.service import identity_service
 from app.logging_config import get_logger
 from app.memory.production_memory import memory_manager
 from app.mixer.service import mixer_service
+from app.policy.permissions import Permission
 from app.vision.manager import vision_manager
 
 logger = get_logger(__name__)
@@ -57,6 +59,8 @@ pending_actions: dict[str, dict[str, Any]] = {}
 def _register_pending(action: str, args: dict[str, Any], description: str) -> str:
     token = uuid.uuid4().hex[:8]
     pending_actions[token] = {"action": action, "args": args, "description": description}
+    event_bus.publish({"event": "ASSISTANT_CONFIRMATION_REQUIRED",
+                       "payload": {"token": token, "action": action}})
     return token
 
 
@@ -68,33 +72,51 @@ async def execute_pending(token: str) -> dict[str, Any]:
 
     action = pending["action"]
     args = pending["args"]
-    atem = get_atem_service_instance()
+    outcome: dict[str, Any] = {"ok": False}
     try:
-        if action == "atem_start_stream":
-            return {"ok": await atem.start_stream()}
-        if action == "atem_stop_stream":
-            return {"ok": await atem.stop_stream()}
-        if action == "atem_start_recording":
-            return {"ok": await atem.start_recording()}
-        if action == "atem_stop_recording":
-            return {"ok": await atem.stop_recording()}
-        if action == "atem_set_mic_muted":
-            state = await atem.set_mic_muted(args["mic_id"], args["muted"])
-            return {"ok": True, "state": state.model_dump(mode="json")}
-        if action == "camera_save_preset":
+        permissions = {
+            "atem_start_stream": Permission.START_STREAM,
+            "atem_stop_stream": Permission.STOP_STREAM,
+            "atem_start_recording": Permission.START_RECORDING,
+            "atem_stop_recording": Permission.STOP_RECORDING,
+        }
+        if action in permissions:
+            permission = permissions[action]
+            if not get_policy_engine_instance().check_permission(permission, actor="human"):
+                outcome = {"ok": False, "error": "Permission denied"}
+            else:
+                atem = get_atem_service_instance()
+                outcome = {"ok": await getattr(atem, permission.value)()}
+        elif action == "atem_set_mic_muted":
+            state = await get_atem_service_instance().set_mic_muted(args["mic_id"], args["muted"])
+            outcome = {"ok": True, "state": state.model_dump(mode="json")}
+        elif action == "camera_save_preset":
             ok = await camera_service.save_preset(args["camera_id"], args["preset_id"])
-            return {"ok": ok}
-        if action == "mixer_engage_dsp":
+            outcome = {"ok": ok}
+        elif action == "mixer_engage_dsp":
             state = await mixer_service.engage_dsp(args["engage"])
-            return {"ok": True, "dsp": state}
-        return {"ok": False, "error": f"Unknown action: {action}"}
+            outcome = {"ok": True, "dsp": state}
+        else:
+            outcome = {"ok": False, "error": f"Unknown action: {action}"}
     except Exception as e:
         logger.warning("Pending assistant action failed", action=action, error=str(e))
-        return {"ok": False, "error": str(e)}
+        outcome = {"ok": False, "error": str(e)}
+    finally:
+        event_bus.publish({"event": "ASSISTANT_CONFIRMATION_RESOLVED",
+                           "payload": {"token": token, "action": action}})
+        if not outcome.get("ok"):
+            event_bus.publish({"event": "TOOL_EXECUTION_FAILED",
+                               "payload": {"token": token, "action": action}})
+    return outcome
 
 
 def discard_pending(token: str) -> bool:
-    return pending_actions.pop(token, None) is not None
+    pending = pending_actions.pop(token, None)
+    if pending is None:
+        return False
+    event_bus.publish({"event": "ASSISTANT_CONFIRMATION_RESOLVED",
+                       "payload": {"token": token, "action": pending["action"]}})
+    return True
 
 
 def _ok(payload: Any) -> str:

@@ -2,11 +2,14 @@
 control client against a fake mgx-ai-mixer REST API."""
 
 import json
+import asyncio
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 
 from app.mixer.service import MixerService, api_url_from_ws
+from app.events.bus import EventBus
 
 
 def test_api_url_from_ws():
@@ -116,3 +119,75 @@ async def test_mock_mode_tracks_dsp_state():
     assert guard["armed"] is True
     await service.reset_dsp()
     assert service.dsp_state()["channels"] == {}
+
+
+@pytest.mark.parametrize("failure", ["closed", "error", "connect"])
+async def test_ws_disconnect_publishes_failure(monkeypatch, failure):
+    import websockets
+    import app.mixer.service as mixer
+
+    bus = EventBus()
+    monkeypatch.setattr(mixer, "event_bus", bus)
+    queue = await bus.subscribe()
+    service = MixerService(mock=False)
+
+    class Connection:
+        async def __aenter__(self):
+            if failure == "connect":
+                raise OSError("private network error")
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            assert service.connected
+            if failure == "error":
+                raise OSError("private disconnect error")
+            raise StopAsyncIteration
+
+    monkeypatch.setattr(websockets, "connect", lambda url: Connection())
+    monkeypatch.setattr(mixer.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
+    with pytest.raises(asyncio.CancelledError):
+        await service._reader_loop()
+    assert not service.connected
+    assert queue.get_nowait() == {"event": "MIXER_CONNECTION_FAILED", "payload": {}}
+    assert queue.empty()
+
+
+async def test_ws_intentional_stop_does_not_publish_failure(monkeypatch):
+    import websockets
+    import app.mixer.service as mixer
+
+    bus = EventBus()
+    monkeypatch.setattr(mixer, "event_bus", bus)
+    queue = await bus.subscribe()
+    connected = asyncio.Event()
+
+    class Connection:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            connected.set()
+            await asyncio.Future()
+
+    monkeypatch.setattr(websockets, "connect", lambda url: Connection())
+    service = MixerService(mock=False)
+    await service.start()
+    try:
+        await asyncio.wait_for(connected.wait(), 1)
+        assert service.connected
+    finally:
+        await service.stop()
+    assert not service.connected
+    assert queue.empty()

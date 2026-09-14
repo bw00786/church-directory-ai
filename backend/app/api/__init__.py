@@ -5,6 +5,9 @@ from . import atem, cameras, production, streaming, agents, websocket, vision, d
 
 def register_routes(app: FastAPI):
     """Register all API routes."""
+    from .voice import router as voice_router, voice_socket
+    app.include_router(voice_router)
+    app.add_api_websocket_route("/ws/voice", voice_socket)
     app.include_router(atem.router)
     app.include_router(cameras.router)
     app.include_router(production.router)

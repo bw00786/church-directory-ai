@@ -1,7 +1,8 @@
 """Camera service implementation."""
 
-from typing import List, Optional
+from typing import Awaitable, List, Optional
 
+from app.events.bus import event_bus
 from app.logging_config import get_logger
 from app.cameras.ptz import PTZOpticsDriver
 
@@ -24,6 +25,20 @@ class CameraService:
         # camera_id -> last preset_id commanded via move_to_preset
         self._current_preset: dict[int, int] = {}
         logger.info("Camera service initialized")
+
+    def _connection_failed(self, camera_id: int) -> None:
+        event_bus.publish({"event": "CAMERA_CONNECTION_FAILED",
+                           "payload": {"camera_id": camera_id}})
+
+    async def _command(self, camera_id: int, action: str, command: Awaitable[bool]) -> bool:
+        ok = False
+        try:
+            ok = await command
+            return ok
+        finally:
+            if not ok:
+                event_bus.publish({"event": "TOOL_EXECUTION_FAILED",
+                                   "payload": {"camera_id": camera_id, "action": action}})
 
     def register_camera(
         self,
@@ -71,23 +86,29 @@ class CameraService:
         meta = self._cameras.get(camera_id)
         if not meta:
             logger.warning("Camera not registered", camera_id=camera_id)
+            self._connection_failed(camera_id)
             return False
 
         driver = PTZOpticsDriver(
             visca_port=meta.get("visca_port", 1240),
             use_udp=meta.get("visca_udp", False),
         )
-        ok = await driver.connect(
-            meta["host"],
-            meta.get("port", 80),
-            meta.get("username"),
-            meta.get("password"),
-        )
+        try:
+            ok = await driver.connect(
+                meta["host"],
+                meta.get("port", 80),
+                meta.get("username"),
+                meta.get("password"),
+            )
+        except Exception:
+            self._connection_failed(camera_id)
+            raise
         if ok:
             self._drivers[camera_id] = driver
             logger.info("Camera connected", camera_id=camera_id)
         else:
             logger.warning("Failed to connect camera", camera_id=camera_id)
+            self._connection_failed(camera_id)
         return ok
 
     async def get_camera_state(self, camera_id: int) -> dict:
@@ -124,8 +145,9 @@ class CameraService:
         driver = self._drivers.get(camera_id)
         if not driver:
             logger.warning("No driver for camera", camera_id=camera_id)
+            self._connection_failed(camera_id)
             return False
-        ok = await driver.move_to_preset(preset_id)
+        ok = await self._command(camera_id, "camera_move_to_preset", driver.move_to_preset(preset_id))
         if ok:
             self._current_preset[camera_id] = preset_id
         return ok
@@ -156,8 +178,9 @@ class CameraService:
         driver = self._drivers.get(camera_id)
         if not driver:
             logger.warning("No driver for camera", camera_id=camera_id)
+            self._connection_failed(camera_id)
             return False
-        return await driver.save_preset(preset_id)
+        return await self._command(camera_id, "camera_save_preset", driver.save_preset(preset_id))
 
     async def drive_camera(
         self,
@@ -173,10 +196,15 @@ class CameraService:
         driver = self._drivers.get(camera_id)
         if not driver:
             logger.warning("No driver for camera", camera_id=camera_id)
+            self._connection_failed(camera_id)
             return False
-        ok = await driver.drive(pan_dir, tilt_dir, pan_speed, tilt_speed)
+        ok = await self._command(
+            camera_id, "camera_drive", driver.drive(pan_dir, tilt_dir, pan_speed, tilt_speed)
+        )
         if zoom_dir != 0:
-            ok = await driver.zoom_drive(zoom_dir, zoom_speed) and ok
+            ok = await self._command(
+                camera_id, "camera_zoom", driver.zoom_drive(zoom_dir, zoom_speed)
+            ) and ok
         return ok
 
     async def stop_camera(self, camera_id: int) -> bool:
@@ -184,8 +212,9 @@ class CameraService:
         driver = self._drivers.get(camera_id)
         if not driver:
             logger.warning("No driver for camera", camera_id=camera_id)
+            self._connection_failed(camera_id)
             return False
-        return await driver.stop()
+        return await self._command(camera_id, "camera_stop", driver.stop())
 
     async def move_camera(
         self,
@@ -215,9 +244,13 @@ class CameraService:
         driver = self._drivers.get(camera_id)
         if not driver:
             logger.warning("No driver for camera", camera_id=camera_id)
+            self._connection_failed(camera_id)
             return False
 
-        return await driver.move_absolute(pan_deg=pan, tilt_deg=tilt, zoom_pct=zoom)
+        return await self._command(
+            camera_id, "camera_move_absolute",
+            driver.move_absolute(pan_deg=pan, tilt_deg=tilt, zoom_pct=zoom),
+        )
 
 
 # Module-level singleton for dependency injection and startup wiring

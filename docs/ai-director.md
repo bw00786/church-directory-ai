@@ -313,10 +313,11 @@ ASR transcript to the known ordered slide text of the live item and proposes an
 [`service_end.py`](../backend/app/director/service_end.py) arms on the
 benediction (a `SERVICE_END_KEYWORDS` match or the `BENEDICTION` state), and once
 the room stays quiet for `SERVICE_END_SILENCE_SECONDS` proposes the transition to
-`POST_SERVICE`. `run_shutdown_bundle()` then stops the ATEM stream/recording,
-blanks EasyWorship, and homes the cameras — **each step gated by the policy
-engine's own permission flags**, so a deployment that hasn't granted autonomous
-stream/record control simply skips those. Config: `SERVICE_END_ENABLED`,
+`POST_SERVICE`. `run_shutdown_bundle()` now **requests operator confirmation**
+for permitted stream/record stops through the existing Assistant pending-token
+workflow; it no longer stops either automatically. This applies even with voice
+disabled. Blanking EasyWorship and homing cameras retain the existing behavior.
+Config: `SERVICE_END_ENABLED`,
 `SERVICE_END_KEYWORDS`, `SERVICE_END_SILENCE_SECONDS`, `SERVICE_END_AUTO_SHUTDOWN`.
 
 ### Phase 4 — the trust layer
@@ -335,4 +336,115 @@ stream/record control simply skips those. Config: `SERVICE_END_ENABLED`,
 - `EvidenceFusion` requires the vision layer to corroborate a camera cut (a
   person is framed for the target role and the feed isn't black). *Missing* vision
   never vetoes — only *contradicting* vision does. Config: `AI_DIRECTOR_EVIDENCE_FUSION`.
+
+  ## Voice Attention System
+
+  Voice is a removable, operator-only notification observer under
+  [app/voice](../backend/app/voice). It never imports production executors or adds
+  LLM hardware tools. Existing event producers publish structured outcomes; the
+  classifier and consequence-aware policy choose the final priority, not Claude.
+  Unknown event payloads cannot request speech through arbitrary `critical`,
+  `priority` or `message` fields. No microphone-command interface is added.
+
+  | Level | Meaning | Live attention-only behavior |
+  | --- | --- | --- |
+  | 0 | Successful actions, normal VAD/transcripts/decisions | Audit only |
+  | 1 | Non-critical uncertainty, unknown event types | Audit and panel only |
+  | 2 | Operator decision required with medium/high consequence | Speak |
+  | 3 | Hardware/execution failure or state mismatch | Speak |
+  | 4 | Stream/record failure, policy violation, critical state loss | Immediate queue priority and headset tone |
+
+  Confidence alone never triggers speech. `off` suppresses playback; `testing`
+  also speaks level 1; `emergency` speaks critical only. Master mute suppresses
+  **all** audio, including critical and test, without affecting production.
+
+  ### Routing and persona
+
+  `VOICE_ENABLED=false` is the safe installation default. Enabling requires
+  configuration of an exact backend output device and host API plus onsite
+  routing verification. The UI test is a queued hardware test, not proof of
+  physical isolation. Browser audio is never used. Losing the named device fails
+  playback instead of falling back to the OS default.
+
+  `TTS_PROVIDER=azure` selects the initial adapter. The provider-independent
+  `TTSProvider.synthesize(text, voice_config, prosody)` returns bounded mono PCM
+  WAV audio. The core validates format/length and imposes a synthesis timeout.
+  Only administrator-selected stock female en-US voice IDs are used; there is no
+  voice cloning. Persona defaults are warm/conversational, rate 0.94, neutral
+  pitch and restrained expression. Azure applies SSML rate/pitch; unsupported
+  expressiveness/breathiness fields remain provider-independent preferences,
+  not guaranteed synthesis features. Operator names are reserved for critical
+  alerts and explicit approvals, not every notification.
+
+  ### Queue, audit and failure isolation
+
+  - Default aggregation is 5 seconds for non-critical events of equal priority.
+    Critical events bypass that delay, preempt lower speech and never yield to
+    lower priority. Available critical peers are aggregated. The dedicated headset
+    tone precedes cloud synthesis; speech still depends on provider latency.
+  - A 10-second cooldown suppresses repeat symptoms. Unchanged unresolved symptoms
+    remain suppressed until the separate repeat interval (120 seconds), severity
+    escalation or state change. Explicit Repeat bypasses deduplication, not mute.
+  - Mute interrupts synthesis/playback and clears queued speech. On unmute only
+    fresh unresolved level 3/4 conditions are eligible; stale/background alerts
+    are not replayed. The default event age limit is 60 seconds and queue limit 100.
+  - Each event stores its source, service ID when supplied, confidence/consequence,
+    priority, text, speech outcome, mode, aggregation/cooldown, acknowledgement
+    and feedback. PostgreSQL uses the application's SQLAlchemy infrastructure.
+    A bounded private filesystem outbox retries database failures across restarts.
+    Application structured logs also record events; storage saturation is visible
+    in diagnostics and must be treated as an audit gap, not a successful write.
+  - Mute/settings are session-local. Alerts are not automatically spoken on restart.
+    Feedback is persisted for later evaluation; no production threshold is changed
+    automatically from voice feedback.
+  - TTS/audio errors become `VOICE_TTS_FAILURE` / `VOICE_PLAYBACK_FAILURE` in
+    status and logs. They do not pause any production director. Alerts remain in
+    the UI if sound fails. Metrics include counts by priority, suppression,
+    acknowledgement/dismissal rates, response time, repeats and TTS/playback errors.
+
+  ### Operator APIs and approvals
+
+  `/api/voice` provides `GET /status`, `/config`, `/events`, `/queue`, `/metrics`;
+  `POST /enable`, `/disable`, `/mute`, `/unmute`, `/repeat`, `/test`, `/config`;
+  and `POST /events/{id}/ack` with acknowledgement/dismissal and optional feedback.
+  Feedback values: `useful`, `not_useful`, `too_sensitive`, `too_late`, `correct`,
+  `incorrect`. Acknowledging a notification **does not approve a hardware action**.
+
+  `/ws/voice` shares the existing bus and sends initial status plus
+  `voice_attention`, `voice_status`, `voice_queue`, `voice_acknowledgement` messages.
+  The React dashboard reconnects and falls back to polling every five seconds.
+  Routing configuration is server-owned and cannot be changed through the panel.
+  Runtime mode/persona/cooldown updates are validated but not saved to the environment.
+
+  High-risk notifications link to existing Assistant/Director review controls.
+  `GET /api/assistant/pending` exposes pending descriptions/tokens, not arguments;
+  the original confirm/cancel endpoints are the only approval executors. Stream,
+  record, microphone mute, DSP takeover and preset overwrite still require explicit
+  operator approval. Voice feedback never changes policy/security permissions.
+
+  The application currently has no built-in authentication; use the deployment
+  boundary described in [backend setup](backend-setup.md#operator-headset-voice-deployment).
+
+  ### Manual Sunday acceptance
+
+  These are **required onsite tests, not tests performed by the coding agent**:
+
+  1. Verify headset-only wiring; monitor PA, ATEM program, stream and recording
+    while requesting Test Voice. Only the operator must hear the test.
+  2. Run a complete manual-mode service: normal cues, VAD, slides and decisions
+    should remain silent. Assess voice warmth, pace, clarity and alert timing.
+  3. Disconnect one camera; expect one warning. Repeat failures rapidly and
+    confirm suppression; cause concurrent failures and confirm one grouped alert.
+  4. Fail EasyWorship confirmation; expect one concise warning and visible item.
+  5. Request a high-risk mixer/stream/record action; hear approval attention, verify
+    no action occurs until existing confirmation is accepted; test cancel too.
+  6. Mute during speech and while synthesis is pending; expect immediate stop.
+    Confirm AI/cue operations continue. Unmute must not replay stale low alerts.
+  7. Simulate unexpected stream/record failure; critical interrupts lower speech
+    with a headset tone. Explicit intentional stops must not be called failures.
+  8. Unplug headset, revoke TTS access, stop PostgreSQL and disable voice in turn.
+    Production continues; UI reports errors. Verify audit outbox replay on recovery.
+  9. Submit feedback, restart and confirm persistence. Verify deployment access
+    controls protect both REST and WebSocket routes. Recheck routing after any
+    device, OS or mixer change before marking the installation live-ready.
 

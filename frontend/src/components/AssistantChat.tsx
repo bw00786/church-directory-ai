@@ -24,7 +24,7 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import { useAssistant } from '@/hooks/useAssistant'
 
 export function AssistantChat() {
-  const { messages, pending, sending, error, send, confirmPending, cancelPending } = useAssistant()
+  const { messages, pending, sending, resolving, error, send, confirmPending, cancelPending } = useAssistant()
   const [input, setInput] = useState('')
 
   const handleSend = () => {
@@ -87,10 +87,10 @@ export function AssistantChat() {
               icon={<WarningAmberIcon />}
               action={
                 <Stack direction="row" spacing={1}>
-                  <Button size="small" color="inherit" onClick={cancelPending}>
+                  <Button size="small" color="inherit" onClick={cancelPending} disabled={resolving}>
                     Cancel
                   </Button>
-                  <Button size="small" color="error" variant="contained" onClick={confirmPending}>
+                  <Button size="small" color="error" variant="contained" onClick={confirmPending} disabled={resolving}>
                     Confirm
                   </Button>
                 </Stack>

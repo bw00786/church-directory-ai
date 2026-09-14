@@ -5,6 +5,8 @@
 # EasyWorship remote-protocol pairing identity (per machine)
 .easyworship_remote_uid
 .venv/
+.venv-test/
+data/voice-outbox/
 env/
 venv/
 ENV/

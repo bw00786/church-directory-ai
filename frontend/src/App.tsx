@@ -21,6 +21,7 @@ import { EventTimeline } from './components/EventTimeline'
 import { RosterPanel } from './components/RosterPanel'
 import { SlidesPanel } from './components/SlidesPanel'
 import { VisionPanel } from './components/VisionPanel'
+import { VoiceAttentionPanel } from './components/VoiceAttentionPanel'
 
 export function App() {
   return (
@@ -83,11 +84,17 @@ export function App() {
             <SlidesPanel />
           </Box>
 
-          <AIDirectorPanel />
+          <VoiceAttentionPanel />
+
+          <Box id="ai-director-panel" tabIndex={-1} sx={{ scrollMarginTop: 24 }}>
+            <AIDirectorPanel />
+          </Box>
 
           <RosterPanel />
 
-          <AssistantChat />
+          <Box id="assistant-confirmation" tabIndex={-1} sx={{ scrollMarginTop: 24 }}>
+            <AssistantChat />
+          </Box>
 
           <EventTimeline />
         </Stack>

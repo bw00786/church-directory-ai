@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from app.agents import assistant_tools
 from app.agents.assistant import run_assistant
 from app.agents.assistant_tools import discard_pending, execute_pending
 from app.logging_config import get_logger
@@ -21,6 +22,21 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: list[ChatMessage]
+
+
+class PendingAction(BaseModel):
+    token: str
+    action: str
+    description: str
+
+
+@router.get("/pending", response_model=list[PendingAction])
+async def pending():
+    """List current approvals oldest first, without execution arguments."""
+    return [
+        PendingAction(token=token, action=item["action"], description=item["description"])
+        for token, item in assistant_tools.pending_actions.items()
+    ]
 
 
 @router.post("/chat")

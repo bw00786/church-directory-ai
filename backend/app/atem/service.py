@@ -7,6 +7,7 @@ from typing import Optional
 import httpx
 
 from app.config import settings
+from app.events.bus import event_bus
 from app.logging_config import get_logger
 from .models import AtemStateModel, AtemInputModel, AtemAudioChannelModel
 
@@ -28,6 +29,8 @@ class AtemService:
         self.mock = mock or (settings.enable_mock_atem and not self.auto_detect)
         self._connected = False
         self._state: Optional[AtemStateModel] = None
+        self._expected_stops: set[str] = set()
+        self._reported_failures: set[str] = set()
         self._client = httpx.AsyncClient(timeout=10.0)
         self._mock_client = None
         
@@ -158,11 +161,25 @@ class AtemService:
                 timestamp=datetime.now(),
             )
             
+            self._detect_output_failures(state)
             self._state = state
             return state
         except Exception as e:
+            self._detect_output_failures(None)
             logger.error("Error reading ATEM state", error=str(e))
             raise ConnectionError(f"Failed to read ATEM state: {e}")
+
+    def _detect_output_failures(self, state: Optional[AtemStateModel]) -> None:
+        for output, event in (("streaming", "STREAM_FAILURE"), ("recording", "RECORDING_FAILURE")):
+            active = state is not None and state.connected and getattr(state, output)
+            was_active = self._state is not None and getattr(self._state, output)
+            if active:
+                self._reported_failures.discard(output)
+            elif was_active and output not in self._expected_stops and output not in self._reported_failures:
+                self._reported_failures.add(output)
+                event_bus.publish({"event": event, "payload": {}})
+            if state is not None and not getattr(state, output):
+                self._expected_stops.discard(output)
     
     async def set_program(self, input_id: int) -> AtemStateModel:
         """Switch program to specified input.
@@ -378,6 +395,7 @@ class AtemService:
             
             success = result.get("ok", False)
             if success:
+                self._expected_stops.discard("streaming")
                 logger.info("Stream started")
             else:
                 logger.warning("Failed to start stream", error=result.get("error"))
@@ -393,6 +411,8 @@ class AtemService:
         Returns:
             True if successful.
         """
+        success = False
+        self._expected_stops.add("streaming")
         try:
             if not self._connected:
                 raise ConnectionError("ATEM not connected")
@@ -413,6 +433,9 @@ class AtemService:
         except Exception as e:
             logger.error("Error stopping stream", error=str(e))
             raise
+        finally:
+            if not success:
+                self._expected_stops.discard("streaming")
     
     async def start_recording(self) -> bool:
         """Start recording.
@@ -432,6 +455,7 @@ class AtemService:
             
             success = result.get("ok", False)
             if success:
+                self._expected_stops.discard("recording")
                 logger.info("Recording started")
             else:
                 logger.warning("Failed to start recording", error=result.get("error"))
@@ -447,6 +471,8 @@ class AtemService:
         Returns:
             True if successful.
         """
+        success = False
+        self._expected_stops.add("recording")
         try:
             if not self._connected:
                 raise ConnectionError("ATEM not connected")
@@ -467,3 +493,6 @@ class AtemService:
         except Exception as e:
             logger.error("Error stopping recording", error=str(e))
             raise
+        finally:
+            if not success:
+                self._expected_stops.discard("recording")

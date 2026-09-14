@@ -25,6 +25,13 @@ async def lifespan(app: FastAPI):
     """Application lifespan - startup and shutdown."""
     # Startup
     logger.info("Church Production Director starting...", version="1.0.0")
+    voice = None
+    try:
+        from app.voice.service import get_voice_service
+        voice = get_voice_service()
+        await voice.start()
+    except Exception:
+        logger.exception("Voice attention unavailable; production continues")
     logger.info(
         "configuration",
         atem_ip=settings.atem_ip,
@@ -146,6 +153,11 @@ async def lifespan(app: FastAPI):
     
     yield
     
+    if voice is not None:
+        try:
+            await voice.stop()
+        except Exception:
+            logger.exception("Voice shutdown failed; production shutdown continues")
     if settings.vision_enabled or vision_manager.has_real_camera_source():
         await vision_manager.stop()
     if settings.vision_enabled:

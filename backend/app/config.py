@@ -7,11 +7,19 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     """Application settings loaded from .env."""
+
+    @classmethod
+    def settings_customise_sources(cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings):
+        def production_dotenv():
+            # Voice validates its own settings without becoming a startup dependency.
+            return {key: value for key, value in dotenv_settings().items()
+                    if not key.lower().startswith(("voice_", "tts_"))}
+        return init_settings, env_settings, production_dotenv, file_secret_settings
     
     # API
     api_host: str = "0.0.0.0"
     api_port: int = 8000
-    api_workers: int = 4
+    api_workers: int = 1
     
     # ATEM Bridge
     atem_bridge_host: str = "127.0.0.1"
