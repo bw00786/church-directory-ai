@@ -2,6 +2,7 @@
 
 import sys
 
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
@@ -13,7 +14,7 @@ class Settings(BaseSettings):
         def production_dotenv():
             # Voice validates its own settings without becoming a startup dependency.
             return {key: value for key, value in dotenv_settings().items()
-                    if not key.lower().startswith(("voice_", "tts_"))}
+                    if not key.lower().startswith(("voice_", "tts_", "anthropic_"))}
         return init_settings, env_settings, production_dotenv, file_secret_settings
     
     # API
@@ -35,15 +36,17 @@ class Settings(BaseSettings):
     postgres_pool_size: int = 10
     postgres_max_overflow: int = 20
     
-    # Anthropic Claude
-    anthropic_api_key: str = ""
-    anthropic_model: str = "claude-sonnet-4-5"
-    # Smaller/faster model used for quick classification tasks (e.g. cue-advance decisions)
-    anthropic_fast_model: str = "claude-haiku-4-5-20251001"
-    anthropic_base_url: str | None = None
-    llm_max_tokens: int = 1024
-    llm_temperature: float = 0.0
-    llm_timeout_seconds: int = 30
+    # Existing ANTHROPIC_* dotenv entries are ignored during migration.
+    ollama_base_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = "qwen3.8:latest"
+    ollama_fast_model: str = "qwen3.8:latest"
+    ollama_vision_model: str = "qwen3.8:latest"
+    ollama_num_ctx: int = Field(default=16384, ge=2048, le=262144)
+    ollama_keep_alive: str = "10m"
+    ollama_reasoning: bool = False
+    llm_max_tokens: int = Field(default=1024, ge=1, le=32768)
+    llm_temperature: float = Field(default=0.0, ge=0, le=2)
+    llm_timeout_seconds: int = Field(default=120, ge=1, le=600)
 
     # Voyage AI (Anthropic's recommended embeddings partner -- Anthropic does
     # not offer its own embeddings API). Used for production-memory retrieval
@@ -247,7 +250,7 @@ class Settings(BaseSettings):
 
     # Retrieval-augmented context: on each decision cycle, search production
     # memory (past cue/AI actions + decisions, see app.memory) for similar
-    # past moments and hand them to Claude as advisory-only history. Never
+    # past moments and hand them to the LLM as advisory-only history. Never
     # bypasses the policy engine -- it only informs the reasoning that
     # produces a DirectorDecision, which is gated exactly like any other.
     ai_director_use_memory_rag: bool = True
@@ -314,7 +317,7 @@ class Settings(BaseSettings):
     ptz_unverified_max: int = 5            # consecutive unverified -> assisted
     ptz_subject_wait_seconds: float = 30.0  # empty-stage re-check window
 
-    # Claude-vision escalation (FR-4). Optional, off by default, out of hot loop.
+    # Ollama vision escalation (FR-4). Optional, off by default, out of hot loop.
     vision_llm_enabled: bool = False
     vision_llm_max_px: int = 1024
     vision_llm_max_per_min: int = 2

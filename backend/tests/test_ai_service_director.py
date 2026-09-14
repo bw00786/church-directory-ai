@@ -1,4 +1,4 @@
-"""Tests for AIServiceDirector: Claude-backed decision parsing with safe fallback."""
+"""Tests for AIServiceDirector: Ollama JSON decisions with safe fallback."""
 
 import pytest
 
@@ -34,7 +34,7 @@ async def test_decide_parses_valid_json(monkeypatch):
         '{"decision": "transition", "confidence": 0.92, "reason": "scripture finished", '
         '"service_state": "sermon", "actions": [{"type": "PTZ_SELECT_ROLE", "camera_role": "pastor"}]}'
     )
-    monkeypatch.setattr("app.agents.llm.get_llm", lambda: _FakeLLM(reply))
+    monkeypatch.setattr("app.agents.llm.get_director_llm", lambda: _FakeLLM(reply))
 
     director = AIServiceDirector()
     decision = await director.decide(ServiceContext())
@@ -49,9 +49,9 @@ async def test_decide_parses_valid_json(monkeypatch):
 
 async def test_decide_falls_back_when_llm_unavailable(monkeypatch):
     def _raise():
-        raise ValueError("no api key")
+        raise ValueError("Configure a nonempty Ollama model tag")
 
-    monkeypatch.setattr("app.agents.llm.get_llm", _raise)
+    monkeypatch.setattr("app.agents.llm.get_director_llm", _raise)
 
     director = AIServiceDirector()
     decision = await director.decide(ServiceContext())
@@ -62,7 +62,7 @@ async def test_decide_falls_back_when_llm_unavailable(monkeypatch):
 
 
 async def test_decide_falls_back_on_malformed_json(monkeypatch):
-    monkeypatch.setattr("app.agents.llm.get_llm", lambda: _FakeLLM("not json at all"))
+    monkeypatch.setattr("app.agents.llm.get_director_llm", lambda: _FakeLLM("not json at all"))
 
     director = AIServiceDirector()
     decision = await director.decide(ServiceContext())
@@ -73,7 +73,7 @@ async def test_decide_falls_back_on_malformed_json(monkeypatch):
 
 async def test_decide_includes_relevant_retrieved_history_in_prompt(monkeypatch):
     fake_llm = _FakeLLM('{"decision": "continue", "confidence": 0.5, "reason": "ok"}')
-    monkeypatch.setattr("app.agents.llm.get_llm", lambda: fake_llm)
+    monkeypatch.setattr("app.agents.llm.get_director_llm", lambda: fake_llm)
     monkeypatch.setattr(
         "app.memory.production_memory.memory_manager.search",
         lambda *a, **k: [
@@ -91,7 +91,7 @@ async def test_decide_includes_relevant_retrieved_history_in_prompt(monkeypatch)
 
 async def test_decide_filters_out_low_similarity_history(monkeypatch):
     fake_llm = _FakeLLM('{"decision": "continue", "confidence": 0.5, "reason": "ok"}')
-    monkeypatch.setattr("app.agents.llm.get_llm", lambda: fake_llm)
+    monkeypatch.setattr("app.agents.llm.get_director_llm", lambda: fake_llm)
     monkeypatch.setattr(
         "app.memory.production_memory.memory_manager.search",
         lambda *a, **k: [
@@ -112,7 +112,7 @@ async def test_decide_survives_memory_retrieval_failure(monkeypatch):
         raise RuntimeError("database unreachable")
 
     fake_llm = _FakeLLM('{"decision": "continue", "confidence": 0.5, "reason": "ok"}')
-    monkeypatch.setattr("app.agents.llm.get_llm", lambda: fake_llm)
+    monkeypatch.setattr("app.agents.llm.get_director_llm", lambda: fake_llm)
     monkeypatch.setattr("app.memory.production_memory.memory_manager.search", _raise)
 
     director = AIServiceDirector()
@@ -128,7 +128,7 @@ async def test_decide_skips_retrieval_when_disabled(monkeypatch):
         raise AssertionError("search should not be called when RAG is disabled")
 
     fake_llm = _FakeLLM('{"decision": "continue", "confidence": 0.5, "reason": "ok"}')
-    monkeypatch.setattr("app.agents.llm.get_llm", lambda: fake_llm)
+    monkeypatch.setattr("app.agents.llm.get_director_llm", lambda: fake_llm)
     monkeypatch.setattr("app.memory.production_memory.memory_manager.search", _raise)
     monkeypatch.setattr(settings, "ai_director_use_memory_rag", False)
 

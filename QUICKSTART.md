@@ -1,12 +1,14 @@
 # Quick Start Guide
 
-Get the Church Production Director running in 10 minutes.
+Set up the Church Production Director. Initial dependencies and local model
+provisioning may take longer than a few minutes.
 
 ## Prerequisites
 
 - Windows 11
 - Python 3.11+ (download from python.org)
 - Node.js 18+ (download from nodejs.org)
+- Ollama running separately with the configured model tag installed (AI features)
 
 ## One-Time Setup
 
@@ -69,17 +71,38 @@ For Phase 9+, start PostgreSQL:
 docker-compose up -d postgres
 ```
 
-For AI features, set your Anthropic API key in `.env`:
+For AI features, configure local inference using [.env.example](.env.example)
+as a reference; preserve existing private credentials:
 
 ```
-ANTHROPIC_API_KEY=sk-ant-...
-ANTHROPIC_MODEL=claude-sonnet-4-5
-ANTHROPIC_FAST_MODEL=claude-haiku-4-5-20251001
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=qwen3.8:latest
+OLLAMA_FAST_MODEL=qwen3.8:latest
+OLLAMA_VISION_MODEL=qwen3.8:latest
+OLLAMA_NUM_CTX=16384
+OLLAMA_KEEP_ALIVE=10m
+OLLAMA_REASONING=false
+LLM_TIMEOUT_SECONDS=120
+LLM_MAX_TOKENS=1024
+LLM_TEMPERATURE=0.0
 ```
 
-Optionally, set `VOYAGE_API_KEY` in `.env` for higher-quality production
-memory search (past-service recall). Without it, the app automatically falls
-back to a free local embedding model — no setup required.
+`qwen3.8:latest` is the verified **locally installed** 27.3B `qwen35` tag,
+not `qwen3:8b` or a promise of an official downloadable model. Other machines
+must provision a matching tag or explicitly choose compatible model overrides.
+The setup/start scripts do not start Ollama or download any models.
+
+Check `GET /health/ollama` (replaces `/health/anthropic`) or run
+[backend/scripts/test_ollama.py](backend/scripts/test_ollama.py) from the backend
+directory with the backend environment. This is an inference check, not just
+liveness; allow up to 120 seconds. `GET /health` does not invoke the model.
+
+RAG embeddings remain separate: optional `VOYAGE_API_KEY` enables the independent
+paid Voyage provider. Existing Nomic/hashed settings are unchanged; Nomic may need
+model weights on first use, whereas `EMBEDDING_PROVIDER=hashed` is offline (the
+current local deployment). Do not switch embedding providers as part of this
+inference migration. The external mixer companion's advisor is not migrated.
+Voice remains disabled by default; no TTS or voice enablement is required.
 
 ## Common Commands
 
@@ -121,6 +144,16 @@ pip install -r requirements.txt
 - Check network connectivity
 - For development, mock ATEM is enabled by default
 
+### Ollama: unavailable, model not found, or timeout
+- Confirm the separately managed Ollama server is reachable at `OLLAMA_BASE_URL`.
+- Inspect its `/api/tags` response for the exact configured tag; do not substitute
+    `qwen3:8b` for `qwen3.8:latest`. Provisioning is an explicit operator task.
+- Check `/health/ollama` for failure details. A successful liveness check does
+    not prove inference works. Cold model loads may need the full 120-second budget.
+- The assistant chat timeout is 130 seconds; align it and any proxy timeout if
+    increasing the backend budget. A timed-out chat is not automatically retried.
+- Keep manual controls available; do not enable autonomous mode to diagnose AI.
+
 ### Tests failing
 ```powershell
 cd backend
@@ -135,7 +168,7 @@ React/Vite (Port 5173)
     ↓ API calls
 FastAPI Backend (Port 8000)
     ├─ Production Services
-    ├─ LangGraph AI (stub)
+    ├─ LangGraph assistant + AI directors (Ollama)
     └─ Mock ATEM
          ↓ (HTTP when real)
 C++ Bridge (Port 8090)
@@ -150,7 +183,7 @@ ATEM Mini Pro ISO
 **Mock ATEM** — Fully functional ATEM simulator for testing without hardware
 **Policy Engine** — Controls what AI can do (enabled/disabled, confidence thresholds)
 **State Verification** — Every command is verified, never assumed
-**Manual Control** — Works without AI, database, or the Anthropic API
+**Manual Control** — Works without AI, database, or the Ollama server
 
 ## Documentation
 
@@ -162,12 +195,12 @@ ATEM Mini Pro ISO
 
 ## What to Do Next
 
-1. ✅ Environment is set up
-2. **Start Phase 2**: Connect backend to mock ATEM via WebSocket
-3. **Start Phase 3**: Implement REST API endpoints
-4. Continue through phases 4-17
+1. Verify backend liveness and `/health/ollama` separately.
+2. Validate with mock hardware and keep the AI Director in `assisted` mode.
+3. Follow [backend deployment guidance](docs/backend-setup.md) before live use.
 
-See `PHASE1_COMPLETE.md` for detailed next steps.
+[PHASE1_COMPLETE.md](PHASE1_COMPLETE.md) is a historical setup snapshot, not the
+current implementation checklist.
 
 ## Support
 

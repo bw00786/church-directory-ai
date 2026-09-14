@@ -40,7 +40,9 @@ export const assistantAPI = {
   },
 
   async chat(messages: ChatMessage[]) {
-    return client.post<ChatResponse>('/api/assistant/chat', { messages })
+    // Allow the default 120s backend LLM budget plus response/transport overhead.
+    // Do not change timeouts for confirmation or other production controls.
+    return client.post<ChatResponse>('/api/assistant/chat', { messages }, { timeout: 130_000 })
   },
 
   async confirm(token: string) {

@@ -45,10 +45,10 @@ class VoiceSettings(BaseSettings):
 
 class TTSSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="TTS_", env_file=".env", extra="ignore")
-    provider: Literal["azure", "disabled"] = "disabled"
-    azure_key: str = Field(default="", exclude=True, repr=False)
-    azure_region: str = Field(default="eastus", pattern=r"^[a-z0-9]+$")
-    timeout_seconds: float = Field(default=10, ge=1, le=30)
+    provider: Literal["piper", "disabled"] = "piper"
+    piper_model_dir: str = "data/piper-voices"
+    piper_voice: str = Field(default="en_US-ljspeech-high", pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$")
+    timeout_seconds: float = Field(default=30, ge=1, le=30)
 
 
 class VoiceUpdate(VoiceSettings):

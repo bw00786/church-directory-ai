@@ -2,9 +2,8 @@
 
 Turns free-form observations (a transcript snippet, a vision scene description,
 an operator note) into an advance decision for the *current* cue, then feeds it
-back into the director via ``request_advance``. Uses Anthropic Claude when
-configured, with a lightweight keyword heuristic as a fallback so the pipeline
-works without an API key.
+back into the director via ``request_advance``. Uses Ollama with a lightweight
+keyword heuristic as a fallback when inference is unavailable.
 """
 
 import json
@@ -69,11 +68,11 @@ class DirectorAI:
         self, observation: str, *, exit_hint: str, cue_name: str
     ) -> Optional[dict]:
         try:
-            from app.agents.llm import get_fast_llm
+            from app.agents.llm import get_fast_llm, invoke_llm, response_text
 
             llm = get_fast_llm()
         except Exception:
-            return None  # no API key / package — fall back to heuristic
+            return None  # Missing local client; retain the cue engine's heuristic fallback.
 
         user = (
             f"Current cue: {cue_name}\n"
@@ -82,10 +81,8 @@ class DirectorAI:
             "Should we advance now?"
         )
         try:
-            response = await llm.ainvoke([("system", _SYSTEM_PROMPT), ("user", user)])
-            content = getattr(response, "content", response)
-            if isinstance(content, list):
-                content = " ".join(str(part) for part in content)
+            response = await invoke_llm(llm, [("system", _SYSTEM_PROMPT), ("user", user)])
+            content = response_text(response)
             match = re.search(r"\{.*\}", str(content), re.DOTALL)
             if not match:
                 return None

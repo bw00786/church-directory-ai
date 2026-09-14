@@ -44,10 +44,16 @@ async def chat(request: ChatRequest):
     """Run one turn of the assistant against the full conversation so far."""
     try:
         return await run_assistant([m.model_dump() for m in request.messages])
+    except ImportError:
+        logger.exception("Assistant runtime dependency unavailable")
+        raise HTTPException(status_code=503, detail="Assistant runtime dependencies are unavailable. Install the backend requirements and restart FastAPI.")
+    except TimeoutError:
+        logger.warning("Assistant request timed out")
+        raise HTTPException(status_code=504, detail="The assistant timed out. Check pending approvals and production status before retrying.")
     except ValueError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
-        logger.error("Assistant chat failed", error=str(e))
+        logger.exception("Assistant chat failed")
         raise HTTPException(status_code=500, detail=str(e))
 
 

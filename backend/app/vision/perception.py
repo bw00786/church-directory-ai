@@ -6,7 +6,7 @@ provider-tiered person detector (yolo -> opencv_hog -> health-only), and derives
 ``person_present``, ``person_in_roi``, a normalized ``subject_offset`` vs. the
 role's ROI centre, and ``frame_health`` (black via mean luma, frozen via an
 average hash). Results are published as ``VisionObservation``s into
-``ServiceContext`` for Claude and used by PTZ verification.
+``ServiceContext`` for the LLM and used by PTZ verification.
 """
 
 from __future__ import annotations

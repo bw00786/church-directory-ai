@@ -3,7 +3,7 @@
 This is the reasoning layer added above the existing scripted cue engine (see
 [docs/current-architecture.md](current-architecture.md) and
 [docs/director.md](director.md)). It observes the live service, maintains an
-authoritative `ServiceState`, asks **Anthropic Claude** for a structured
+authoritative `ServiceState`, asks **local Ollama** for a structured
 decision, and executes typed actions through the policy engine.
 
 ```
@@ -13,7 +13,7 @@ MGX16 USB MAIN PCM (ch 1=pastor, 2=liturgist, 4=vocalist, 8=congregation)
        (meter feed = energy VAD, no ASR: degraded fallback per channel)
                               |
                               v
-                     AIServiceDirector (Claude) -> DirectorDecision
+                     AIServiceDirector (Ollama) -> DirectorDecision
                               |
                               v
                        AI Director mode gate
@@ -27,11 +27,34 @@ MGX16 USB MAIN PCM (ch 1=pastor, 2=liturgist, 4=vocalist, 8=congregation)
                ATEM          PTZ      EasyWorship
 ```
 
-**Critical principle, unchanged:** Claude never touches hardware. It returns a
+**Critical principle, unchanged:** the LLM never touches hardware. It returns a
 `DirectorDecision` ([backend/app/ai/decision.py](../backend/app/ai/decision.py));
 every action in it is validated by [`PolicyEngine.check_ai_decision`](../backend/app/policy/engine.py)
 before [`ActionEngine`](../backend/app/director/action_engine.py) calls a real
 service.
+
+## Ollama inference configuration
+
+The shared `ChatOllama` factory uses `OLLAMA_BASE_URL` (default
+`http://127.0.0.1:11434`). `OLLAMA_MODEL`, `OLLAMA_FAST_MODEL` and
+`OLLAMA_VISION_MODEL` all default to `qwen3.8:latest`: the exact locally installed
+tag, **not** `qwen3:8b` or a claim of official registry availability. Local metadata
+reports 27.3B, family `qwen35`, with completion, tools, thinking and vision
+capabilities. Other machines must explicitly provision matching tags or configure
+compatible alternatives; no model downloads are performed by setup/start scripts.
+
+Defaults: `OLLAMA_NUM_CTX=16384`, `OLLAMA_KEEP_ALIVE=10m`,
+`OLLAMA_REASONING=false`, `LLM_TIMEOUT_SECONDS=120`, `LLM_MAX_TOKENS=1024`,
+`LLM_TEMPERATURE=0.0`. `get_director_llm()`, `get_fast_llm()` and
+`get_vision_llm()` request JSON output. The assistant uses normal `ChatOllama`
+tool calls rather than forced JSON. Inference uses a bounded invocation wrapper;
+valid JSON alone does not authorize actions or bypass typed parsing and policy.
+
+`GET /health/ollama` replaces `/health/anthropic` and performs a bounded
+metadata/inference check; `GET /health` does not invoke a model. See
+[backend setup](backend-setup.md#ollama-inference-check) for the manual probe.
+This migration changes neither RAG embeddings nor voice enablement. Optional
+semantic vision stays opt-in, and voice playback stays disabled by default.
 
 ## Audio channel mapping (Yamaha MGX16)
 
@@ -91,7 +114,7 @@ Gated by `VISION_ENABLED` (off = byte-identical to pre-WO).
   (operator override via `override`). The consecutive-`unverified` ladder
   (`PTZ_UNVERIFIED_MAX`) drops `camera_change` to assisted. `PTZ_VERIFY_ACTION=log`
   is observation-only.
-- [`semantic.py`](../backend/app/vision/semantic.py) — optional Claude-vision tier
+- [`semantic.py`](../backend/app/vision/semantic.py) — optional Ollama vision tier
   (`VISION_LLM_ENABLED`, rate-limited), fires only on defined triggers and parses
   a whitelist of typed context fields — **never actions**.
 - [`evidence.py`](../backend/app/vision/evidence.py) — registers `person_in_roi`
@@ -109,13 +132,13 @@ announcement) rather than blindly following it.
 [`ServiceContext`](../backend/app/domain/service_context.py) is the
 **application-owned** short-term memory: current state, last ~30 transcript
 lines, current camera role/ATEM program/EasyWorship item, and the last AI
-decision. The AI Director does not rely on Claude's own conversational memory
+decision. The AI Director does not rely on the model's own conversational memory
 — this context is rebuilt and supplied fresh every decision cycle.
 
 ## AI Director decisions
 
 [`AIServiceDirector.decide()`](../backend/app/ai/service_director.py) sends a
-`ServiceContext` snapshot to Claude
+`ServiceContext` snapshot to Ollama
 ([system prompt](../backend/app/ai/prompts/service_director.txt)) and parses a
 strict-JSON `DirectorDecision`:
 
@@ -133,7 +156,7 @@ strict-JSON `DirectorDecision`:
 }
 ```
 
-If Claude is unavailable or the response can't be parsed, it falls back to
+If Ollama is unavailable, times out, or the response can't be parsed, it falls back to
 `{"decision": "continue", "confidence": 0.0}` — never a fabricated action.
 
 ## Retrieval-augmented context (production memory)
@@ -145,19 +168,19 @@ chat assistant) for past observations similar to the current state + recent
 transcript, and includes any results above `AI_DIRECTOR_MEMORY_MIN_SIMILARITY`
 (default `0.15`) in the prompt as **advisory-only history** — the
 [system prompt](../backend/app/ai/prompts/service_director.txt) explicitly
-tells Claude to prefer live signals over it when they conflict. This is
+tells the model to prefer live signals over it when they conflict. This is
 retrieval, not training: nothing is fine-tuned, and a retrieval failure (e.g.
-no database) just means Claude reasons without history, same as before this
+no database) just means the model reasons without history, same as before this
 existed. Config: `AI_DIRECTOR_USE_MEMORY_RAG` (default `true`),
 `AI_DIRECTOR_MEMORY_RESULTS` (default `5`), `AI_DIRECTOR_MEMORY_MIN_SIMILARITY`
 (default `0.15`).
 
 Retrieval quality depends on [`app/memory/embeddings.py`](../backend/app/memory/embeddings.py),
 which tries three tiers in order (`EMBEDDING_PROVIDER=auto`, the default):
-1. Voyage AI's `voyage-4-large` (`VOYAGE_API_KEY` set) — highest quality, paid API
-   (Anthropic's recommended embeddings partner; Anthropic doesn't offer its own).
+1. Voyage AI's `voyage-4-large` (`VOYAGE_API_KEY` set) — independent paid embedding
+  API, not replaced by this Ollama inference migration.
 2. Locally-run `nomic-embed-text-v1.5` (Hugging Face, via `sentence-transformers`) —
-   free, no API key/network call, competitive quality.
+  free, no API key; model weights may need downloading on first use.
 3. A deterministic local hashed bag-of-words embedding — last resort, no ML dependency.
 
 Each tier falls through to the next on missing config or a runtime error, so
@@ -277,7 +300,7 @@ All hardware is mocked; no live ATEM/PTZ/EasyWorship/mixer required:
 - [`tests/test_audio_vad.py`](../backend/tests/test_audio_vad.py) — VAD speaking/silence transitions.
 - [`tests/test_service_context.py`](../backend/tests/test_service_context.py) — rolling context memory.
 - [`tests/test_ai_policy.py`](../backend/tests/test_ai_policy.py) — per-category confidence thresholds.
-- [`tests/test_ai_service_director.py`](../backend/tests/test_ai_service_director.py) — Claude response parsing + safe fallback (mocked LLM); retrieved-history inclusion/filtering/failure handling.
+- [`tests/test_ai_service_director.py`](../backend/tests/test_ai_service_director.py) — LLM response parsing + safe fallback (mocked LLM); retrieved-history inclusion/filtering/failure handling.
 - [`tests/test_embeddings.py`](../backend/tests/test_embeddings.py) — Voyage / nomic / hashed embedding tiering and fallthrough.
 - [`tests/test_action_engine.py`](../backend/tests/test_action_engine.py) — policy-gated dispatch to mocked ATEM/PTZ/EasyWorship.
 - [`tests/test_ai_director_runtime.py`](../backend/tests/test_ai_director_runtime.py) — manual/assisted/ai_directed mode gating.
@@ -362,7 +385,7 @@ Config: `SERVICE_END_ENABLED`,
   Voice is a removable, operator-only notification observer under
   [app/voice](../backend/app/voice). It never imports production executors or adds
   LLM hardware tools. Existing event producers publish structured outcomes; the
-  classifier and consequence-aware policy choose the final priority, not Claude.
+  classifier and consequence-aware policy choose the final priority, not the LLM.
   Unknown event payloads cannot request speech through arbitrary `critical`,
   `priority` or `message` fields. No microphone-command interface is added.
 
@@ -386,22 +409,50 @@ Config: `SERVICE_END_ENABLED`,
   physical isolation. Browser audio is never used. Losing the named device fails
   playback instead of falling back to the OS default.
 
-  `TTS_PROVIDER=azure` selects the initial adapter. The provider-independent
+  **Current local status:** `LEVN LE-HS016 Superior` / `Core Audio` was detected,
+  but physical isolation is **not verified**. Leave `VOICE_ENABLED=false` and
+  `VOICE_ROUTING_VERIFIED=false` until the onsite check passes.
+
+  `TTS_PROVIDER=piper` selects the default local open-source adapter; `disabled`
+  is the alternative. Azure TTS is removed. Qwen/Ollama text generation is
+  separate from Piper speech synthesis and does not generate the waveform.
+  The provider-independent
   `TTSProvider.synthesize(text, voice_config, prosody)` returns bounded mono PCM
-  WAV audio. The core validates format/length and imposes a synthesis timeout.
-  Only administrator-selected stock female en-US voice IDs are used; there is no
-  voice cloning. Persona defaults are warm/conversational, rate 0.94, neutral
-  pitch and restrained expression. Azure applies SSML rate/pitch; unsupported
-  expressiveness/breathiness fields remain provider-independent preferences,
-  not guaranteed synthesis features. Operator names are reserved for critical
-  alerts and explicit approvals, not every notification.
+  WAV audio. The core validates format/length; `TTS_TIMEOUT_SECONDS=30` bounds
+  synthesis. The Piper CLI child writes only a temporary WAV, never uses system
+  playback, and is killed on mute/cancellation or timeout. Headset playback is
+  a separate application path, not a Piper CLI side effect.
+
+  `TTS_PIPER_MODEL_DIR=data/piper-voices` and
+  `TTS_PIPER_VOICE=en_US-ljspeech-high` are the defaults. Install the model,
+  matching ONNX JSON configuration and model card explicitly; no runtime download
+  occurs. The deployment assets are ignored under `data/piper-voices`. Relative
+  directories resolve against the process working directory; use one absolute
+  directory when launching from either the repository root or backend directory.
+  Empty `VoiceConfig.voice_id` (`VOICE_PERSONA__VOICE_ID`) uses `TTS_PIPER_VOICE`.
+  A nonempty ID is an installed filename stem, not a path or URL, and requires
+  matching `.onnx` and `.onnx.json` files inside the configured directory.
+
+  The default stock US English female LJ Speech high model outputs **22,050 Hz**.
+  Its [model card](https://huggingface.co/rhasspy/piper-voices/raw/main/en/en_US/ljspeech/high/MODEL_CARD)
+  identifies the source dataset as public domain; the
+  [Piper engine](https://github.com/OHF-Voice/piper1-gpl) is GPL-3.0. Review these
+  separate terms before redistributing engine or voice assets. No custom voice
+  cloning is provided. Persona warmth/conversational style is a preference, not
+  a timbre guarantee. The default rate is 0.94, implemented using Piper length
+  scaling. Prosody is model-specific and limited: pitch, expressiveness and
+  breathiness metadata are not guaranteed controllable synthesis features.
+  Operator names are reserved for critical alerts and explicit approvals, not
+  every notification. See [local setup](backend-setup.md#operator-headset-voice-deployment)
+  for dependencies, voice installation and the distinction between silent probes
+  and physical routing acceptance.
 
   ### Queue, audit and failure isolation
 
   - Default aggregation is 5 seconds for non-critical events of equal priority.
     Critical events bypass that delay, preempt lower speech and never yield to
     lower priority. Available critical peers are aggregated. The dedicated headset
-    tone precedes cloud synthesis; speech still depends on provider latency.
+    tone precedes local synthesis; speech still depends on model/inference latency.
   - A 10-second cooldown suppresses repeat symptoms. Unchanged unresolved symptoms
     remain suppressed until the separate repeat interval (120 seconds), severity
     escalation or state change. Explicit Repeat bypasses deduplication, not mute.
@@ -462,7 +513,8 @@ Config: `SERVICE_END_ENABLED`,
     Confirm AI/cue operations continue. Unmute must not replay stale low alerts.
   7. Simulate unexpected stream/record failure; critical interrupts lower speech
     with a headset tone. Explicit intentional stops must not be called failures.
-  8. Unplug headset, revoke TTS access, stop PostgreSQL and disable voice in turn.
+  8. Unplug headset, make local Piper model files unavailable, stop PostgreSQL
+    and disable voice in turn; restore each dependency after its check.
     Production continues; UI reports errors. Verify audit outbox replay on recovery.
   9. Submit feedback, restart and confirm persistence. Verify deployment access
     controls protect both REST and WebSocket routes. Recheck routing after any

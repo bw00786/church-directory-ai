@@ -5,7 +5,7 @@ the ATEM and the PTZOptics camera. Human and AI share the same engine, so the
 operator can always override.
 
 > This is the deterministic cue engine. A separate reasoning layer, the **AI
-> Service Director**, now sits above it (audio VAD, Claude decisions, typed
+> Service Director**, now sits above it (audio VAD, Ollama decisions, typed
 > policy-gated actions, manual/assisted/ai_directed modes) — see
 > [docs/ai-director.md](ai-director.md).
 
@@ -81,7 +81,7 @@ The LLM/vision layer turns an observation into an advance decision and feeds the
 same engine:
 
 - `POST /director/observe` with `{"text": "..."}` → [DirectorAI](../backend/app/agents/director_ai.py)
-  asks Claude (or a keyword heuristic fallback) whether the current cue's
+  asks Ollama (or a keyword heuristic fallback) whether the current cue's
   `exit_hint` is satisfied, then calls `request_advance`.
 - `POST /director/suggest` with `{source, reason, confidence, cue_id?}` feeds a
   raw suggestion directly.
@@ -97,11 +97,20 @@ Gating in `request_advance`:
 Example `exit_hint`: *"Advance when the liturgist finishes reading the scripture
 (switch to the pastor)."*
 
-With `langchain-anthropic` installed and `ANTHROPIC_API_KEY` set, decisions use
-Claude (the fast `ANTHROPIC_FAST_MODEL`, default `claude-haiku-4-5-20251001`,
-since this is a quick classification task); otherwise the keyword heuristic
-(e.g. "amen", "the word of the Lord", "please stand") is used so the pipeline
-still functions.
+With `langchain-ollama` installed and the configured Ollama server reachable,
+decisions use `get_fast_llm()` in JSON mode with a bounded invocation. The
+`OLLAMA_FAST_MODEL` default is `qwen3.8:latest`, the exact locally installed tag
+(27.3B, family `qwen35`), not `qwen3:8b` or a promise of public registry
+availability. Other machines need a matching provisioned tag or an explicit
+compatible override. `OLLAMA_BASE_URL` defaults to `http://127.0.0.1:11434`;
+the timeout is `LLM_TIMEOUT_SECONDS=120`. Full settings and the manual probe
+are in [backend setup](backend-setup.md#ollama-inference-check).
+
+When inference is unavailable or invalid, the keyword heuristic (e.g. "amen",
+"the word of the Lord", "please stand") remains the cue engine's fallback;
+it still passes through the same mode/confidence gates. This differs from the
+AI Service Director's safe `continue` decision on inference failure. No model
+download, embedding-provider change or voice enablement is part of this migration.
 
 ## Mixer wiring (Yamaha MGX16)
 
@@ -121,6 +130,11 @@ surgical notch, rate-limited, audited) and a **mix keeper** (hot channel → tri
 `/api/advise`); the AI assistant exposes these as `mixer_*` tools, with
 engaging the takeover confirmation-gated. Desk-level moves (fader, pan) remain
 advisory notes to the operator.
+
+The companion's `/api/advise` Claude advisor is an **independent external
+service**, not migrated here. Its provider, credentials and availability remain
+the companion application's responsibility; using local Ollama for this
+application does not make that advisor local or remove its external dependency.
 
 The desk is also used two ways for *listening*:
 

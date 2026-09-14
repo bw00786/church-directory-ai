@@ -11,6 +11,9 @@ Write-Host "Activating Python virtual environment..." -ForegroundColor Cyan
 # Start the server
 Write-Host "Starting FastAPI server on http://localhost:8000" -ForegroundColor Cyan
 Write-Host "API docs: http://localhost:8000/docs" -ForegroundColor Cyan
+Write-Host "Ollama must be managed separately at OLLAMA_BASE_URL (default http://127.0.0.1:11434)." -ForegroundColor Yellow
+Write-Host "Model tags must already exist; no downloads or voice enablement are performed here." -ForegroundColor Yellow
+Write-Host "Inference check: http://localhost:8000/health/ollama (default timeout 120 seconds)" -ForegroundColor Cyan
 Write-Host ""
 
 python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000

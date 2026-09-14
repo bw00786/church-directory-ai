@@ -1,8 +1,8 @@
-"""Claude-vision semantic escalation (FR-4). Optional, off by default.
+"""Ollama vision semantic escalation (FR-4). Optional, off by default.
 
 Fires only on explicit triggers (ambiguous decision context, an operator "ask
 the director" query, or a disagreement/verify-failure needing context), sends a
-single downscaled program frame to Claude with a constrained question set, and
+single downscaled program frame to the model with a constrained question set, and
 parses the reply into a whitelist of typed context fields — **never actions**.
 Rate-limited and out of the hot loop; a failure/timeout simply means the
 decision proceeds without semantic fields (same philosophy as RAG failure).
@@ -46,7 +46,7 @@ _SYSTEM = (
 
 
 class SemanticVision:
-    """Constrained, rate-limited Claude-vision Q&A that yields context fields."""
+    """Constrained, rate-limited Ollama vision Q&A that yields context fields."""
 
     def __init__(self):
         self._calls: deque = deque()
@@ -124,9 +124,9 @@ class SemanticVision:
             return None
 
     async def _invoke(self, image_b64: str, question: str) -> str:
-        from app.agents.llm import get_llm
+        from app.agents.llm import get_vision_llm, invoke_llm, response_text
 
-        llm = get_llm()
+        llm = get_vision_llm()
         message = {
             "role": "user",
             "content": [
@@ -134,11 +134,8 @@ class SemanticVision:
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
             ],
         }
-        response = await llm.ainvoke([("system", _SYSTEM), message])
-        content = getattr(response, "content", response)
-        if isinstance(content, list):
-            content = " ".join(str(part) for part in content)
-        return str(content)
+        response = await invoke_llm(llm, [("system", _SYSTEM), message])
+        return response_text(response)
 
 
 # Module-level singleton

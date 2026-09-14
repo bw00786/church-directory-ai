@@ -33,8 +33,8 @@ def rig(monkeypatch):
         "max_event_age_seconds": 60, "queue_limit": 100, "persona": {},
     })
     monkeypatch.setattr(service_module, "TTSSettings", lambda: TTSSettings.model_validate({
-        "provider": "disabled", "azure_key": "", "azure_region": "eastus",
-        "timeout_seconds": 10,
+        "provider": "disabled", "piper_model_dir": "data/piper-voices",
+        "piper_voice": "en_US-ljspeech-high", "timeout_seconds": 30,
     }))
     monkeypatch.setattr(service_module, "logger", Mock())
     provider_factory = Mock(side_effect=AssertionError("Real TTS provider forbidden"))

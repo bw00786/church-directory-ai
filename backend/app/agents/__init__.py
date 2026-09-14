@@ -3,13 +3,13 @@
 from .prompts import DIRECTOR_SYSTEM_PROMPT
 from .state import ProductionState
 
-try:  # langchain-anthropic is optional at import time
-    from .llm import build_llm, check_anthropic_connection, get_fast_llm, get_llm
+try:  # Ollama is optional for non-LLM package imports.
+    from .llm import build_llm, check_ollama_connection, get_fast_llm, get_llm
 except Exception:  # pragma: no cover - missing optional dependency
     build_llm = None
     get_llm = None
     get_fast_llm = None
-    check_anthropic_connection = None
+    check_ollama_connection = None
 
 __all__ = [
     "ProductionState",
@@ -17,5 +17,5 @@ __all__ = [
     "build_llm",
     "get_llm",
     "get_fast_llm",
-    "check_anthropic_connection",
+    "check_ollama_connection",
 ]

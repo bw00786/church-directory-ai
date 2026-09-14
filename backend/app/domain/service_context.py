@@ -42,7 +42,7 @@ class ServiceContext:
     last_observation: Optional[AudioObservation] = None
     # Latest vision observation keyed by role (camera feeds) or input tag.
     vision: dict = field(default_factory=dict)
-    # Typed context fields from the optional Claude-vision tier (never actions).
+    # Typed context fields from the optional vision LLM (never actions).
     semantic: dict = field(default_factory=dict)
 
     def record_audio(self, observation: AudioObservation) -> None:

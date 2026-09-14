@@ -38,6 +38,7 @@ export function AssistantChat() {
       <CardHeader
         avatar={<SmartToyIcon color="secondary" />}
         title="Assistant"
+        subheader="Ollama · production tools require policy checks"
         titleTypographyProps={{ variant: 'subtitle2' }}
       />
       <CardContent>
@@ -68,7 +69,7 @@ export function AssistantChat() {
               <Stack direction="row" sx={{ alignItems: 'center', gap: 1, alignSelf: 'flex-start' }}>
                 <CircularProgress size={14} />
                 <Typography variant="caption" color="text.secondary">
-                  Thinking…
+                  Waiting for Ollama… Local model loading may take a moment.
                 </Typography>
               </Stack>
             )}

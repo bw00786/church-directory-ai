@@ -1,14 +1,12 @@
-"""Anthropic Claude client factory for the AI director.
+"""Shared Ollama clients; models propose results, never bypass execution policy."""
 
-Centralizes construction of the LangChain ``ChatAnthropic`` model so every
-agent/tool shares one configured, policy-agnostic LLM client. The LLM only
-produces recommendations; execution still flows through the policy engine.
-"""
-
+import asyncio
 from functools import lru_cache
 from typing import Optional
+from urllib.parse import urlsplit
 
-from langchain_anthropic import ChatAnthropic
+import httpx
+from langchain_ollama import ChatOllama
 
 from app.config import settings
 from app.logging_config import get_logger
@@ -16,77 +14,76 @@ from app.logging_config import get_logger
 logger = get_logger(__name__)
 
 
-def build_llm(
-    *,
-    model: Optional[str] = None,
-    temperature: Optional[float] = None,
-    max_tokens: Optional[int] = None,
-) -> ChatAnthropic:
-    """Build a configured ``ChatAnthropic`` client.
-
-    Args:
-        model: Override the configured model id.
-        temperature: Override the configured sampling temperature.
-        max_tokens: Override the configured max output tokens.
-
-    Returns:
-        A ready-to-use ``ChatAnthropic`` instance.
-
-    Raises:
-        ValueError: If no Anthropic API key is configured.
-    """
-    if not settings.anthropic_api_key:
-        raise ValueError(
-            "ANTHROPIC_API_KEY is not set; cannot initialize the Claude client"
-        )
-
-    kwargs = {
-        "model": model or settings.anthropic_model,
-        "api_key": settings.anthropic_api_key,
-        "temperature": settings.llm_temperature if temperature is None else temperature,
-        "max_tokens": max_tokens or settings.llm_max_tokens,
-        "timeout": settings.llm_timeout_seconds,
-    }
-    if settings.anthropic_base_url:
-        kwargs["base_url"] = settings.anthropic_base_url
-
-    logger.info("Initializing Anthropic Claude client", model=kwargs["model"])
-    return ChatAnthropic(**kwargs)
+def build_llm(*, model: Optional[str] = None, temperature: Optional[float] = None,
+              max_tokens: Optional[int] = None, json_mode: bool = False) -> ChatOllama:
+    url = urlsplit(settings.ollama_base_url)
+    if url.scheme not in ("http", "https") or not url.hostname or url.username or url.password or url.query or url.fragment:
+        raise ValueError("OLLAMA_BASE_URL must be an HTTP(S) server URL without credentials, query or fragment")
+    selected = model if model is not None else settings.ollama_model
+    if not selected.strip():
+        raise ValueError("Configure a nonempty Ollama model tag")
+    tokens = settings.llm_max_tokens if max_tokens is None else max_tokens
+    if tokens <= 0:
+        raise ValueError("max_tokens must be positive")
+    return ChatOllama(
+        model=selected, base_url=settings.ollama_base_url.rstrip('/'),
+        temperature=settings.llm_temperature if temperature is None else temperature,
+        num_predict=tokens, num_ctx=settings.ollama_num_ctx,
+        reasoning=settings.ollama_reasoning, keep_alive=settings.ollama_keep_alive,
+        format="json" if json_mode else None,
+        client_kwargs={"timeout": settings.llm_timeout_seconds, "trust_env": False},
+    )
 
 
 @lru_cache(maxsize=1)
-def get_llm() -> ChatAnthropic:
-    """Return a process-wide cached Claude client."""
+def get_llm() -> ChatOllama:
     return build_llm()
 
 
 @lru_cache(maxsize=1)
-def get_fast_llm() -> ChatAnthropic:
-    """Return a process-wide cached Claude client using the fast/small model.
-
-    Intended for quick classification tasks (e.g. cue-advance decisions) where
-    low latency matters more than deep reasoning.
-    """
-    return build_llm(model=settings.anthropic_fast_model)
+def get_fast_llm() -> ChatOllama:
+    return build_llm(model=settings.ollama_fast_model, json_mode=True)
 
 
-async def check_anthropic_connection() -> dict:
-    """Make a minimal real API call to verify the Claude connection works.
+@lru_cache(maxsize=1)
+def get_director_llm() -> ChatOllama:
+    return build_llm(json_mode=True)
 
-    Returns a dict like {"ok": True, "model": "..."} or {"ok": False, "error": "..."}.
-    Safe to call even when no API key is configured.
-    """
+
+@lru_cache(maxsize=1)
+def get_vision_llm() -> ChatOllama:
+    return build_llm(model=settings.ollama_vision_model, json_mode=True)
+
+
+def response_text(response) -> str:
+    content = getattr(response, "content", response)
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        return " ".join(part if isinstance(part, str) else part.get("text", "")
+                        for part in content if isinstance(part, str) or
+                        isinstance(part, dict) and part.get("type") == "text").strip()
+    return ""
+
+
+async def invoke_llm(llm, messages):
+    return await asyncio.wait_for(llm.ainvoke(messages), timeout=settings.llm_timeout_seconds)
+
+
+async def check_ollama_connection() -> dict:
     try:
-        llm = build_llm(model=settings.anthropic_fast_model, max_tokens=8)
-    except ValueError as e:
-        return {"ok": False, "error": str(e)}
-
-    try:
-        response = await llm.ainvoke([("user", "Reply with just the word: pong")])
-        content = getattr(response, "content", response)
-        if isinstance(content, list):
-            content = " ".join(str(part) for part in content)
-        return {"ok": True, "model": settings.anthropic_fast_model, "reply": str(content).strip()}
-    except Exception as e:
-        logger.warning("Anthropic connectivity check failed", error=str(e))
-        return {"ok": False, "error": str(e)}
+        async with asyncio.timeout(settings.llm_timeout_seconds):
+            llm = build_llm(max_tokens=32)
+            async with httpx.AsyncClient(timeout=settings.llm_timeout_seconds, trust_env=False) as client:
+                response = await client.post(settings.ollama_base_url.rstrip('/') + '/api/show', json={"model": settings.ollama_model})
+                response.raise_for_status()
+                capabilities = response.json().get("capabilities", [])
+            reply = response_text(await invoke_llm(llm, [("user", "Reply with just the word: pong")]))
+            if not reply:
+                raise ValueError("Ollama returned an empty response")
+            return {"ok": True, "provider": "ollama", "model": settings.ollama_model,
+                    "capabilities": capabilities, "reply": reply}
+    except Exception as exc:
+        logger.warning("Ollama connectivity check failed", error_type=type(exc).__name__)
+        return {"ok": False, "provider": "ollama", "model": settings.ollama_model,
+                "error": f"Ollama check failed ({type(exc).__name__}); check server, model tag and timeout"}

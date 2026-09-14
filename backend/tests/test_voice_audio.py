@@ -1,21 +1,17 @@
-"""Provider and playback tests: HTTP is mocked and no audio device is opened."""
+"""PCM decoding and playback tests; no audio device is opened."""
 
 import io
 import sys
 import wave
-import xml.etree.ElementTree as ET
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-import httpx
 import numpy as np
 import pytest
 
-from app.voice.config import TTSSettings, VoiceSettings
-from app.voice.models import AudioResult, ProsodyConfig, VoiceConfig
+from app.voice.config import VoiceSettings
+from app.voice.models import AudioResult
 from app.voice.playback import HeadsetPlayback, decode_audio
-from app.voice.provider import build_provider
-from app.voice.providers.azure import AzureProvider
 
 
 def wav_audio(rate=24000, channels=1, width=2, frames=24):
@@ -192,90 +188,3 @@ def test_voice_headset_stop_aborts_only_existing_stream(headset):
     playback.stream = stream
     playback.stop()
     stream.abort.assert_called_once()
-
-
-@pytest.fixture
-def mock_tts_http(monkeypatch):
-    real_client = httpx.AsyncClient
-
-    def install(handler):
-        requests = []
-
-        def handle(request):
-            requests.append(request)
-            return handler(request)
-
-        factory = Mock(side_effect=lambda **kwargs: real_client(
-            transport=httpx.MockTransport(handle), **kwargs,
-        ))
-        monkeypatch.setattr("app.voice.providers.azure.httpx.AsyncClient", factory)
-        return requests, factory
-
-    return install
-
-
-def azure():
-    return AzureProvider(TTSSettings(_env_file=None, provider="azure", azure_key="fake-unit-test-key", azure_region="eastus"))
-
-
-async def test_voice_azure_success_sends_escaped_ssml_and_pcm_format(mock_tts_http):
-    audio = wav_audio()
-    requests, factory = mock_tts_http(lambda request: httpx.Response(200, content=audio.data))
-    text = "Check A & B <monitor> now"
-    voice = VoiceConfig(voice_id='en-US-Test"Voice')
-    result = await azure().synthesize(text, voice, ProsodyConfig())
-    assert result == audio
-    decode_audio(result)
-    request = requests[0]
-    assert request.method == "POST"
-    assert str(request.url) == "https://eastus.tts.speech.microsoft.com/cognitiveservices/v1"
-    assert request.headers["X-Microsoft-OutputFormat"] == "riff-24000hz-16bit-mono-pcm"
-    assert request.headers["Content-Type"] == "application/ssml+xml"
-    root = ET.fromstring(request.content)
-    assert root.find("voice").attrib["name"] == voice.voice_id
-    assert root.find("voice/prosody").text == text
-    assert root.find("voice/prosody").attrib["rate"] == "-6%"
-    assert factory.call_args.kwargs["timeout"] == 10
-
-
-@pytest.mark.parametrize("status", [401, 429, 500])
-async def test_voice_azure_propagates_http_errors_without_retry(mock_tts_http, status):
-    requests, _ = mock_tts_http(lambda request: httpx.Response(status, content=b"synthetic failure"))
-    with pytest.raises(httpx.HTTPStatusError):
-        await azure().synthesize("Alert", VoiceConfig(voice_id="en-US-Test"), ProsodyConfig())
-    assert len(requests) == 1
-
-
-async def test_voice_azure_propagates_transport_timeout(mock_tts_http):
-    def timeout(request):
-        raise httpx.ReadTimeout("synthetic timeout", request=request)
-
-    mock_tts_http(timeout)
-    with pytest.raises(httpx.ReadTimeout):
-        await azure().synthesize("Alert", VoiceConfig(voice_id="en-US-Test"), ProsodyConfig())
-
-
-async def test_voice_azure_rejects_oversized_stream(mock_tts_http):
-    class Chunks(httpx.AsyncByteStream):
-        async def __aiter__(self):
-            yield b"x" * 1_500_000
-            yield b"x" * 1_500_001
-
-    mock_tts_http(lambda request: httpx.Response(200, stream=Chunks()))
-    with pytest.raises(ValueError, match="audio limit"):
-        await azure().synthesize("Alert", VoiceConfig(voice_id="en-US-Test"), ProsodyConfig())
-
-
-@pytest.mark.parametrize("key,voice", [("", "en-US-Test"), ("fake-unit-test-key", "")])
-async def test_voice_azure_requires_key_and_voice_before_http(mock_tts_http, key, voice):
-    requests, _ = mock_tts_http(lambda request: pytest.fail("HTTP must not be called"))
-    provider = AzureProvider(TTSSettings(_env_file=None, azure_key=key))
-    with pytest.raises(ValueError, match="TTS key"):
-        await provider.synthesize("Alert", VoiceConfig(voice_id=voice), ProsodyConfig())
-    assert not requests
-
-
-def test_voice_provider_factory_disabled_fails_closed():
-    with pytest.raises(ValueError, match="disabled"):
-        build_provider(TTSSettings(_env_file=None, provider="disabled"))
-    assert isinstance(build_provider(TTSSettings(_env_file=None, provider="azure")), AzureProvider)

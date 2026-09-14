@@ -85,18 +85,80 @@ def test_voice_config_safe_defaults_and_update_validation():
 
 
 @pytest.mark.parametrize("changes", [
-    {"azure_region": "eastus/../../evil"}, {"azure_region": "eastus.evil.invalid"},
+    {"piper_voice": "../escape"}, {"piper_voice": "https://example.invalid/voice"},
+    {"piper_voice": ""}, {"piper_voice": "a" * 101},
     {"timeout_seconds": 0}, {"timeout_seconds": 31}, {"provider": "unknown"},
+    {"timeout_seconds": .99}, {"timeout_seconds": 30.01}, {"provider": "azure"},
 ])
 def test_voice_tts_config_rejects_invalid_settings(changes):
     with pytest.raises(ValidationError):
         TTSSettings(_env_file=None, **changes)
 
 
-def test_voice_tts_key_is_not_serialized_or_represented():
-    config = TTSSettings(_env_file=None, azure_key="fake-unit-test-key")
-    assert "fake-unit-test-key" not in repr(config)
-    assert "azure_key" not in config.model_dump()
+@pytest.fixture
+def clean_tts_environment(monkeypatch):
+    import os
+
+    for key in list(os.environ):
+        if key.upper().startswith("TTS_"):
+            monkeypatch.delenv(key)
+
+
+def test_voice_tts_piper_defaults(clean_tts_environment):
+    config = TTSSettings(_env_file=None)
+    assert config.model_dump() == {
+        "provider": "piper", "piper_model_dir": "data/piper-voices",
+        "piper_voice": "en_US-ljspeech-high", "timeout_seconds": 30,
+    }
+
+
+@pytest.mark.parametrize("timeout", [1, 10, 30])
+def test_voice_tts_timeout_accepts_current_range(timeout, clean_tts_environment):
+    assert TTSSettings(_env_file=None, timeout_seconds=timeout).timeout_seconds == timeout
+
+
+def test_voice_tts_piper_fields_parse_from_environment(monkeypatch, tmp_path, clean_tts_environment):
+    monkeypatch.setenv("TTS_PROVIDER", "piper")
+    monkeypatch.setenv("TTS_PIPER_MODEL_DIR", str(tmp_path))
+    monkeypatch.setenv("TTS_PIPER_VOICE", "en_US-test-medium")
+    monkeypatch.setenv("TTS_TIMEOUT_SECONDS", "12")
+    config = TTSSettings(_env_file=None)
+    assert config.piper_model_dir == str(tmp_path)
+    assert config.piper_voice == "en_US-test-medium"
+    assert config.timeout_seconds == 12
+
+
+@pytest.mark.parametrize("source", ["kwargs", "environment", "dotenv"])
+def test_voice_tts_legacy_azure_keys_are_ignored(source, monkeypatch, tmp_path, clean_tts_environment):
+    legacy = {"azure_key": "fake-unit-test-key", "azure_region": "eastus/../../evil"}
+    kwargs = {}
+    env_file = None
+    if source == "kwargs":
+        kwargs = legacy
+    elif source == "environment":
+        for key, value in legacy.items():
+            monkeypatch.setenv("TTS_" + key.upper(), value)
+    else:
+        env_file = tmp_path / ".env"
+        env_file.write_text("TTS_AZURE_KEY=fake-unit-test-key\nTTS_AZURE_REGION=eastus/../../evil\n")
+    config = TTSSettings(_env_file=env_file, **kwargs)
+    assert config.provider == "piper"
+    for key, value in legacy.items():
+        assert not hasattr(config, key)
+        assert key not in config.model_dump()
+        assert value not in repr(config) + config.model_dump_json()
+
+
+@pytest.mark.parametrize("source", ["environment", "dotenv"])
+def test_voice_tts_legacy_azure_provider_rejected(source, monkeypatch, tmp_path, clean_tts_environment):
+    env_file = None
+    if source == "environment":
+        monkeypatch.setenv("TTS_PROVIDER", "azure")
+    else:
+        env_file = tmp_path / ".env"
+        env_file.write_text("TTS_PROVIDER=azure\nTTS_AZURE_KEY=fake-unit-test-key\n")
+    with pytest.raises(ValidationError, match="provider"):
+        TTSSettings(_env_file=env_file)
 
 
 def test_voice_safety_flags_parse_from_documented_environment(monkeypatch):
@@ -117,7 +179,7 @@ def test_voice_dotenv_settings_do_not_break_production_startup(tmp_path):
     from app.config import Settings
 
     dotenv = tmp_path / ".env"
-    dotenv.write_text("VOICE_ENABLED=true\nVOICE_HEADSET_ONLY=true\nTTS_PROVIDER=azure\nAPI_PORT=8123\n")
+    dotenv.write_text("VOICE_ENABLED=true\nVOICE_HEADSET_ONLY=true\nTTS_PROVIDER=piper\nAPI_PORT=8123\n")
     assert Settings(_env_file=dotenv).api_port == 8123
     assert VoiceSettings(_env_file=dotenv).enabled
     dotenv.write_text("API_PORT=8123\nUNKNOWN_PRODUCTION_SETTING=true\n")

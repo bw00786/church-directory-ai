@@ -1,9 +1,7 @@
 """AI Service Director: turns a ServiceContext into a structured decision.
 
-Uses Anthropic Claude (app.agents.llm) — the same client already used
-elsewhere in this codebase. Falls back to a "continue, low confidence"
-decision (never an executable action) if no API key is configured or the
-call/parse fails, so the system degrades safely.
+Uses local Ollama (app.agents.llm). Unavailable inference or invalid output
+falls back to a no-action, low-confidence decision.
 
 Retrieval-augmented: each decision cycle also searches production memory
 (app.memory.production_memory, backed by past cue/AI observations) for
@@ -39,19 +37,19 @@ class AIServiceDirector:
     """Reasoning-only AI Director. Produces DirectorDecision, never executes."""
 
     async def decide(self, context: ServiceContext) -> DirectorDecision:
-        decision = await self._decide_with_claude(context)
+        decision = await self._decide_with_llm(context)
         if decision is not None:
             return decision
         return DirectorDecision(
             decision="continue",
             confidence=0.0,
-            reason="AI Director unavailable (no API key or parse failure); no action taken",
+            reason="AI Director unavailable (Ollama unavailable or invalid response); no action taken",
         )
 
     async def _retrieve_history(self, context: ServiceContext, snapshot: dict) -> str:
         """Retrieval-augmented context: similar past-service observations,
         advisory only. Never raises -- a retrieval failure (e.g. no
-        database) just means Claude reasons without history, same as before
+        database) just means the model reasons without history, same as before
         this feature existed. Runs in a thread since embedding/search may now
         involve a real network call to Voyage AI, and this must never block
         the live director's event loop."""
@@ -81,11 +79,11 @@ class AIServiceDirector:
             for r in relevant
         )
 
-    async def _decide_with_claude(self, context: ServiceContext) -> Optional[DirectorDecision]:
+    async def _decide_with_llm(self, context: ServiceContext) -> Optional[DirectorDecision]:
         try:
-            from app.agents.llm import get_llm
+            from app.agents.llm import get_director_llm, invoke_llm, response_text
 
-            llm = get_llm()
+            llm = get_director_llm()
         except Exception:
             return None
 
@@ -110,10 +108,8 @@ class AIServiceDirector:
         )
 
         try:
-            response = await llm.ainvoke([("system", _system_prompt()), ("user", user)])
-            content = getattr(response, "content", response)
-            if isinstance(content, list):
-                content = " ".join(str(part) for part in content)
+            response = await invoke_llm(llm, [("system", _system_prompt()), ("user", user)])
+            content = response_text(response)
             match = re.search(r"\{.*\}", str(content), re.DOTALL)
             if not match:
                 return None

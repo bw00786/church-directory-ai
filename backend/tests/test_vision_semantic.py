@@ -1,7 +1,12 @@
-"""Tests for the Claude-vision semantic tier (WO-VISION-1 FR-4)."""
+"""Tests for the Ollama semantic vision tier (WO-VISION-1 FR-4)."""
 
 import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
+import pytest
+
+from app.agents import llm as llm_module
 from app.config import settings
 from app.vision.semantic import SemanticVision
 
@@ -65,3 +70,24 @@ def test_typed_fields_and_no_actions(monkeypatch):
     # No action-shaped keys ever survive parsing.
     for forbidden in ("action", "type", "camera"):
         assert forbidden not in fields
+
+
+async def test_invoke_uses_vision_factory_and_preserves_image_message(monkeypatch):
+    reply = '{"scene_description": "pastor speaking"}'
+    adapter = SimpleNamespace(ainvoke=AsyncMock(return_value=SimpleNamespace(content=reply)))
+    factory = Mock(return_value=adapter)
+    monkeypatch.setattr(llm_module, "get_vision_llm", factory)
+    monkeypatch.setattr(llm_module, "get_llm", lambda: pytest.fail("Vision must use get_vision_llm"))
+
+    assert await SemanticVision()._invoke("ZmFrZS1qcGVn", "Describe this frame") == reply
+    factory.assert_called_once_with()
+    adapter.ainvoke.assert_awaited_once()
+    messages = adapter.ainvoke.await_args.args[0]
+    assert messages[0][0] == "system"
+    assert "read-only" in messages[0][1]
+    assert messages[1] == {
+        "role": "user", "content": [
+            {"type": "text", "text": "Describe this frame"},
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,ZmFrZS1qcGVn"}},
+        ],
+    }

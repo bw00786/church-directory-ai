@@ -1,16 +1,18 @@
 """AI assistant chatbot: answers questions about past services/roster and
-controls production subsystems via tool-calling (Claude + LangGraph).
+controls production subsystems via tool-calling (Ollama + LangGraph).
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any, Optional
 
 from app.logging_config import get_logger
+from app.config import settings
 
 from . import assistant_tools
-from .llm import build_llm
+from .llm import build_llm, response_text
 
 logger = get_logger(__name__)
 
@@ -68,7 +70,7 @@ _agent = None
 
 
 def get_agent():
-    """Lazily build the LangGraph tool-calling agent (requires ANTHROPIC_API_KEY)."""
+    """Lazily build the LangGraph tool-calling agent using local Ollama."""
     global _agent
     if _agent is None:
         from langgraph.prebuilt import create_react_agent
@@ -89,7 +91,7 @@ async def run_assistant(messages: list[dict[str, str]]) -> dict[str, Any]:
     """
     agent = get_agent()
     lc_messages = [(m["role"], m["content"]) for m in messages]
-    result = await agent.ainvoke({"messages": lc_messages})
+    result = await asyncio.wait_for(agent.ainvoke({"messages": lc_messages}), timeout=settings.llm_timeout_seconds)
     out_messages = result["messages"]
 
     pending_confirmation: Optional[dict[str, Any]] = None
@@ -109,7 +111,6 @@ async def run_assistant(messages: list[dict[str, str]]) -> dict[str, Any]:
 
     reply = ""
     if out_messages:
-        content = getattr(out_messages[-1], "content", "")
-        reply = content if isinstance(content, str) else " ".join(str(part) for part in content)
+        reply = response_text(out_messages[-1])
 
     return {"reply": reply, "pending_confirmation": pending_confirmation}

@@ -26,7 +26,7 @@ class VisionObservation(BaseModel):
     """A verification signal from the vision subsystem (WO-VISION-1).
 
     Never an actor: this only *observes* (occupancy, framing, output health) so
-    Claude can reason and PTZ actions can be verified. Anonymous — no identity.
+    The LLM can reason and PTZ actions can be verified. Anonymous — no identity.
     """
 
     input: str = "program"                 # capture input tag
