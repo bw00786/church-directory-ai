@@ -20,6 +20,10 @@ This is a production-grade system designed for churches to automate and assist i
 - **Production Control Panel** — React/Vite web interface with real-time WebSocket updates (cue sheet, camera joystick, AI Director panel)
 - **Event Audit Trail** — Complete logging of all production actions and AI decisions
 - **Production Memory** — PostgreSQL + pgvector for semantic retrieval of past services
+- **Indexed RAG** — Server-side cosine search with HNSW indexes and explicit
+  embedding-model isolation. Run the additive
+  [database migration](docs/backend-setup.md#database-migrations) before starting
+  an upgraded backend; `GET /api/memory/status` reports schema/index readiness.
 - **Policy Engine** — Granular permission control on AI and human actions
 - **Manual Override** — Full manual control available even with all AI services offline
 

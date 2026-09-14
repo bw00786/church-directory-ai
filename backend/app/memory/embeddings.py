@@ -17,16 +17,16 @@ config or a runtime error so production memory never stops working:
 `embedding_provider` config ("auto" | "voyage" | "nomic" | "hashed") selects
 the tier; "auto" (default) uses the best one available.
 
-`MemoryRepository.cosine_similarity` scores mismatched-dimension vectors as
-0.0 rather than raising, so mixing embeddings from different tiers in the
-same table is safe -- older rows just won't surface against a query embedded
-by a different tier, until re-recorded.
+Production-memory embeddings carry the actual model/tier identity. Retrieval
+filters by both identity and dimension; incompatible or unlabelled legacy
+rows cannot appear in results. Re-embed legacy text with the migration CLI.
 """
 
 from __future__ import annotations
 
 import re
 import zlib
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -124,6 +124,12 @@ class _NomicTextEmbedder:
         return np.asarray(vector, dtype=float)
 
 
+@dataclass(frozen=True)
+class EmbeddedText:
+    vector: np.ndarray
+    space: str
+
+
 class TextEmbedder:
     """Picks the best available embedding tier per `embedding_provider`."""
 
@@ -133,31 +139,30 @@ class TextEmbedder:
         self._hashed = _HashedTextEmbedder()
 
     def embed(self, text: str, input_type: str = "document") -> np.ndarray:
+        return self.embed_with_metadata(text, input_type).vector
+
+    def embed_with_metadata(self, text: str, input_type: str = "document") -> EmbeddedText:
         provider = settings.embedding_provider
-
-        if provider == "hashed":
-            return self._hashed.embed(text, input_type=input_type)
-        if provider == "voyage":
-            vector = self._embed_or_none(self._voyage, text, input_type)
-            return vector if vector is not None else self._hashed.embed(text, input_type=input_type)
-        if provider == "nomic":
-            vector = self._embed_or_none(self._nomic, text, input_type)
-            return vector if vector is not None else self._hashed.embed(text, input_type=input_type)
-
-        # "auto" (default): Voyage (if configured) -> nomic -> hashed.
-        if settings.voyage_api_key:
-            vector = self._embed_or_none(self._voyage, text, input_type)
+        voyage = (self._voyage, f"voyage:{settings.voyage_embedding_model}")
+        nomic = (self._nomic, f"nomic:{settings.nomic_model_name}@{settings.nomic_model_revision or 'unpinned'}")
+        tiers = {"hashed": [], "voyage": [voyage], "nomic": [nomic],
+                 "auto": ([voyage] if settings.voyage_api_key else []) + [nomic]}
+        if provider not in tiers:
+            raise ValueError(f"Unknown embedding provider: {provider}")
+        for embedder, space in tiers[provider]:
+            vector = self._embed_or_none(embedder, text, input_type)
             if vector is not None:
-                return vector
-        vector = self._embed_or_none(self._nomic, text, input_type)
-        if vector is not None:
-            return vector
-        return self._hashed.embed(text, input_type=input_type)
+                return EmbeddedText(vector, f"{space}:{vector.size}")
+        vector = self._hashed.embed(text, input_type=input_type)
+        return EmbeddedText(vector, "hashed:crc32-logtf-v1:256")
 
     @staticmethod
     def _embed_or_none(embedder, text: str, input_type: str) -> np.ndarray | None:
         try:
-            return embedder.embed(text, input_type=input_type)
+            vector = np.asarray(embedder.embed(text, input_type=input_type), dtype=float)
+            if vector.ndim != 1 or not vector.size or not np.isfinite(vector).all():
+                raise ValueError("Invalid embedding response")
+            return vector
         except Exception:
             logger.warning("%s embedding failed; falling back", type(embedder).__name__, exc_info=True)
             return None

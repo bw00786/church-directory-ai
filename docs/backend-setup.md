@@ -263,16 +263,67 @@ pytest -m "not hardware"
 
 ### Database Migrations
 
+The implemented migration runner is
+[migrate_memory_vectors.py](../backend/scripts/migrate_memory_vectors.py), not
+an initialized Alembic project. Run it from `backend` with the application's
+Python 3.11+ environment and PostgreSQL settings loaded. It requires pgvector
+**0.8.0+** to be installed on the server; its extension is named `vector`.
+
 ```bash
-# Create new migration
-alembic revision --autogenerate -m "Add new column"
+python scripts/migrate_memory_vectors.py
 
-# Apply migrations
-alembic upgrade head
-
-# Rollback one migration
-alembic downgrade -1
+# Explicitly re-embed unlabelled legacy text using the configured provider
+python scripts/migrate_memory_vectors.py --backfill
 ```
+
+The migration creates missing application tables, adds nullable
+`embedding_space` to `memory_service_observations`, and creates partial cosine
+HNSW expression indexes for dimensions **256, 768, 1024 and 1536**, plus a model
+identity index. Original text/UUIDs/float-array columns are retained; PostgreSQL
+casts the arrays to `vector(n)` for indexing and distance queries. There is no
+Python full-table similarity scan on the RAG query path.
+
+`app_schema_migrations` records the applied version. The runner is repeatable,
+serialized by a transaction advisory lock, and transactional. Lock acquisition
+fails after five seconds. Index creation is **not concurrent**: schedule the
+migration before services or in a maintenance window for populated databases.
+Take a database backup before migrating populated deployments. Do not run the
+old backend against the changed retrieval contract or drop the indexes live.
+
+Legacy rows have unknown model provenance and remain unsearchable until
+explicit backfill. Backfill re-embeds their stored text in batches of 100 and
+replaces only those rows' old embedding arrays with labelled vectors. It can
+call paid providers/download local models depending on `EMBEDDING_PROVIDER`;
+choose the provider first. Committed batches are retained if a later batch
+fails; rerunning skips labelled rows. Already-labelled embeddings are never
+silently relabelled or converted to a newly configured model. Re-embedding a
+labelled corpus into a different model is a separate migration.
+
+The current local deployment uses `EMBEDDING_PROVIDER=hashed` (256 dimensions),
+which works offline. pgvector accelerates retrieval but does **not** improve
+hashed embedding semantics. Choose Voyage or a pinned Nomic model to improve
+semantic quality. The actual tier/model/revision/dimension is stored even when
+fallback occurs. A query searches only its compatible embedding space, so a
+provider outage may yield fewer or no results rather than unrelated matches.
+Pin model revisions where supported and avoid changing them during a service.
+
+`GET /api/memory/status` shows extension version, valid indexes and record counts
+by embedding space. `ready` confirms the index/schema check, not external model
+availability. `/api/memory/search` limits results to 1–100. Unknown dimensions
+(up to pgvector's 16,000 limit) use server-side exact search without an HNSW
+index. Zero vectors and unlabelled rows are excluded. HNSW search is approximate;
+iterative scans mitigate filtering losses but do not guarantee full recall.
+On very small tables PostgreSQL may correctly prefer a sequential scan.
+
+Integration tests are opt-in and use a transaction-isolated schema in the
+configured database, leaving no persistent fixtures:
+
+```bash
+RUN_PGVECTOR_TESTS=1 python -m pytest tests/test_memory_vectors_integration.py -q
+```
+
+Restart the backend after migrating to load the new models and search path.
+Voice and the hardware directors do not need to run during migration/testing.
 
 ### Formatting & Linting
 

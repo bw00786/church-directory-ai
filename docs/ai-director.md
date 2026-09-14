@@ -166,6 +166,26 @@ Force a specific tier with `EMBEDDING_PROVIDER=voyage|nomic|hashed`. The
 retrieval call itself runs off the event loop (`asyncio.to_thread`) so a
 slow/blocked network or model-load call never stalls the live decision loop.
 
+### Indexed RAG storage
+
+Production-memory retrieval now executes cosine-distance queries inside
+PostgreSQL, using pgvector HNSW expression indexes over the existing float
+arrays. The query retains the distance operator directly in `ORDER BY` with a
+server-side limit, rather than loading all records into Python.
+
+Each observation stores its actual `embedding_space` (provider, model/revision,
+dimension). This includes fallback results: a hashed fallback is never labelled
+as Voyage. Queries filter by space **and** dimension; even equal-length vectors
+from different models cannot mix. Unlabelled legacy rows are excluded until
+explicitly re-embedded. A model change does not make existing vectors compatible.
+HNSW is approximate, not a guarantee of exact top-K recall.
+
+Run the [additive migration and optional backfill](backend-setup.md#database-migrations)
+before deploying this version. Inspect `GET /api/memory/status` for pgvector,
+index readiness and space counts. Indexed dimensions are 256/768/1024/1536;
+other supported sizes use exact server-side search. pgvector improves query
+execution, not embedding quality; the local deployment still uses hashed vectors.
+
 ## Action engine & policy thresholds
 
 [`ActionEngine`](../backend/app/director/action_engine.py) maps each

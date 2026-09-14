@@ -116,3 +116,4 @@ class ServiceObservation(Base):
     source: Mapped[str] = mapped_column(String(100), default="system")
     text: Mapped[str] = mapped_column(Text)
     embedding: Mapped[list[float]] = mapped_column(ARRAY(Float))
+    embedding_space: Mapped[str | None] = mapped_column(Text, nullable=True)

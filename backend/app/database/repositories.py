@@ -255,10 +255,7 @@ class RolePresetRepository:
 
 
 class MemoryRepository:
-    """Production memory: a running log of service observations (cue
-    advances, vision events, identity matches, ...) with bag-of-words
-    embeddings for lightweight semantic search across past services.
-    """
+    """Production history with model-isolated pgvector similarity search."""
 
     def __init__(self, session: Session):
         self.session = session
@@ -271,12 +268,17 @@ class MemoryRepository:
         embedding: list[float],
         source: str = "system",
         occurred_at: datetime | None = None,
+        embedding_space: str | None = None,
     ) -> ServiceObservation:
+        from .memory_vectors import validate_embedding
+
+        validate_embedding(embedding)
         observation = ServiceObservation(
             service_date=service_date,
             category=category,
             text=text,
             embedding=embedding,
+            embedding_space=embedding_space,
             source=source,
             occurred_at=occurred_at or datetime.utcnow(),
         )
@@ -284,16 +286,10 @@ class MemoryRepository:
         self.session.flush()
         return observation
 
-    def search(self, query_embedding: list[float], limit: int = 10) -> list[tuple[ServiceObservation, float]]:
-        """Brute-force cosine-similarity search (fine for a church's service
-        history; see RolePresetRepository/pgvector_support for the same
-        caveat applied to identity embeddings)."""
-        scored = [
-            (observation, cosine_similarity(query_embedding, observation.embedding))
-            for observation in self.session.scalars(select(ServiceObservation))
-        ]
-        scored.sort(key=lambda pair: pair[1], reverse=True)
-        return scored[:limit]
+    def search(self, query_embedding: list[float], limit: int = 10, *, embedding_space: str) -> list[tuple[ServiceObservation, float]]:
+        from .memory_vectors import search
+
+        return search(self.session, query_embedding, embedding_space, limit)
 
     def list_service_dates(self, limit: int = 50) -> list[dict]:
         # Grouped in Python rather than SQL -- observation volume per service

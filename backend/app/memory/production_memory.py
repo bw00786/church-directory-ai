@@ -13,6 +13,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from sqlalchemy import text as sql_text
+
+from app.config import settings
 from app.database.connection import get_session
 from app.database.repositories import MemoryRepository
 from app.logging_config import get_logger
@@ -25,6 +28,27 @@ logger = get_logger(__name__)
 class MemoryManager:
     """Orchestrates recording and retrieval of production memory."""
 
+    def retrieval_status(self) -> dict:
+        from app.database.memory_vectors import INDEXED_DIMENSIONS
+
+        status = {"backend": "pgvector", "embedding_provider": settings.embedding_provider,
+                  "ready": False, "indexed_dimensions": list(INDEXED_DIMENSIONS)}
+        try:
+            with get_session() as session:
+                version = session.execute(sql_text("SELECT extversion FROM pg_extension WHERE extname='vector'")).scalar()
+                rows = session.execute(sql_text("SELECT embedding_space, cardinality(embedding) AS dimensions, count(*) AS records FROM memory_service_observations GROUP BY 1, 2")).mappings().all()
+                indexes = session.execute(sql_text("""
+                    SELECT c.relname FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+                    WHERE i.indrelid = 'memory_service_observations'::regclass AND i.indisvalid
+                """)).scalars().all()
+                expected = {f"memory_embedding_hnsw_{d}" for d in INDEXED_DIMENSIONS}
+                status.update(pgvector_version=version, spaces=[dict(r) for r in rows],
+                              indexes=list(indexes), ready=bool(version and expected.issubset(indexes)))
+        except Exception:
+            logger.warning("RAG schema check failed; run the memory migration or check PostgreSQL", exc_info=True)
+            status["error"] = "PostgreSQL unavailable or RAG schema migration required"
+        return status
+
     def record_observation(
         self,
         category: str,
@@ -35,14 +59,15 @@ class MemoryManager:
     ) -> dict[str, Any] | None:
         occurred_at = occurred_at or datetime.utcnow()
         service_date = service_date or occurred_at.date().isoformat()
-        embedding = text_embedder.embed(text, input_type="document").tolist()
         try:
+            embedded = text_embedder.embed_with_metadata(text, input_type="document")
             with get_session() as session:
                 observation = MemoryRepository(session).add_observation(
                     service_date=service_date,
                     category=category,
                     text=text,
-                    embedding=embedding,
+                    embedding=embedded.vector.tolist(),
+                    embedding_space=embedded.space,
                     source=source,
                     occurred_at=occurred_at,
                 )
@@ -52,10 +77,10 @@ class MemoryManager:
             return None
 
     def search(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
-        query_embedding = text_embedder.embed(query, input_type="query").tolist()
         try:
+            embedded = text_embedder.embed_with_metadata(query, input_type="query")
             with get_session() as session:
-                results = MemoryRepository(session).search(query_embedding, limit=limit)
+                results = MemoryRepository(session).search(embedded.vector.tolist(), limit=limit, embedding_space=embedded.space)
                 return [
                     {**_observation_to_dict(observation), "similarity": similarity}
                     for observation, similarity in results
@@ -100,6 +125,7 @@ def _observation_to_dict(observation: Any) -> dict[str, Any]:
         "category": observation.category,
         "source": observation.source,
         "text": observation.text,
+        "embedding_space": observation.embedding_space,
     }
 
 
