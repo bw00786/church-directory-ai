@@ -409,9 +409,7 @@ The AI Service Director mode is set via `AI_DIRECTOR_MODE` or `POST /director/ai
 ✅ Input validation on all endpoints
 ✅ Localhost-only ATEM bridge (no Internet exposure)
 
-## License
 
-MIT License — See LICENSE file
 
 ## Support
 
@@ -420,3 +418,4 @@ For issues, questions, or contributions, please open a GitHub issue or discussio
 ---
 
 **Version 1.0** — Production-ready church worship automation system
+** Copyright 2026 - Bruce Wilkins AI Systems

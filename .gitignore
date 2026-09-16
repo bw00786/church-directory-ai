@@ -6,8 +6,8 @@
 .easyworship_remote_uid
 .venv/
 .venv-test/
-data/voice-outbox/
-data/piper-voices/
+**/data/voice-outbox/
+**/data/piper-voices/
 env/
 venv/
 ENV/
