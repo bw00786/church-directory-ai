@@ -1,8 +1,8 @@
 # Current Architecture (pre-AI-Director refactor)
 
-> **Historical snapshot:** Anthropic/Claude references below describe the old
+> **Historical snapshot:** Ollama references below describe a previous
 > implementation, not current provider requirements. Current inference uses
-> local Ollama; see [backend-setup.md](backend-setup.md) for configuration and
+> Anthropic Claude; see [backend-setup.md](backend-setup.md) for configuration and
 > [ai-director.md](ai-director.md) for the current reasoning layer.
 
 This document captures the system as it existed **before** the AI Service

@@ -18,46 +18,46 @@ def test_health():
     assert response.json()["status"] == "healthy"
 
 
-@pytest.mark.parametrize("model,expected", [("qwen3.8:latest", "configured"), ("", "not configured")])
-def test_health_ready(monkeypatch, model, expected):
+@pytest.mark.parametrize("key,expected", [("test-key", "configured"), ("", "not configured")])
+def test_health_ready(monkeypatch, key, expected):
     """Readiness reports configuration, without inference or legacy keys."""
-    monkeypatch.setattr(settings, "ollama_model", model)
-    probe = AsyncMock(side_effect=AssertionError("readiness must not probe Ollama"))
+    monkeypatch.setattr(settings, "anthropic_api_key", key)
+    probe = AsyncMock(side_effect=AssertionError("readiness must not probe Anthropic"))
     builder = Mock(side_effect=AssertionError("readiness must not build a model"))
-    monkeypatch.setattr(llm_module, "check_ollama_connection", probe)
+    monkeypatch.setattr(llm_module, "check_anthropic_connection", probe)
     monkeypatch.setattr(llm_module, "build_llm", builder)
     response = client.get("/health/ready")
     assert response.status_code == 200
-    assert response.json() == {"status": "ready", "checks": {"api": "ok", "ollama": expected}}
+    assert response.json() == {"status": "ready", "checks": {"api": "ok", "anthropic": expected}}
     probe.assert_not_awaited()
     builder.assert_not_called()
 
 
 @pytest.mark.parametrize("ok", [True, False])
-def test_health_ollama_returns_mocked_probe(monkeypatch, ok):
-    result = {"ok": ok, "provider": "ollama", "model": "qwen3.8:latest"}
-    result.update({"reply": "pong", "capabilities": ["tools", "vision"]} if ok else {"error": "Ollama check failed (ConnectError); check server, model tag and timeout"})
+def test_health_anthropic_returns_mocked_probe(monkeypatch, ok):
+    result = {"ok": ok, "provider": "anthropic", "model": "claude-sonnet-5"}
+    result.update({"reply": "pong"} if ok else {"error": "Claude check failed (AuthenticationError); check API key, model name and timeout"})
     probe = AsyncMock(return_value=result)
-    monkeypatch.setattr(llm_module, "check_ollama_connection", probe)
-    response = client.get("/health/ollama")
+    monkeypatch.setattr(llm_module, "check_anthropic_connection", probe)
+    response = client.get("/health/anthropic")
     assert response.status_code == 200
     assert response.json() == result
     probe.assert_awaited_once_with()
 
 
-def test_old_anthropic_health_endpoint_is_absent(monkeypatch):
+def test_old_ollama_health_endpoint_is_absent(monkeypatch):
     probe = AsyncMock()
-    monkeypatch.setattr(llm_module, "check_ollama_connection", probe)
-    assert client.get("/health/anthropic").status_code == 404
-    assert "/health/anthropic" not in app.openapi()["paths"]
-    assert "/health/ollama" in app.openapi()["paths"]
+    monkeypatch.setattr(llm_module, "check_anthropic_connection", probe)
+    assert client.get("/health/ollama").status_code == 404
+    assert "/health/ollama" not in app.openapi()["paths"]
+    assert "/health/anthropic" in app.openapi()["paths"]
     probe.assert_not_awaited()
 
 
 @pytest.mark.parametrize("path", ["/health", "/health/live"])
-def test_liveness_never_probes_ollama(monkeypatch, path):
-    probe = AsyncMock(side_effect=AssertionError("liveness must not invoke Ollama"))
-    monkeypatch.setattr(llm_module, "check_ollama_connection", probe)
+def test_liveness_never_probes_anthropic(monkeypatch, path):
+    probe = AsyncMock(side_effect=AssertionError("liveness must not invoke Anthropic"))
+    monkeypatch.setattr(llm_module, "check_anthropic_connection", probe)
     assert client.get(path).status_code == 200
     probe.assert_not_awaited()
 

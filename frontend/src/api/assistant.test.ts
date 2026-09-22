@@ -7,7 +7,7 @@ vi.mock('axios', () => ({ default: { create: vi.fn(() => client) } }))
 beforeEach(() => { vi.clearAllMocks() })
 
 describe('assistant API timeouts', () => {
-  it('allows the Ollama inference budget plus transport overhead for chat', async () => {
+  it('allows the LLM inference budget plus transport overhead for chat', async () => {
     const messages = [{ role: 'user' as const, content: 'Who preached last Sunday?' }]
     client.post.mockResolvedValueOnce({ data: { reply: 'No history found.', pending_confirmation: null } })
     await assistantAPI.chat(messages)

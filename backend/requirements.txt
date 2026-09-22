@@ -15,7 +15,7 @@ pgvector==0.2.4
 langgraph==1.2.11
 langgraph-prebuilt==1.1.0
 langchain-core==1.6.3
-langchain-ollama==1.1.0
+langchain-anthropic==1.7.2
 voyageai==0.3.2
 
 # Local (free) embeddings fallback: nomic-embed-text-v1.5

@@ -93,9 +93,9 @@ def test_chat_returns_mocked_reply(monkeypatch):
     assert body["pending_confirmation"] is None
 
 
-def test_chat_returns_503_for_invalid_ollama_configuration(monkeypatch):
+def test_chat_returns_503_for_invalid_anthropic_configuration(monkeypatch):
     async def fake_run_assistant(messages):
-        raise ValueError("Configure a nonempty Ollama model tag")
+        raise ValueError("ANTHROPIC_API_KEY is not configured; set it in backend/.env")
 
     monkeypatch.setattr(assistant_api, "run_assistant", fake_run_assistant)
 

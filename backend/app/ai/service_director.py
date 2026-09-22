@@ -1,6 +1,6 @@
 """AI Service Director: turns a ServiceContext into a structured decision.
 
-Uses local Ollama (app.agents.llm). Unavailable inference or invalid output
+Uses Claude (app.agents.llm). Unavailable inference or invalid output
 falls back to a no-action, low-confidence decision.
 
 Retrieval-augmented: each decision cycle also searches production memory
@@ -43,7 +43,7 @@ class AIServiceDirector:
         return DirectorDecision(
             decision="continue",
             confidence=0.0,
-            reason="AI Director unavailable (Ollama unavailable or invalid response); no action taken",
+            reason="AI Director unavailable (Claude unavailable or invalid response); no action taken",
         )
 
     async def _retrieve_history(self, context: ServiceContext, snapshot: dict) -> str:

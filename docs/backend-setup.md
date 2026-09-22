@@ -6,7 +6,7 @@
 
 - Python 3.11+
 - PostgreSQL 14+ (for Phase 9+)
-- Ollama running separately with the configured model tag installed (for AI features)
+- An [Anthropic API key](https://console.anthropic.com/) with credits (for AI features)
 
 ### Setup
 
@@ -31,7 +31,7 @@ copy ..\.env.example ..\.env
 ### Running the Backend
 
 Install requirements into the **same interpreter that launches Uvicorn**.
-Assistant chat depends on LangGraph, not just the Ollama adapter. The validated
+Assistant chat depends on LangGraph, not just the Anthropic adapter. The validated
 pair is `langgraph==1.2.11` / `langgraph-prebuilt==1.1.0`; do not restore the
 incompatible old 1.0.x pins. The unused `langchain` umbrella dependency has been
 replaced with the directly used `langchain-core`. Missing agent dependencies
@@ -66,7 +66,7 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
     `VOICE_ROUTING_VERIFIED=true`, `VOICE_ENABLED=true` and test at the console.
 - Use `TTS_PROVIDER=piper` (default) for local open-source speech, or `disabled`
     to disable synthesis. Azure TTS is removed; no cloud speech key or region is
-    needed. Qwen/Ollama generates text/reasoning, not the speech waveform.
+    needed. Claude generates text/reasoning, not the speech waveform.
     Use `VOICE_MODE=attention_only` live.
 - Set `TTS_PIPER_MODEL_DIR=data/piper-voices`,
     `TTS_PIPER_VOICE=en_US-ljspeech-high` and `TTS_TIMEOUT_SECONDS=30`.
@@ -121,43 +121,39 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
 See [the voice acceptance checklist](ai-director.md#manual-sunday-acceptance)
 before considering this installation live-ready.
 
-### Ollama inference check
+### Claude inference check
 
-Configure the `OLLAMA_*` and `LLM_*` values in the environment section below.
-The default tag `qwen3.8:latest` is the exact model installed on the local
-deployment: `/api/tags` verifies the tag and local model metadata reports 27.3B,
-family `qwen35`, and completion/tools/thinking/vision capabilities. It is **not**
-`qwen3:8b` and does not imply official registry availability. On other machines,
-provision the matching tag or explicitly configure compatible models. Setup/start
-scripts do not start Ollama, install it, or download model weights.
+Configure the `ANTHROPIC_*` and `LLM_*` values in the environment section below.
+`ANTHROPIC_API_KEY` (gitignored `.env`) is required; `ANTHROPIC_MODEL` defaults
+to `claude-sonnet-5` for the director/assistant, `ANTHROPIC_FAST_MODEL` to
+`claude-haiku-4-5-20251001` for cheap classifications, and
+`ANTHROPIC_VISION_MODEL` to `claude-sonnet-5` for the optional vision tier.
 
 Use the backend Python environment, from the backend directory:
 
 ```bash
-python scripts/test_ollama.py
+python scripts/test_claude.py
 ```
 
-[test_ollama.py](../backend/scripts/test_ollama.py) calls
-`check_ollama_connection()`, prints a JSON result and exits nonzero on failure.
-It checks model metadata and performs a small inference request under the
-configured timeout, without executing production tools or enabling voice.
-It replaces the old Claude connectivity script. A running backend exposes the
-same check at `GET /health/ollama` (replacing `/health/anthropic`). Normal
-`GET /health` is liveness/configuration only and does not trigger inference.
+[test_claude.py](../backend/scripts/test_claude.py) calls
+`check_anthropic_connection()`, prints a JSON result and exits nonzero on failure.
+It performs a small real inference request under the configured timeout, without
+executing production tools or enabling voice. A running backend exposes the
+same check at `GET /health/anthropic` (which replaced `/health/ollama`). Normal
+`GET /health` is liveness/configuration only and does not trigger inference, so
+readiness probes incur no API cost.
 
-If the check fails, verify the server URL, inspect `/api/tags` for the exact
-tag and check available memory/model-load time before increasing timeouts.
-The default backend budget is 120 seconds; assistant chat uses 130 seconds in
-the browser to allow transport overhead. Longer budgets require corresponding
-browser/proxy configuration. Do not automatically retry a chat timeout: a tool
-may already have executed. Inspect status and pending confirmations first.
+If the check fails, verify the API key and that the account has credit balance
+(a low balance surfaces as an invalid-request error). The default backend budget
+is 120 seconds; assistant chat uses 130 seconds in the browser to allow transport
+overhead. Longer budgets require corresponding browser/proxy configuration. Do
+not automatically retry a chat timeout: a tool may already have executed. Inspect
+status and pending confirmations first.
 
-Keep Ollama bound to loopback or behind an authenticated network boundary.
-For containers, `127.0.0.1` refers to the container, so configure a reachable
-server address explicitly. The migration uses JSON for director/classifier/vision
-results, normal tool-calling for the assistant, and retains all policy gates.
-It does not change RAG embedding providers or enable voice. Voyage embeddings
-and the separate mixer companion's Claude advisor remain independent services.
+The migration prompts for JSON for director/classifier/vision results and uses
+normal tool-calling for the assistant, and retains all policy gates. It does not
+change RAG embedding providers or enable voice. Voyage embeddings and the
+separate mixer companion's Claude advisor remain independent services.
 
 ### API Documentation
 
@@ -196,7 +192,7 @@ app/
 ├── agents/              # AI orchestration
 │   ├── state.py         # ProductionState definition
 │   ├── graph.py         # LangGraph construction
-│   ├── prompts.py       # System prompts for Ollama
+│   ├── prompts.py       # System prompts for Claude
 │   └── tools/           # Tool implementations
 │       ├── atem_tools.py
 │       ├── camera_tools.py
@@ -227,7 +223,7 @@ app/
 ## Development Phases
 
 This is the original implementation sequence, not a current backlog; the
-repository now includes the AI Director and Ollama integration.
+repository now includes the AI Director and Claude integration.
 
 ### Phase 1 - Basic Structure
 ✅ Repository initialization
@@ -260,7 +256,7 @@ PostgreSQL models and migrations
 AI agent definition and tools
 
 ### Phase 11 - LLM integration
-Originally Claude; current inference uses Ollama.
+Current inference uses Anthropic Claude.
 
 ### Phase 12-16 - Advanced Features
 Cameras, memory, AI director
@@ -283,7 +279,7 @@ pgvector = "^0.2"  # Vector search
 # AI
 langgraph = "^1.0"
 langchain = "^1.0"
-langchain-ollama = ">=1.1.0,<2"  # local Ollama inference
+langchain-anthropic = ">=1.0,<2"  # Anthropic Claude inference
 voyageai = "^0.3"  # Voyage AI embeddings (production memory retrieval)
 sentence-transformers = "^3.3"  # local nomic-embed-text-v1.5 fallback
 einops = "^0.8"  # required by nomic-embed-text-v1.5
@@ -312,14 +308,11 @@ POSTGRES_HOST=localhost
 POSTGRES_USER=church
 POSTGRES_PASSWORD=changeme
 
-# Local Ollama inference (exact locally installed tag; provision separately)
-OLLAMA_BASE_URL=http://127.0.0.1:11434
-OLLAMA_MODEL=qwen3.8:latest
-OLLAMA_FAST_MODEL=qwen3.8:latest
-OLLAMA_VISION_MODEL=qwen3.8:latest
-OLLAMA_NUM_CTX=16384
-OLLAMA_KEEP_ALIVE=10m
-OLLAMA_REASONING=false
+# Anthropic Claude inference (API key required; keep it out of source control)
+ANTHROPIC_API_KEY=
+ANTHROPIC_MODEL=claude-sonnet-5
+ANTHROPIC_FAST_MODEL=claude-haiku-4-5-20251001
+ANTHROPIC_VISION_MODEL=claude-sonnet-5
 LLM_TIMEOUT_SECONDS=120
 LLM_MAX_TOKENS=1024
 LLM_TEMPERATURE=0.0
@@ -436,7 +429,7 @@ mypy app
 
 ### Unit Tests
 - Test individual services in isolation
-- Mock external dependencies (ATEM, Ollama server, DB)
+- Mock external dependencies (ATEM, Anthropic API, DB)
 - Fast execution
 
 ### Integration Tests

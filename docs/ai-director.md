@@ -3,7 +3,7 @@
 This is the reasoning layer added above the existing scripted cue engine (see
 [docs/current-architecture.md](current-architecture.md) and
 [docs/director.md](director.md)). It observes the live service, maintains an
-authoritative `ServiceState`, asks **local Ollama** for a structured
+authoritative `ServiceState`, asks **Claude (Anthropic)** for a structured
 decision, and executes typed actions through the policy engine.
 
 ```
@@ -13,7 +13,7 @@ MGX16 USB MAIN PCM (ch 1=pastor, 2=liturgist, 4=vocalist, 8=congregation)
        (meter feed = energy VAD, no ASR: degraded fallback per channel)
                               |
                               v
-                     AIServiceDirector (Ollama) -> DirectorDecision
+                     AIServiceDirector (Claude) -> DirectorDecision
                               |
                               v
                        AI Director mode gate
@@ -33,28 +33,27 @@ every action in it is validated by [`PolicyEngine.check_ai_decision`](../backend
 before [`ActionEngine`](../backend/app/director/action_engine.py) calls a real
 service.
 
-## Ollama inference configuration
+## Claude inference configuration
 
-The shared `ChatOllama` factory uses `OLLAMA_BASE_URL` (default
-`http://127.0.0.1:11434`). `OLLAMA_MODEL`, `OLLAMA_FAST_MODEL` and
-`OLLAMA_VISION_MODEL` all default to `qwen3.8:latest`: the exact locally installed
-tag, **not** `qwen3:8b` or a claim of official registry availability. Local metadata
-reports 27.3B, family `qwen35`, with completion, tools, thinking and vision
-capabilities. Other machines must explicitly provision matching tags or configure
-compatible alternatives; no model downloads are performed by setup/start scripts.
+The shared `ChatAnthropic` factory reads `ANTHROPIC_API_KEY` from the gitignored
+`.env` (create a key at https://console.anthropic.com/). `ANTHROPIC_MODEL`
+defaults to `claude-sonnet-5` (director + assistant), `ANTHROPIC_FAST_MODEL`
+to `claude-haiku-4-5-20251001` (cheap classifications like cue-advance), and
+`ANTHROPIC_VISION_MODEL` to `claude-sonnet-5` (optional semantic-vision tier).
 
-Defaults: `OLLAMA_NUM_CTX=16384`, `OLLAMA_KEEP_ALIVE=10m`,
-`OLLAMA_REASONING=false`, `LLM_TIMEOUT_SECONDS=120`, `LLM_MAX_TOKENS=1024`,
+Defaults: `LLM_TIMEOUT_SECONDS=120`, `LLM_MAX_TOKENS=1024`,
 `LLM_TEMPERATURE=0.0`. `get_director_llm()`, `get_fast_llm()` and
-`get_vision_llm()` request JSON output. The assistant uses normal `ChatOllama`
-tool calls rather than forced JSON. Inference uses a bounded invocation wrapper;
-valid JSON alone does not authorize actions or bypass typed parsing and policy.
+`get_vision_llm()` prompt for JSON output and regex-parse replies; the assistant
+uses normal `ChatAnthropic` tool calls rather than JSON. Inference uses a bounded
+invocation wrapper; valid JSON alone does not authorize actions or bypass typed
+parsing and policy.
 
-`GET /health/ollama` replaces `/health/anthropic` and performs a bounded
-metadata/inference check; `GET /health` does not invoke a model. See
-[backend setup](backend-setup.md#ollama-inference-check) for the manual probe.
-This migration changes neither RAG embeddings nor voice enablement. Optional
-semantic vision stays opt-in, and voice playback stays disabled by default.
+`GET /health/anthropic` performs a bounded live inference check (it replaces the
+old `/health/ollama`); `GET /health` does not invoke a model, so readiness probes
+incur no API cost. See [backend setup](backend-setup.md#claude-inference-check)
+for the manual probe. This migration changes neither RAG embeddings nor voice
+enablement. Optional semantic vision stays opt-in, and voice playback stays
+disabled by default.
 
 ## Audio channel mapping (Yamaha MGX16)
 
@@ -114,7 +113,7 @@ Gated by `VISION_ENABLED` (off = byte-identical to pre-WO).
   (operator override via `override`). The consecutive-`unverified` ladder
   (`PTZ_UNVERIFIED_MAX`) drops `camera_change` to assisted. `PTZ_VERIFY_ACTION=log`
   is observation-only.
-- [`semantic.py`](../backend/app/vision/semantic.py) — optional Ollama vision tier
+- [`semantic.py`](../backend/app/vision/semantic.py) — optional Claude vision tier
   (`VISION_LLM_ENABLED`, rate-limited), fires only on defined triggers and parses
   a whitelist of typed context fields — **never actions**.
 - [`evidence.py`](../backend/app/vision/evidence.py) — registers `person_in_roi`
@@ -138,7 +137,7 @@ decision. The AI Director does not rely on the model's own conversational memory
 ## AI Director decisions
 
 [`AIServiceDirector.decide()`](../backend/app/ai/service_director.py) sends a
-`ServiceContext` snapshot to Ollama
+`ServiceContext` snapshot to Claude
 ([system prompt](../backend/app/ai/prompts/service_director.txt)) and parses a
 strict-JSON `DirectorDecision`:
 
@@ -156,7 +155,7 @@ strict-JSON `DirectorDecision`:
 }
 ```
 
-If Ollama is unavailable, times out, or the response can't be parsed, it falls back to
+If Claude is unavailable, times out, or the response can't be parsed, it falls back to
 `{"decision": "continue", "confidence": 0.0}` — never a fabricated action.
 
 ## Retrieval-augmented context (production memory)
@@ -178,7 +177,7 @@ existed. Config: `AI_DIRECTOR_USE_MEMORY_RAG` (default `true`),
 Retrieval quality depends on [`app/memory/embeddings.py`](../backend/app/memory/embeddings.py),
 which tries three tiers in order (`EMBEDDING_PROVIDER=auto`, the default):
 1. Voyage AI's `voyage-4-large` (`VOYAGE_API_KEY` set) — independent paid embedding
-  API, not replaced by this Ollama inference migration.
+  API, not replaced by this Anthropic inference migration.
 2. Locally-run `nomic-embed-text-v1.5` (Hugging Face, via `sentence-transformers`) —
   free, no API key; model weights may need downloading on first use.
 3. A deterministic local hashed bag-of-words embedding — last resort, no ML dependency.
@@ -414,7 +413,7 @@ Config: `SERVICE_END_ENABLED`,
   `VOICE_ROUTING_VERIFIED=false` until the onsite check passes.
 
   `TTS_PROVIDER=piper` selects the default local open-source adapter; `disabled`
-  is the alternative. Azure TTS is removed. Qwen/Ollama text generation is
+  is the alternative. Azure TTS is removed. Claude text generation is
   separate from Piper speech synthesis and does not generate the waveform.
   The provider-independent
   `TTSProvider.synthesize(text, voice_config, prosody)` returns bounded mono PCM

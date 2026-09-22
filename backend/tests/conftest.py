@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 @pytest.fixture(autouse=True)
 def _block_unmocked_http(monkeypatch):
-	"""Fail closed before HTTP opens a socket, including localhost Ollama.
+	"""Fail closed before HTTP opens a socket, including the Anthropic API.
 
 	In-process ASGI/TestClient and explicit MockTransport requests remain usable.
 	pytest.fail is deliberately not an Exception: model fallback handlers must

@@ -34,7 +34,7 @@ assert state.program_input == 2
 ### 3. Manual Control Always Works
 
 The system must function with:
-- Ollama server offline or configured model unavailable
+- Anthropic API unreachable or the configured Claude model unavailable
 - PostgreSQL offline
 - All AI services offline
 - React WebSocket disconnected

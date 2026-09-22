@@ -1,4 +1,4 @@
-"""Tests for the Ollama semantic vision tier (WO-VISION-1 FR-4)."""
+"""Tests for the Claude semantic vision tier (WO-VISION-1 FR-4)."""
 
 import asyncio
 from types import SimpleNamespace

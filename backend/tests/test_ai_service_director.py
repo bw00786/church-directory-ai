@@ -1,4 +1,4 @@
-"""Tests for AIServiceDirector: Ollama JSON decisions with safe fallback."""
+"""Tests for AIServiceDirector: Claude JSON decisions with safe fallback."""
 
 import pytest
 
@@ -49,7 +49,7 @@ async def test_decide_parses_valid_json(monkeypatch):
 
 async def test_decide_falls_back_when_llm_unavailable(monkeypatch):
     def _raise():
-        raise ValueError("Configure a nonempty Ollama model tag")
+        raise ValueError("Configure a nonempty Anthropic model name")
 
     monkeypatch.setattr("app.agents.llm.get_director_llm", _raise)
 

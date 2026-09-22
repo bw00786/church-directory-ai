@@ -2,7 +2,7 @@
 
 Turns free-form observations (a transcript snippet, a vision scene description,
 an operator note) into an advance decision for the *current* cue, then feeds it
-back into the director via ``request_advance``. Uses Ollama with a lightweight
+back into the director via ``request_advance``. Uses Claude with a lightweight
 keyword heuristic as a fallback when inference is unavailable.
 """
 

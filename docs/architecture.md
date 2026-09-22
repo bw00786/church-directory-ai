@@ -3,7 +3,7 @@
 > **Historical snapshot:** This is the original high-level design, retained
 > unchanged below. Its Anthropic/Claude configuration and health examples are
 > not current setup instructions. [current-architecture.md](current-architecture.md)
-> is also a pre-AI-Director snapshot. For today's Ollama-backed AI Director and
+> is also a pre-AI-Director snapshot. For today's Claude-backed AI Director and
 > LangGraph assistant, see [ai-director.md](ai-director.md),
 > [backend-setup.md](backend-setup.md) and [README.md](../README.md).
 

@@ -12,9 +12,13 @@ class Settings(BaseSettings):
     @classmethod
     def settings_customise_sources(cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings):
         def production_dotenv():
-            # Voice validates its own settings without becoming a startup dependency.
+            # Voice validates its own settings without becoming a startup
+            # dependency. Legacy OLLAMA_* keys are ignored after the move to
+            # Anthropic, as are unknown ANTHROPIC_* keys from older setups.
+            known = {name.lower() for name in settings_cls.model_fields}
             return {key: value for key, value in dotenv_settings().items()
-                    if not key.lower().startswith(("voice_", "tts_", "anthropic_"))}
+                    if not key.lower().startswith(("voice_", "tts_", "ollama_"))
+                    and (not key.lower().startswith("anthropic_") or key.lower() in known)}
         return init_settings, env_settings, production_dotenv, file_secret_settings
     
     # API
@@ -36,14 +40,12 @@ class Settings(BaseSettings):
     postgres_pool_size: int = 10
     postgres_max_overflow: int = 20
     
-    # Existing ANTHROPIC_* dotenv entries are ignored during migration.
-    ollama_base_url: str = "http://127.0.0.1:11434"
-    ollama_model: str = "qwen3.8:latest"
-    ollama_fast_model: str = "qwen3.8:latest"
-    ollama_vision_model: str = "qwen3.8:latest"
-    ollama_num_ctx: int = Field(default=16384, ge=2048, le=262144)
-    ollama_keep_alive: str = "10m"
-    ollama_reasoning: bool = False
+    # Anthropic (Claude). Set ANTHROPIC_API_KEY in backend/.env; all
+    # inference goes through app.agents.llm (build_llm and role factories).
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-5"
+    anthropic_fast_model: str = "claude-haiku-4-5-20251001"
+    anthropic_vision_model: str = "claude-sonnet-5"
     llm_max_tokens: int = Field(default=1024, ge=1, le=32768)
     llm_temperature: float = Field(default=0.0, ge=0, le=2)
     llm_timeout_seconds: int = Field(default=120, ge=1, le=600)
@@ -317,7 +319,7 @@ class Settings(BaseSettings):
     ptz_unverified_max: int = 5            # consecutive unverified -> assisted
     ptz_subject_wait_seconds: float = 30.0  # empty-stage re-check window
 
-    # Ollama vision escalation (FR-4). Optional, off by default, out of hot loop.
+    # Claude vision escalation (FR-4). Optional, off by default, out of hot loop.
     vision_llm_enabled: bool = False
     vision_llm_max_px: int = 1024
     vision_llm_max_per_min: int = 2

@@ -1,4 +1,4 @@
-"""Ollama vision semantic escalation (FR-4). Optional, off by default.
+"""Claude vision semantic escalation (FR-4). Optional, off by default.
 
 Fires only on explicit triggers (ambiguous decision context, an operator "ask
 the director" query, or a disagreement/verify-failure needing context), sends a
@@ -46,7 +46,7 @@ _SYSTEM = (
 
 
 class SemanticVision:
-    """Constrained, rate-limited Ollama vision Q&A that yields context fields."""
+    """Constrained, rate-limited Claude vision Q&A that yields context fields."""
 
     def __init__(self):
         self._calls: deque = deque()

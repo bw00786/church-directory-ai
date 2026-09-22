@@ -1,5 +1,5 @@
 """AI assistant chatbot: answers questions about past services/roster and
-controls production subsystems via tool-calling (Ollama + LangGraph).
+controls production subsystems via tool-calling (Claude + LangGraph).
 """
 
 from __future__ import annotations
@@ -70,7 +70,7 @@ _agent = None
 
 
 def get_agent():
-    """Lazily build the LangGraph tool-calling agent using local Ollama."""
+    """Lazily build the LangGraph tool-calling agent using Claude."""
     global _agent
     if _agent is None:
         from langgraph.prebuilt import create_react_agent

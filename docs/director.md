@@ -5,7 +5,7 @@ the ATEM and the PTZOptics camera. Human and AI share the same engine, so the
 operator can always override.
 
 > This is the deterministic cue engine. A separate reasoning layer, the **AI
-> Service Director**, now sits above it (audio VAD, Ollama decisions, typed
+> Service Director**, now sits above it (audio VAD, Claude decisions, typed
 > policy-gated actions, manual/assisted/ai_directed modes) — see
 > [docs/ai-director.md](ai-director.md).
 
@@ -81,7 +81,7 @@ The LLM/vision layer turns an observation into an advance decision and feeds the
 same engine:
 
 - `POST /director/observe` with `{"text": "..."}` → [DirectorAI](../backend/app/agents/director_ai.py)
-  asks Ollama (or a keyword heuristic fallback) whether the current cue's
+  asks Claude (or a keyword heuristic fallback) whether the current cue's
   `exit_hint` is satisfied, then calls `request_advance`.
 - `POST /director/suggest` with `{source, reason, confidence, cue_id?}` feeds a
   raw suggestion directly.
@@ -97,14 +97,13 @@ Gating in `request_advance`:
 Example `exit_hint`: *"Advance when the liturgist finishes reading the scripture
 (switch to the pastor)."*
 
-With `langchain-ollama` installed and the configured Ollama server reachable,
-decisions use `get_fast_llm()` in JSON mode with a bounded invocation. The
-`OLLAMA_FAST_MODEL` default is `qwen3.8:latest`, the exact locally installed tag
-(27.3B, family `qwen35`), not `qwen3:8b` or a promise of public registry
-availability. Other machines need a matching provisioned tag or an explicit
-compatible override. `OLLAMA_BASE_URL` defaults to `http://127.0.0.1:11434`;
-the timeout is `LLM_TIMEOUT_SECONDS=120`. Full settings and the manual probe
-are in [backend setup](backend-setup.md#ollama-inference-check).
+With `langchain-anthropic` installed and `ANTHROPIC_API_KEY` configured,
+decisions use `get_fast_llm()` with a bounded invocation. The
+`ANTHROPIC_FAST_MODEL` default is `claude-haiku-4-5-20251001`, chosen for cheap
+classification; the main director/assistant model is `ANTHROPIC_MODEL`
+(`claude-sonnet-5` by default). The timeout is `LLM_TIMEOUT_SECONDS=120`. Full
+settings and the manual probe are in
+[backend setup](backend-setup.md#claude-inference-check).
 
 When inference is unavailable or invalid, the keyword heuristic (e.g. "amen",
 "the word of the Lord", "please stand") remains the cue engine's fallback;
@@ -133,8 +132,8 @@ advisory notes to the operator.
 
 The companion's `/api/advise` Claude advisor is an **independent external
 service**, not migrated here. Its provider, credentials and availability remain
-the companion application's responsibility; using local Ollama for this
-application does not make that advisor local or remove its external dependency.
+the companion application's responsibility; this application's own LLM provider
+choice does not make that advisor local or remove its external dependency.
 
 The desk is also used two ways for *listening*:
 

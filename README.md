@@ -14,9 +14,9 @@ This is a production-grade system designed for churches to automate and assist i
 - **EasyWorship Slide Control** — Drives EasyWorship 7.3+ over its native Remote Control TCP protocol (the same channel as EW's Stream Deck plug-in): no window focus, absolute `gotoSchedule`/`gotoSlide` jumps, and live position read-back so every slide change is confirmed. Keystroke injection remains as a fallback
 - **Scheduled Auto-Start** — Optionally starts the service automatically at a configured time on selected weekdays
 - **Yamaha MGX16 Mixer** — Captures per-channel PCM from the MGX16 USB MAIN interface for real Silero VAD + per-role Whisper, and controls the companion `mgx-ai-mixer` software-DSP layer on the USB return path (per-channel HPF/EQ/comp/trim, feedback guard, mix keeper). The desk's own faders/preamps/mutes have no remote protocol and stay advisory
-- **Cue-Advance AI** — Ollama decides cue advances from observations (transcript/vision), gated by the policy engine
-- **AI Service Director** — A reasoning layer above the cue engine: the local Ollama model observes a live `ServiceContext` (state, speaker, transcript, camera/ATEM/EasyWorship) and proposes typed actions, executed only after per-category confidence checks in `manual`/`assisted`/`ai_directed` mode
-- **AI Assistant** — Chat with the Ollama-backed assistant to query production history and control every subsystem by name ("frame the pastor", "go to the Sermon slides", "put a 120 Hz high-pass on the vocalist"); high-risk actions (stream, record, mic mute, preset overwrite, mixer DSP engage) require operator confirmation
+- **Cue-Advance AI** — Claude decides cue advances from observations (transcript/vision), gated by the policy engine
+- **AI Service Director** — A reasoning layer above the cue engine: Claude observes a live `ServiceContext` (state, speaker, transcript, camera/ATEM/EasyWorship) and proposes typed actions, executed only after per-category confidence checks in `manual`/`assisted`/`ai_directed` mode
+- **AI Assistant** — Chat with the Claude-backed assistant to query production history and control every subsystem by name ("frame the pastor", "go to the Sermon slides", "put a 120 Hz high-pass on the vocalist"); high-risk actions (stream, record, mic mute, preset overwrite, mixer DSP engage) require operator confirmation
 - **Production Control Panel** — React/Vite web interface with real-time WebSocket updates (cue sheet, camera joystick, AI Director panel)
 - **Event Audit Trail** — Complete logging of all production actions and AI decisions
 - **Production Memory** — PostgreSQL + pgvector for semantic retrieval of past services
@@ -34,7 +34,7 @@ React/Vite Frontend
     ↓ REST/WebSocket
 FastAPI Backend
     ├─ Production Services (ATEM, Cameras)
-    └─ LangGraph AI (Ollama)
+    └─ LangGraph AI (Claude)
          ├─ Validated Tools
          ├─ Policy Engine
          └─ ATEM Service
@@ -58,7 +58,7 @@ PTZOptics presets. Each cue advances by one of:
 - **Timer** — e.g. the opening 5-minute countdown
 - **Song end** — the Yamaha MGX16 meter feed shows the vocalist (ch 5) and
   congregation (ch 8) fall silent
-- **AI** — Ollama decides from an observation (e.g. "the liturgist finished the
+- **AI** — Claude decides from an observation (e.g. "the liturgist finished the
   scripture"), gated by the policy confidence threshold and autonomous mode
 
 Human and AI share the same `next()`/`goto()` engine, so the operator can always
@@ -100,7 +100,7 @@ remains as a fallback (`EASYWORSHIP_DRIVER`). See [docs/director.md](docs/direct
 ## AI Service Director
 
 Assistant chat requires the complete backend runtime, including compatible
-LangGraph core/prebuilt packages. Ollama health alone does not verify agent
+LangGraph core/prebuilt packages. LLM health alone does not verify agent
 construction. The backend regression suite now exercises the real graph and
 a read-only test tool through the chat endpoint.
 
@@ -113,7 +113,7 @@ routine decisions and successful operations stay silent. The LLM cannot send
 arbitrary speech or execute actions through the voice service.
 
 Playback defaults **disabled**, with `attention_only` as the default mode.
-Speech uses **local open-source Piper**, separate from Qwen/Ollama text generation;
+Speech uses **local open-source Piper**, separate from Claude text generation;
 Azure TTS is removed and no cloud speech credentials are required.
 `TTS_PROVIDER=piper` is the default (`disabled` is the alternative), with
 `TTS_PIPER_VOICE=en_US-ljspeech-high`, `TTS_PIPER_MODEL_DIR=data/piper-voices`
@@ -147,7 +147,7 @@ Above the scripted cue engine, an **AI Service Director** reasons over the live
 service: per-channel voice activity from the Yamaha MGX16 (pastor/liturgist/
 vocalist/congregation, channels 1/2/4/8 by default) feeds a `ServiceContext`
 (current `ServiceState`, recent transcript, camera/ATEM/EasyWorship state),
-which the Ollama model uses to propose typed actions (camera role, ATEM cut/auto,
+which Claude uses to propose typed actions (camera role, ATEM cut/auto,
 EasyWorship advance). Every action passes per-category confidence thresholds in
 the policy engine before executing — the LLM never touches hardware directly.
 
@@ -208,7 +208,7 @@ clicks Confirm in the UI.
 - Python 3.11+
 - Node.js 18+ (npm)
 - PostgreSQL 14+
-- Ollama running separately with the configured model tag installed (for AI features)
+- An [Anthropic API key](https://console.anthropic.com/) with credits (for AI features)
 - Visual Studio 2022 Build Tools with the Windows SDK (provides the C++ compiler and `midl.exe` for the bridge)
 - CMake 3.20+
 - Blackmagic ATEM Switcher software installed (provides the COM runtime; the SDK interface definition is vendored in `atem-bridge/`)
@@ -239,40 +239,34 @@ clicks Confirm in the UI.
 
 5. Open http://localhost:5173 for the production control panel
 
-### Local Ollama inference
+### Claude (Anthropic) inference
 
 The assistant, cue classifier, AI Service Director and optional semantic vision
-use `ChatOllama`. Configure the following in your private environment, using
+use `ChatAnthropic`. Configure the following in your private environment, using
 [.env.example](.env.example) as a reference (do not overwrite existing secrets):
 
 ```dotenv
-OLLAMA_BASE_URL=http://127.0.0.1:11434
-OLLAMA_MODEL=qwen3.8:latest
-OLLAMA_FAST_MODEL=qwen3.8:latest
-OLLAMA_VISION_MODEL=qwen3.8:latest
-OLLAMA_NUM_CTX=16384
-OLLAMA_KEEP_ALIVE=10m
-OLLAMA_REASONING=false
+ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_MODEL=claude-sonnet-5
+ANTHROPIC_FAST_MODEL=claude-haiku-4-5-20251001
+ANTHROPIC_VISION_MODEL=claude-sonnet-5
 LLM_TIMEOUT_SECONDS=120
 LLM_MAX_TOKENS=1024
 LLM_TEMPERATURE=0.0
 ```
 
-`qwen3.8:latest` is the **exact locally installed tag** verified through Ollama's
-`/api/tags`; local metadata reports 27.3B, family `qwen35`, and completion, tools,
-thinking and vision capabilities. This is not `qwen3:8b` and is **not a claim of
-official registry availability**. Other machines need a matching provisioned tag
-or explicit model overrides with the required capabilities. Setup/start scripts
-do not install Ollama, start its server, or download models. Keep Ollama loopback-only
-unless a protected remote deployment is deliberately configured; containerized
-backends need an address reachable from inside their container, not host loopback.
+`ANTHROPIC_MODEL` is the default director/assistant model; `ANTHROPIC_FAST_MODEL`
+covers cheap classifications (cue advance decisions) and `ANTHROPIC_VISION_MODEL`
+the optional semantic-vision tier. The API key is read from `ANTHROPIC_API_KEY`
+(gitignored `.env`) and never committed. Legacy `OLLAMA_*` keys left in `.env`
+are ignored by the backend.
 
-`GET /health/ollama` replaces `/health/anthropic`: it checks model metadata and
-performs bounded inference. Normal `GET /health` remains lightweight and does not
-invoke the model. For a manual, hardware-free check, run
-[backend/scripts/test_ollama.py](backend/scripts/test_ollama.py) from the backend
-directory with its Python environment. Allow up to `LLM_TIMEOUT_SECONDS` for cold
-loading/inference. The assistant UI allows 130 seconds for chat by default;
+`GET /health/anthropic` performs a bounded live inference check; normal
+`GET /health` remains lightweight and does not invoke the model (so readiness
+probes do not incur API cost). For a manual, hardware-free check, run
+[backend/scripts/test_claude.py](backend/scripts/test_claude.py) from the backend
+directory with its Python environment. Allow up to `LLM_TIMEOUT_SECONDS` for
+inference. The assistant UI allows 130 seconds for chat by default;
 deployments with longer backend budgets must align browser and proxy timeouts.
 
 Director, fast-classifier and vision clients request JSON; the assistant uses
@@ -308,7 +302,7 @@ variables, and troubleshooting.
 - [ATEM Integration](docs/atem.md) — ATEM bridge and control
 - [Camera Control](docs/cameras.md) — PTZOptics VISCA/HTTP-CGI driver, joystick, calibration
 - [Service Director](docs/director.md) — Cue sheet, scheduler, AI advances, mixer wiring
-- [AI Service Director](docs/ai-director.md) — Audio VAD, Ollama decisions, action engine, modes, replay
+- [AI Service Director](docs/ai-director.md) — Audio VAD, Claude decisions, action engine, modes, replay
 - [Database](docs/database.md) — PostgreSQL schema and migrations
 - [Network](docs/network.md) — Local network topology
 - [Deployment](docs/deployment-windows.md) — Production deployment
@@ -328,7 +322,7 @@ The system is built in phases to ensure stability and testability:
 8. Policy engine
 9. PostgreSQL persistence
 10. LangGraph tools
-11. LLM integration (now local Ollama)
+11. LLM integration (Anthropic Claude)
 12. Camera abstraction
 13. PTZ driver integration
 14. Production event system
@@ -343,8 +337,8 @@ backend/           Python FastAPI application
   app/
     api/           REST endpoints (incl. director, cameras, websocket)
     atem/          ATEM control service
-    agents/        Ollama LLM clients, director AI decisions, chat assistant + tools
-    ai/            AI Service Director (Ollama reasoning -> DirectorDecision)
+    agents/        Claude LLM clients, director AI decisions, chat assistant + tools
+    ai/            AI Service Director (Claude reasoning -> DirectorDecision)
     audio/         Yamaha channel VAD, audio observer, Whisper service
     domain/        ServiceState, ServiceContext, ServicePlan
     cameras/       PTZOptics driver (VISCA + HTTP-CGI) and service

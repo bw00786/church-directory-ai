@@ -2,7 +2,7 @@
 
 > **Historical Phase 1 snapshot:** The checklist and implementation status below
 > are preserved as originally recorded, not current setup instructions. Current
-> inference uses local Ollama. See [README.md](README.md),
+> inference uses Anthropic Claude. See [README.md](README.md),
 > [QUICKSTART.md](QUICKSTART.md) and [docs/backend-setup.md](docs/backend-setup.md).
 
 ## Phase 1 Summary: Repository & Environment

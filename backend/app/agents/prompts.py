@@ -1,4 +1,4 @@
-"""System prompts for the AI director (Ollama Qwen)."""
+"""System prompts for the AI director (Claude)."""
 
 DIRECTOR_SYSTEM_PROMPT = """\
 You are the AI Director for a church worship-service video production system.

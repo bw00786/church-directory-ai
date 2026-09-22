@@ -8,8 +8,13 @@ from app.agents import assistant
 from app.api import assistant as assistant_api
 
 
-def test_real_ollama_agent_constructs_and_caches_without_inference(monkeypatch):
+def test_real_agent_constructs_and_caches_without_inference(monkeypatch):
+    class ToolChat(FakeMessagesListChatModel):
+        def bind_tools(self, tools, **kwargs):
+            return self
+
     monkeypatch.setattr(assistant, "_agent", None)
+    monkeypatch.setattr(assistant, "build_llm", lambda: ToolChat(responses=[]))
     graph = assistant.get_agent()
     assert graph is assistant.get_agent()
     assert "tools" in graph.get_graph().nodes

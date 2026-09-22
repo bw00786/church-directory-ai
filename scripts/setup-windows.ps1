@@ -42,12 +42,10 @@ if (-not (Test-Path ".env")) {
     Write-Host ".env already exists" -ForegroundColor Green
 }
 
-# Ollama is independently managed; never silently install or download models.
-Write-Host "`nAI inference uses Ollama (default http://127.0.0.1:11434)." -ForegroundColor Cyan
-Write-Host "  Configure OLLAMA_BASE_URL and OLLAMA_MODEL/FAST_MODEL/VISION_MODEL in .env." -ForegroundColor Gray
-Write-Host "  qwen3.8:latest is the exact locally installed tag, not qwen3:8b or a public registry guarantee." -ForegroundColor Yellow
-Write-Host "  Other machines need a matching provisioned tag or explicit compatible model overrides." -ForegroundColor Yellow
-Write-Host "  This script does not install/start Ollama or download models; existing .env values are preserved." -ForegroundColor Gray
+# Anthropic Claude is used for inference; the API key lives in .env.
+Write-Host "`nAI inference uses Anthropic Claude (default model claude-sonnet-5)." -ForegroundColor Cyan
+Write-Host "  Set ANTHROPIC_API_KEY in .env; optionally override ANTHROPIC_MODEL/FAST_MODEL/VISION_MODEL." -ForegroundColor Gray
+Write-Host "  Existing .env values are preserved; nothing is downloaded or installed for the LLM." -ForegroundColor Gray
 Write-Host "  RAG embeddings are separate. This migration does not enable voice playback." -ForegroundColor Gray
 
 # Backend setup
@@ -97,6 +95,6 @@ Write-Host "2. Run services:" -ForegroundColor Gray
 Write-Host "   - Backend: .\scripts\start-backend.ps1" -ForegroundColor Gray
 Write-Host "   - Frontend: .\scripts\start-frontend.ps1" -ForegroundColor Gray
 Write-Host "   - All:      .\scripts\start-all.ps1" -ForegroundColor Gray
-Write-Host "3. Start your configured Ollama server separately; verify the exact tag in its /api/tags." -ForegroundColor Gray
-Write-Host "4. Check http://localhost:8000/health/ollama (bounded inference, default budget 120 seconds)." -ForegroundColor Gray
-Write-Host "   Or, from backend with its environment active: python scripts/test_ollama.py" -ForegroundColor Gray
+Write-Host "3. Set ANTHROPIC_API_KEY in .env (create a key at https://console.anthropic.com/)." -ForegroundColor Gray
+Write-Host "4. Check http://localhost:8000/health/anthropic (bounded inference, default budget 120 seconds)." -ForegroundColor Gray
+Write-Host "   Or, from backend with its environment active: python scripts/test_claude.py" -ForegroundColor Gray

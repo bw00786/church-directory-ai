@@ -254,22 +254,22 @@ async def health_ready():
     # - Database connectivity
     # - ATEM bridge availability
     
-    # Liveness does not trigger local inference; /health/ollama does.
+    # Readiness does not call the Anthropic API; /health/anthropic does.
     return {
         "status": "ready",
         "checks": {
             "api": "ok",
-            "ollama": "configured" if settings.ollama_model else "not configured",
+            "anthropic": "configured" if settings.anthropic_api_key else "not configured",
         },
     }
 
 
-@app.get("/health/ollama")
-async def health_ollama():
-    """On-demand check of the local model and inference, not just configuration."""
-    from app.agents.llm import check_ollama_connection
+@app.get("/health/anthropic")
+async def health_anthropic():
+    """On-demand Claude inference check, not just configuration."""
+    from app.agents.llm import check_anthropic_connection
 
-    return await check_ollama_connection()
+    return await check_anthropic_connection()
 
 
 # Root endpoint
