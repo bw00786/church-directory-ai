@@ -20,6 +20,7 @@ import { DetectionOverlay } from './components/DetectionOverlay'
 import { EventTimeline } from './components/EventTimeline'
 import { RosterPanel } from './components/RosterPanel'
 import { SlidesPanel } from './components/SlidesPanel'
+import { SystemStatus } from './components/SystemStatus'
 import { VisionPanel } from './components/VisionPanel'
 import { VoiceAttentionPanel } from './components/VoiceAttentionPanel'
 
@@ -84,7 +85,17 @@ export function App() {
             <SlidesPanel />
           </Box>
 
-          <VoiceAttentionPanel />
+          <Box
+            sx={{
+              display: 'grid',
+              gap: 3,
+              alignItems: 'start',
+              gridTemplateColumns: { xs: '1fr', lg: '2fr 1fr' },
+            }}
+          >
+            <VoiceAttentionPanel />
+            <SystemStatus />
+          </Box>
 
           <Box id="ai-director-panel" tabIndex={-1} sx={{ scrollMarginTop: 24 }}>
             <AIDirectorPanel />

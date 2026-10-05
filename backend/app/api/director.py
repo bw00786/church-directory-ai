@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from app.director.ai_director_runtime import ai_director_runtime
 from app.director.engine import service_director
+from app.director.order_of_service import build_script_from_order
 from app.director.scheduler import service_scheduler
 from app.domain.service_context import service_context
 from app.logging_config import get_logger
@@ -38,6 +39,10 @@ class ObserveRequest(BaseModel):
     text: str
 
 
+class OrderOfServiceRequest(BaseModel):
+    text: str
+
+
 class AiModeRequest(BaseModel):
     mode: str  # "manual" | "assisted" | "ai_directed"
 
@@ -52,6 +57,26 @@ async def get_status():
 async def get_script():
     """The loaded service cue sheet."""
     return service_director.script.model_dump()
+
+
+@router.post("/script/order")
+async def load_order_of_service(request: OrderOfServiceRequest):
+    """Replace the cue sheet with one built from the pastor's order of service text."""
+    if service_director.status().running:
+        raise HTTPException(status_code=409, detail="Stop the service before loading a new script")
+    try:
+        script, order = build_script_from_order(request.text)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    service_director.load_script(script)
+    return {
+        "script_name": script.name,
+        "date": order.date,
+        "theme": order.theme,
+        "speaker": order.speaker,
+        "items": [{"heading": i.heading, "cue_ids": i.cue_ids} for i in order.items],
+        "cues": [c.id for c in script.cues],
+    }
 
 
 @router.post("/start")
