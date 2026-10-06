@@ -14,6 +14,7 @@ from typing import List, Optional
 from app.cameras.service import camera_service
 from app.config import settings
 from app.dependencies import get_atem_service_instance
+from app.domain.service_context import service_context
 from app.easyworship.service import easyworship_service
 from app.events.bus import event_bus
 from app.identity.service import identity_service
@@ -21,6 +22,7 @@ from app.logging_config import get_logger
 from app.mixer.service import mixer_service
 
 from .models import ActionType, AdvanceTrigger, Cue, CueAction, DirectorStatus, ServiceScript
+from .plan_builder import build_plan_from_script
 from .script import build_default_service_script
 
 logger = get_logger(__name__)
@@ -37,6 +39,7 @@ class ServiceDirector:
         self._advance_task: Optional[asyncio.Task] = None
         self._token = 0
         self._pending_suggestion: Optional[dict] = None
+        self._sync_plan()
 
     # -- public API -----------------------------------------------------------
     @property
@@ -46,6 +49,11 @@ class ServiceDirector:
     def load_script(self, script: ServiceScript) -> None:
         self._script = script
         self._index = -1
+        self._sync_plan()
+
+    def _sync_plan(self) -> None:
+        # Keep the AI Director's expected structure in step with the cue sheet.
+        service_context.plan = build_plan_from_script(self._script)
 
     async def broadcast_status(self) -> None:
         await self._broadcast()

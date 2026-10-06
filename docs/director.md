@@ -380,6 +380,8 @@ SLIDE_VERIFY_SEMANTIC_THRESHOLD=0.75      # fuzzy-match acceptance threshold
 | GET      | `/director/script`       | Full cue sheet                       |
 | POST     | `/director/script/order`  | Build the cue sheet from order-of-service text (`{"text": ...}`) |
 | POST     | `/director/script/upload` | Build the cue sheet from an uploaded `.docx`/`.txt` order of service (form fields `file`, optional `parser`: `auto`/`rules`/`ai`). Headings are matched by rules first; Claude is used only if none match. Rejected while the service is running. |
+| GET      | `/director/script/history` | Previously uploaded orders of service (newest first; `?limit=`) |
+| GET      | `/director/script/history/{id}` | One saved order including its original text |
 | POST     | `/director/start`        | Start (`{"autonomous": bool}`)       |
 | POST     | `/director/stop`         | Stop                                 |
 | POST     | `/director/next`         | Advance one cue (manual)             |
@@ -396,6 +398,23 @@ cue and Start/Next/Stop controls, surfaces pending AI suggestions, and has a
 `/director/script/upload` (disabled while the service runs). The
 [SystemStatus](../frontend/src/components/SystemStatus.tsx) panel shows backend,
 ATEM and Claude status; its Test button makes a real, billed Claude call.
+
+### Service history and the AI Director's plan
+
+Every order of service loaded through `/director/script/order` or
+`/director/script/upload` is saved to the `service_orders` table (date, theme,
+speaker, parser used, original text, recognised headings and resulting cue
+ids). Saving is best-effort: if PostgreSQL is unreachable the cue sheet still
+loads and `history_id` in the response is `null`. Run the
+[database migration](backend-setup.md#database-migrations) once to create the
+table.
+
+Loading a cue sheet also rebuilds the AI Director's advisory `ServicePlan`
+([plan_builder.py](../backend/app/director/plan_builder.py)) from the cues, so
+the AI expects the service that was actually uploaded -- a week without
+communion no longer has the AI waiting for it. The same plan supplies the
+EasyWorship schedule labels used by `select_item`. The response's `plan` field
+shows what the AI will be given.
 
 ## Operating modes
 
