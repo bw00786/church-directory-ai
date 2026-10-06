@@ -30,6 +30,12 @@ download or import library to install. The bridge talks to the ATEM purely
 over COM, so it only requires the SDK's runtime to be present on the machine
 (installed with Blackmagic ATEM Switcher software).
 
+**The runtime version must match the vendored IDL (SDK 10.4).** Each SDK
+release uses different COM class IDs, so a mismatched runtime (for example
+ATEM Switchers 9.8.3) makes `POST /connect` fail with `Failed to create switcher
+discovery instance`. To target an older runtime, rebuild against the matching
+`Legacy/BMDSwitcherAPI_v*.idl` from the SDK instead.
+
 ## Dependencies
 
 These are fetched automatically by CMake (`FetchContent`) — no manual install:
@@ -138,6 +144,11 @@ Set environment variable `LOG_LEVEL=DEBUG` for verbose logging.
 2. Check network connectivity
 3. Ensure ATEM is powered on and booted
 4. Check Windows Firewall
+
+### Failed to create switcher discovery instance
+
+The installed ATEM Switchers runtime doesn't match the SDK this bridge was built
+against (see [SDK Interface](#sdk-interface)). Install the matching version and restart the bridge.
 
 ### HTTP Server Not Starting
 

@@ -17,7 +17,7 @@ This is a production-grade system designed for churches to automate and assist i
 - **Cue-Advance AI** — Claude decides cue advances from observations (transcript/vision), gated by the policy engine
 - **AI Service Director** — A reasoning layer above the cue engine: Claude observes a live `ServiceContext` (state, speaker, transcript, camera/ATEM/EasyWorship) and proposes typed actions, executed only after per-category confidence checks in `manual`/`assisted`/`ai_directed` mode
 - **AI Assistant** — Chat with the Claude-backed assistant to query production history and control every subsystem by name ("frame the pastor", "go to the Sermon slides", "put a 120 Hz high-pass on the vocalist"); high-risk actions (stream, record, mic mute, preset overwrite, mixer DSP engage) require operator confirmation
-- **Production Control Panel** — React/Vite web interface with real-time WebSocket updates (cue sheet, camera joystick, AI Director panel)
+- **Production Control Panel** — React/Vite web interface with real-time WebSocket updates (cue sheet with order-of-service upload, camera joystick, AI Director panel, System Status)
 - **Event Audit Trail** — Complete logging of all production actions and AI decisions
 - **Production Memory** — PostgreSQL + pgvector for semantic retrieval of past services
 - **Indexed RAG** — Server-side cosine search with HNSW indexes and explicit
@@ -66,7 +66,8 @@ override. A wall-clock **scheduler** can auto-start the service (default Sundays
 10:00).
 
 At slide cues the director also drives **EasyWorship** (go live on the countdown,
-`next_item` for songs / call to worship / prayer / scripture). EasyWorship 7.3+
+`next_item` for songs / call to worship / prayer / scripture / bumper video /
+Lord's Prayer / doxology, and `clear` at the end). EasyWorship 7.3+
 is controlled over its native **Remote Control TCP protocol** (enable it under
 Edit > Options > Advanced, pair once via the Remote toolbar button); EasyWorship
 reports back the live schedule item and slide number, so each command is
@@ -74,12 +75,26 @@ confirmed rather than assumed. Keystroke injection — in-process or via a small
 remote agent ([backend/easyworship_agent/agent.py](backend/easyworship_agent/agent.py)) —
 remains as a fallback (`EASYWORSHIP_DRIVER`). See [docs/director.md](docs/director.md).
 
+### Weekly order of service
+
+The default cue sheet covers the full Vernon UMC flow (countdown, praise, announcements,
+children's message, call to worship, hymn, scripture, bumper video, sermon, communion,
+Lord's Prayer, community prayers, offering and doxology, closing praise, benediction,
+service end). To match a specific week, use **Load Order of Service** on the cue sheet
+panel to upload the pastor's `.docx` or `.txt`. Section headings are matched by rules;
+if none match, Claude picks from the known cues (it can't add new actions). The new
+cue sheet replaces the loaded one until the backend restarts, and uploads are
+rejected while a service is running. The EasyWorship schedule must contain the same
+items in the same order, since slide cues advance one item at a time.
+
 ### Director API
 
 | Method | Path                     | Description                                  |
 | ------ | ------------------------ | -------------------------------------------- |
 | GET    | `/director/status`       | Running state + current/next cue             |
 | GET    | `/director/script`       | The full cue sheet                           |
+| POST   | `/director/script/order` | Build the cue sheet from order-of-service text |
+| POST   | `/director/script/upload` | Build the cue sheet from an uploaded `.docx`/`.txt` |
 | POST   | `/director/start`        | Start the service (`{"autonomous": bool}`)   |
 | POST   | `/director/stop`         | Stop                                         |
 | POST   | `/director/next`         | Advance one cue (manual)                     |

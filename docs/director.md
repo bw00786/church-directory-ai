@@ -391,7 +391,11 @@ SLIDE_VERIFY_SEMANTIC_THRESHOLD=0.75      # fuzzy-match acceptance threshold
 
 The frontend [CueSheet](../frontend/src/components/CueSheet.tsx) panel
 (via [useDirector](../frontend/src/hooks/useDirector.ts)) shows the current/next
-cue and Start/Next/Stop controls, and surfaces pending AI suggestions.
+cue and Start/Next/Stop controls, surfaces pending AI suggestions, and has a
+**Load Order of Service** button that uploads a `.docx`/`.txt` to
+`/director/script/upload` (disabled while the service runs). The
+[SystemStatus](../frontend/src/components/SystemStatus.tsx) panel shows backend,
+ATEM and Claude status; its Test button makes a real, billed Claude call.
 
 ## Operating modes
 
