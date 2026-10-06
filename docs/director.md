@@ -378,6 +378,8 @@ SLIDE_VERIFY_SEMANTIC_THRESHOLD=0.75      # fuzzy-match acceptance threshold
 | -------- | ------------------------ | ------------------------------------ |
 | GET      | `/director/status`       | Running state + current/next cue     |
 | GET      | `/director/script`       | Full cue sheet                       |
+| POST     | `/director/script/order`  | Build the cue sheet from order-of-service text (`{"text": ...}`) |
+| POST     | `/director/script/upload` | Build the cue sheet from an uploaded `.docx`/`.txt` order of service (form fields `file`, optional `parser`: `auto`/`rules`/`ai`). Headings are matched by rules first; Claude is used only if none match. Rejected while the service is running. |
 | POST     | `/director/start`        | Start (`{"autonomous": bool}`)       |
 | POST     | `/director/stop`         | Stop                                 |
 | POST     | `/director/next`         | Advance one cue (manual)             |

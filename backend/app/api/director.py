@@ -2,11 +2,18 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from app.director.ai_director_runtime import ai_director_runtime
 from app.director.engine import service_director
+from app.director.order_document import (
+    MAX_UPLOAD_BYTES,
+    DocumentError,
+    UnsupportedDocumentType,
+    build_script_from_document,
+    extract_text,
+)
 from app.director.order_of_service import build_script_from_order
 from app.director.scheduler import service_scheduler
 from app.domain.service_context import service_context
@@ -69,13 +76,46 @@ async def load_order_of_service(request: OrderOfServiceRequest):
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     service_director.load_script(script)
+    await service_director.broadcast_status()
+    return _script_summary(script, order, "rules")
+
+
+@router.post("/script/upload")
+async def upload_order_of_service(
+    file: UploadFile = File(...),
+    parser: str = Form("auto"),
+):
+    """Replace the cue sheet from an uploaded order-of-service .docx/.txt (rules, then AI fallback)."""
+    if parser not in ("auto", "rules", "ai"):
+        raise HTTPException(status_code=422, detail="parser must be auto, rules or ai")
+    if service_director.status().running:
+        raise HTTPException(status_code=409, detail="Stop the service before loading a new script")
+
+    data = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File is too large (5 MB maximum)")
+    try:
+        text = extract_text(file.filename or "", data)
+        script, order, source = await build_script_from_document(text, parser)
+    except UnsupportedDocumentType as e:
+        raise HTTPException(status_code=415, detail=str(e))
+    except DocumentError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    service_director.load_script(script)
+    await service_director.broadcast_status()
+    return _script_summary(script, order, source)
+
+
+def _script_summary(script, order, source: str) -> dict:
     return {
         "script_name": script.name,
+        "source": source,
         "date": order.date,
         "theme": order.theme,
         "speaker": order.speaker,
         "items": [{"heading": i.heading, "cue_ids": i.cue_ids} for i in order.items],
-        "cues": [c.id for c in script.cues],
+        "cues": [{"id": c.id, "name": c.name} for c in script.cues],
     }
 
 
