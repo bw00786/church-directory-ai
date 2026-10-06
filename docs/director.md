@@ -378,6 +378,8 @@ SLIDE_VERIFY_SEMANTIC_THRESHOLD=0.75      # fuzzy-match acceptance threshold
 | -------- | ------------------------ | ------------------------------------ |
 | GET      | `/director/status`       | Running state + current/next cue     |
 | GET      | `/director/script`       | Full cue sheet                       |
+| POST     | `/director/script/order`  | Build the cue sheet from order-of-service text (`{"text": ...}`) |
+| POST     | `/director/script/upload` | Build the cue sheet from an uploaded `.docx`/`.txt` order of service (form fields `file`, optional `parser`: `auto`/`rules`/`ai`). Headings are matched by rules first; Claude is used only if none match. Rejected while the service is running. |
 | POST     | `/director/start`        | Start (`{"autonomous": bool}`)       |
 | POST     | `/director/stop`         | Stop                                 |
 | POST     | `/director/next`         | Advance one cue (manual)             |
@@ -389,7 +391,11 @@ SLIDE_VERIFY_SEMANTIC_THRESHOLD=0.75      # fuzzy-match acceptance threshold
 
 The frontend [CueSheet](../frontend/src/components/CueSheet.tsx) panel
 (via [useDirector](../frontend/src/hooks/useDirector.ts)) shows the current/next
-cue and Start/Next/Stop controls, and surfaces pending AI suggestions.
+cue and Start/Next/Stop controls, surfaces pending AI suggestions, and has a
+**Load Order of Service** button that uploads a `.docx`/`.txt` to
+`/director/script/upload` (disabled while the service runs). The
+[SystemStatus](../frontend/src/components/SystemStatus.tsx) panel shows backend,
+ATEM and Claude status; its Test button makes a real, billed Claude call.
 
 ## Operating modes
 

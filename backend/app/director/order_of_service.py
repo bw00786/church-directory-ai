@@ -75,20 +75,24 @@ def parse_order_of_service(text: str) -> ParsedOrder:
     return order
 
 
-def build_script_from_order(text: str) -> tuple[ServiceScript, ParsedOrder]:
-    """Build a ServiceScript containing only the cues this order of service calls for."""
-    order = parse_order_of_service(text)
-    if not order.items:
-        raise ValueError("No recognised order-of-service items found")
-
+def script_from_cue_ids(cue_ids: List[str], order: ParsedOrder) -> ServiceScript:
+    """Select catalog cues by id, in the given order, ignoring unknown ids and duplicates."""
     catalog = {cue.id: cue for cue in build_cue_catalog()}
     cues = []
     seen: set[str] = set()
-    for item in order.items:
-        for cue_id in item.cue_ids:
-            if cue_id not in seen:
-                seen.add(cue_id)
-                cues.append(catalog[cue_id])
+    for cue_id in cue_ids:
+        if cue_id in catalog and cue_id not in seen:
+            seen.add(cue_id)
+            cues.append(catalog[cue_id])
+    if not cues:
+        raise ValueError("No recognised order-of-service items found")
 
     title = " \u2014 ".join(part for part in (order.theme, order.date) if part) or "Sunday Service"
-    return ServiceScript(name=f"Vernon UMC \u2014 {title}", cues=cues), order
+    return ServiceScript(name=f"Vernon UMC \u2014 {title}", cues=cues)
+
+
+def build_script_from_order(text: str) -> tuple[ServiceScript, ParsedOrder]:
+    """Build a ServiceScript containing only the cues this order of service calls for."""
+    order = parse_order_of_service(text)
+    cue_ids = [cue_id for item in order.items for cue_id in item.cue_ids]
+    return script_from_cue_ids(cue_ids, order), order

@@ -47,6 +47,9 @@ class ServiceDirector:
         self._script = script
         self._index = -1
 
+    async def broadcast_status(self) -> None:
+        await self._broadcast()
+
     async def start(self, autonomous: bool = True) -> DirectorStatus:
         if self._running:
             return self.status()

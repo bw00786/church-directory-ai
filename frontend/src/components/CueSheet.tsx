@@ -3,7 +3,7 @@
  * Shows current/next cue with Start / Next / Stop controls, wired to /ws/director.
  */
 
-import React from 'react'
+import React, { useRef, useState } from 'react'
 import Card from '@mui/material/Card'
 import CardHeader from '@mui/material/CardHeader'
 import CardContent from '@mui/material/CardContent'
@@ -20,7 +20,9 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow'
 import SkipNextIcon from '@mui/icons-material/SkipNext'
 import StopIcon from '@mui/icons-material/Stop'
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome'
+import UploadFileIcon from '@mui/icons-material/UploadFile'
 
+import { directorAPI } from '@/api/atem'
 import { useDirector, Cue } from '@/hooks/useDirector'
 
 function CueCard({ label, cue }: { label: string; cue: Cue | null }) {
@@ -62,6 +64,27 @@ function CueCard({ label, cue }: { label: string; cue: Cue | null }) {
 
 export function CueSheet() {
   const { status, connected, lastAction, start, stop, next } = useDirector()
+  const fileInput = useRef<HTMLInputElement>(null)
+  const [uploading, setUploading] = useState(false)
+  const [upload, setUpload] = useState<{ ok: boolean; message: string } | null>(null)
+
+  const handleFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    setUploading(true)
+    setUpload(null)
+    try {
+      const { data } = await directorAPI.uploadOrderOfService(file)
+      const how = data.source === 'ai' ? 'read by AI' : 'matched by headings'
+      setUpload({ ok: true, message: `Loaded "${data.script_name}": ${data.cues.length} cues (${how})` })
+    } catch (e) {
+      const detail = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
+      setUpload({ ok: false, message: detail ?? 'Upload failed' })
+    } finally {
+      setUploading(false)
+    }
+  }
 
   const running = status?.running ?? false
   const index = status?.cue_index ?? -1
@@ -112,7 +135,31 @@ export function CueSheet() {
             {lastAction.action}: {lastAction.detail}
           </Typography>
         )}
+
+        {upload && (
+          <Alert severity={upload.ok ? 'success' : 'error'} sx={{ mt: 2 }}>
+            {upload.message}
+          </Alert>
+        )}
       </CardContent>
+      <CardActions sx={{ px: 2, pb: 0, gap: 1 }}>
+        <input
+          ref={fileInput}
+          type="file"
+          accept=".docx,.txt"
+          hidden
+          onChange={handleFile}
+        />
+        <Button
+          fullWidth
+          variant="outlined"
+          startIcon={<UploadFileIcon />}
+          onClick={() => fileInput.current?.click()}
+          disabled={running || uploading}
+        >
+          {uploading ? 'Reading...' : 'Load Order of Service'}
+        </Button>
+      </CardActions>
       <CardActions sx={{ px: 2, pb: 2, gap: 1 }}>
         <Button
           fullWidth

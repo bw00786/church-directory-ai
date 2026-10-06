@@ -9,6 +9,8 @@ than a few minutes.
 - Python 3.11+ (download from python.org)
 - Node.js 18+ (download from nodejs.org)
 - An [Anthropic API key](https://console.anthropic.com/) with credits (AI features)
+- For a real ATEM: Blackmagic **ATEM Switchers** (ATEM Software Control) installed on the
+  Windows host, at the same version as the SDK the bridge was built against (10.4)
 
 ## One-Time Setup
 
@@ -140,6 +142,10 @@ pip install -r requirements.txt
 - Ensure ATEM IP in `.env` matches your device
 - Check network connectivity
 - For development, mock ATEM is enabled by default
+
+### ATEM bridge: "Failed to create switcher discovery instance"
+- The installed ATEM Switchers version doesn't match the SDK the bridge was built
+  with (different COM class IDs). Install ATEM Switchers 10.4, then restart the bridge.
 
 ### Anthropic: invalid key, model not found, or timeout
 - Confirm `ANTHROPIC_API_KEY` is set in `backend/.env` and the account has

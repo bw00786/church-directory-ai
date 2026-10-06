@@ -97,6 +97,13 @@ export const directorAPI = {
     return client.get('/director/script')
   },
 
+  async uploadOrderOfService(file: File, parser: 'auto' | 'rules' | 'ai' = 'auto') {
+    const form = new FormData()
+    form.append('file', file)
+    form.append('parser', parser)
+    return client.post('/director/script/upload', form)
+  },
+
   async start(autonomous = true) {
     return client.post('/director/start', { autonomous })
   },
