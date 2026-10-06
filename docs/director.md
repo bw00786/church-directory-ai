@@ -39,9 +39,19 @@ note) on entry, then advances by its trigger.
 | 4 | `childrens_message`       | **preset 6** (wide)                        | Manual / AI |
 | 5 | `call_to_worship_liturgist` | **preset 4** (podium)                    | Manual / AI |
 | 6 | `call_to_worship_slides`  | ATEM→cam 2                                  | Manual / AI |
-| 7 | `song_of_prayer`          | ATEM→cam 2                                  | Song end (ch 5/8) |
+| 7 | `hymn_of_praise`          | ATEM→cam 2                                  | Song end (ch 5/8) |
 | 8 | `scripture_reading`       | ATEM→cam 2                                  | Manual / AI |
-| 9 | `sermon`                  | ATEM→cam 1; **preset 3**                    | Manual    |
+| 9 | `bumper_video`            | ATEM→cam 2                                  | Manual / AI |
+| 10 | `sermon`                 | ATEM→cam 1; **preset 3**                    | Manual    |
+| 11 | `communion_pastor`       | ATEM→cam 1; **preset 2**                    | Manual / AI |
+| 12 | `communion_congregation` | ATEM→cam 1; **preset 6**                    | Manual / AI |
+| 13 | `lords_prayer`           | ATEM→cam 2                                  | Manual / AI |
+| 14 | `community_prayers`      | ATEM→cam 1; **preset 3**                    | Manual    |
+| 15 | `offertory_liturgist`    | ATEM→cam 1; **preset 4**                    | Manual / AI |
+| 16 | `doxology`               | ATEM→cam 2                                  | Song end (ch 5/8) |
+| 17 | `closing_praise`         | ATEM→cam 2                                  | Song end (ch 5/8) |
+| 18 | `benediction`            | ATEM→cam 1; **preset 3**                    | Manual / AI |
+| 19 | `service_end`            | ATEM→cam 2; clear slides                    | Manual    |
 
 Presets and the ATEM input mapping come from config, so no numbers are
 hard-coded to specific hardware.
@@ -216,8 +226,13 @@ The director issues a `SLIDE` cue action at slide-content cues:
 | `service_start`           | `live` (go live on the countdown item) |
 | `first_song`              | `next_item`        |
 | `call_to_worship_slides`  | `next_item`        |
-| `song_of_prayer`          | `next_item`        |
+| `hymn_of_praise`          | `next_item`        |
 | `scripture_reading`       | `next_item`        |
+| `bumper_video`            | `next_item`        |
+| `lords_prayer`            | `next_item`        |
+| `doxology`                | `next_item`        |
+| `closing_praise`          | `next_item`        |
+| `service_end`             | `clear`            |
 
 Supported actions: `next_slide`, `prev_slide`, `next_item`, `prev_item`,
 `clear`, `logo`, `black`, `live`; the AI Director's `EASYWORSHIP_SELECT` uses
