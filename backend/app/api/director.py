@@ -15,6 +15,7 @@ from app.director.order_document import (
     extract_text,
 )
 from app.director.order_of_service import build_script_from_order
+from app.director.service_history import service_history
 from app.director.scheduler import service_scheduler
 from app.domain.service_context import service_context
 from app.logging_config import get_logger
@@ -77,7 +78,26 @@ async def load_order_of_service(request: OrderOfServiceRequest):
         raise HTTPException(status_code=422, detail=str(e))
     service_director.load_script(script)
     await service_director.broadcast_status()
-    return _script_summary(script, order, "rules")
+    saved = service_history.record_order(script, order, "rules", request.text)
+    return _script_summary(script, order, "rules", saved)
+
+
+@router.get("/script/history")
+async def list_order_history(limit: int = 50):
+    """Previously uploaded orders of service, newest first."""
+    return {"orders": service_history.list_orders(limit=max(1, min(limit, 200)))}
+
+
+@router.get("/script/history/{order_id}")
+async def get_order_history(order_id: str):
+    """One saved order of service including its original text."""
+    try:
+        order = service_history.get_order(order_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order is None:
+        raise HTTPException(status_code=404, detail="Order not found")
+    return order
 
 
 @router.post("/script/upload")
@@ -104,10 +124,11 @@ async def upload_order_of_service(
 
     service_director.load_script(script)
     await service_director.broadcast_status()
-    return _script_summary(script, order, source)
+    saved = service_history.record_order(script, order, source, text, filename=file.filename)
+    return _script_summary(script, order, source, saved)
 
 
-def _script_summary(script, order, source: str) -> dict:
+def _script_summary(script, order, source: str, saved: dict | None = None) -> dict:
     return {
         "script_name": script.name,
         "source": source,
@@ -116,6 +137,8 @@ def _script_summary(script, order, source: str) -> dict:
         "speaker": order.speaker,
         "items": [{"heading": i.heading, "cue_ids": i.cue_ids} for i in order.items],
         "cues": [{"id": c.id, "name": c.name} for c in script.cues],
+        "history_id": saved["id"] if saved else None,
+        "plan": service_context.plan.model_dump(),
     }
 
 

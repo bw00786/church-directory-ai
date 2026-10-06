@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .connection import Base
@@ -117,3 +117,25 @@ class ServiceObservation(Base):
     text: Mapped[str] = mapped_column(Text)
     embedding: Mapped[list[float]] = mapped_column(ARRAY(Float))
     embedding_space: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ServiceOrder(Base):
+    """One week's uploaded order of service and the cue sheet built from it.
+
+    Kept as history so later services can be compared against what was planned
+    (e.g. a lay-servant Sunday typically has no communion).
+    """
+
+    __tablename__ = "service_orders"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    service_date: Mapped[str | None] = mapped_column(String(40), nullable=True)  # as written in the document
+    theme: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    speaker: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    source: Mapped[str] = mapped_column(String(20))  # "rules" | "ai"
+    filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    script_name: Mapped[str] = mapped_column(String(255))
+    raw_text: Mapped[str] = mapped_column(Text)
+    items: Mapped[list] = mapped_column(JSONB)  # [{heading, cue_ids}]
+    cue_ids: Mapped[list] = mapped_column(JSONB)  # ordered cue ids in the built script

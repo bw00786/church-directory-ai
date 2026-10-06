@@ -85,7 +85,9 @@ panel to upload the pastor's `.docx` or `.txt`. Section headings are matched by 
 if none match, Claude picks from the known cues (it can't add new actions). The new
 cue sheet replaces the loaded one until the backend restarts, and uploads are
 rejected while a service is running. The EasyWorship schedule must contain the same
-items in the same order, since slide cues advance one item at a time.
+items in the same order, since slide cues advance one item at a time. Each upload is
+saved as service history (`GET /director/script/history`) and rebuilds the AI
+Director's expected service plan, so the AI anticipates that week's actual flow.
 
 ### Director API
 
@@ -95,6 +97,7 @@ items in the same order, since slide cues advance one item at a time.
 | GET    | `/director/script`       | The full cue sheet                           |
 | POST   | `/director/script/order` | Build the cue sheet from order-of-service text |
 | POST   | `/director/script/upload` | Build the cue sheet from an uploaded `.docx`/`.txt` |
+| GET    | `/director/script/history` | Saved orders of service (service history) |
 | POST   | `/director/start`        | Start the service (`{"autonomous": bool}`)   |
 | POST   | `/director/stop`         | Stop                                         |
 | POST   | `/director/next`         | Advance one cue (manual)                     |

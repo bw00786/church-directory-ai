@@ -92,13 +92,9 @@ class EasyWorshipService:
 
     # -- schedule navigation --------------------------------------------------
     def _item_labels(self) -> list[str]:
-        from app.domain.service_plan import build_default_service_plan
+        from app.domain.service_context import service_context
 
-        return [
-            el.easyworship_item
-            for el in build_default_service_plan().elements
-            if el.easyworship_item
-        ]
+        return [el.easyworship_item for el in service_context.plan.elements if el.easyworship_item]
 
     async def select_item(self, label: str) -> bool:
         """Go live on the schedule item matching ``label`` in the service plan's

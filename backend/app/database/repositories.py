@@ -23,6 +23,7 @@ from .models import (
     Person,
     RolePresetStat,
     ServiceObservation,
+    ServiceOrder,
     VoiceProfile,
 )
 
@@ -307,3 +308,23 @@ class MemoryRepository:
             .order_by(ServiceObservation.occurred_at)
         )
         return list(self.session.scalars(stmt))
+
+
+class ServiceOrderRepository:
+    """History of uploaded orders of service."""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def add(self, **fields) -> ServiceOrder:
+        order = ServiceOrder(**fields)
+        self.session.add(order)
+        self.session.flush()
+        return order
+
+    def list_recent(self, limit: int = 50) -> list[ServiceOrder]:
+        stmt = select(ServiceOrder).order_by(ServiceOrder.uploaded_at.desc()).limit(limit)
+        return list(self.session.scalars(stmt))
+
+    def get(self, order_id: uuid.UUID) -> ServiceOrder | None:
+        return self.session.get(ServiceOrder, order_id)
