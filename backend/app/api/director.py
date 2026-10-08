@@ -179,6 +179,15 @@ async def get_schedule():
     return service_scheduler.info()
 
 
+@router.get("/cycles")
+async def list_cycles(limit: int = 100):
+    """Recent AI Director decision cycles: inputs, model reply, decision, and
+    action outcomes per cycle (from data/ai_director_cycles.jsonl)."""
+    from app.director import cycle_log
+
+    return {"cycles": cycle_log.read_cycles(limit=max(1, min(limit, 1000)))}
+
+
 @router.post("/schedule")
 async def set_schedule(request: ScheduleRequest):
     """Update the auto-start schedule."""

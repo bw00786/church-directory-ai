@@ -382,6 +382,7 @@ SLIDE_VERIFY_SEMANTIC_THRESHOLD=0.75      # fuzzy-match acceptance threshold
 | POST     | `/director/script/upload` | Build the cue sheet from an uploaded `.docx`/`.txt` order of service (form fields `file`, optional `parser`: `auto`/`rules`/`ai`). Headings are matched by rules first; Claude is used only if none match. Rejected while the service is running. |
 | GET      | `/director/script/history` | Previously uploaded orders of service (newest first; `?limit=`) |
 | GET      | `/director/script/history/{id}` | One saved order including its original text |
+| GET      | `/director/cycles`         | Recent AI Director decision cycles (inputs, model reply, decision, action outcomes) |
 | POST     | `/director/start`        | Start (`{"autonomous": bool}`)       |
 | POST     | `/director/stop`         | Stop                                 |
 | POST     | `/director/next`         | Advance one cue (manual)             |
@@ -415,6 +416,18 @@ the AI expects the service that was actually uploaded -- a week without
 communion no longer has the AI waiting for it. The same plan supplies the
 EasyWorship schedule labels used by `select_item`. The response's `plan` field
 shows what the AI will be given.
+
+### Decision-cycle audit log
+
+Every AI Director decision cycle is appended as one JSON line to
+`backend/data/ai_director_cycles.jsonl` (created on first decision), keyed by a
+shared `cycle_id` and timestamped. Each cycle's "model" record carries the inputs
+the model saw (context snapshot, service plan, retrieved history), the raw reply
+and the parsed decision (or the failure reason). Each resulting action is logged
+with the same `cycle_id` and its outcome (`pending_approval`, `executed`,
+`executed_after_approval`, `rejected`, with detail). This is a local audit trail
+that works without PostgreSQL; it complements production memory, which stores
+summaries. The file is gitignored because it contains transcripts and decisions.
 
 ## Operating modes
 
