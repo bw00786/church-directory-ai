@@ -8,7 +8,7 @@ This is a production-grade system designed for churches to automate and assist i
 
 ### Key Capabilities
 
-- **Blackmagic ATEM Control** — Program/Preview switching, Cut/Auto transitions, streaming, recording
+- **Blackmagic ATEM Control** — Program/Preview switching, Cut/Auto transitions, streaming, recording. The switcher takes a new DHCP address each time it boots, so a built-in resolver discovers it by MAC on your subnets (`ATEM_RESOLVE_SUBNETS`) — no `.env` edit or backend restart between Sundays.
 - **PTZOptics Camera Control** — Full driver over VISCA-over-IP (TCP/UDP) + HTTP-CGI: pan/tilt/zoom, presets, and press-and-hold joystick
 - **Scripted Service Director** — Runs a Sunday cue sheet that drives the ATEM and PTZOptics camera, advancing manually, on a timer, on song-end, or by AI decision
 - **EasyWorship Slide Control** — Drives EasyWorship 7.3+ over its native Remote Control TCP protocol (the same channel as EW's Stream Deck plug-in): no window focus, absolute `gotoSchedule`/`gotoSlide` jumps, and live position read-back so every slide change is confirmed. Keystroke injection remains as a fallback

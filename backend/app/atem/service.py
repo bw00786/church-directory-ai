@@ -9,6 +9,8 @@ import httpx
 from app.config import settings
 from app.events.bus import event_bus
 from app.logging_config import get_logger
+
+from .resolver import atem_resolver
 from .models import AtemStateModel, AtemInputModel, AtemAudioChannelModel
 
 logger = get_logger(__name__)
@@ -66,8 +68,8 @@ class AtemService:
             True if connected, False otherwise.
         """
         try:
-            ip = atem_ip or settings.atem_ip
-            
+            ip = atem_ip or await atem_resolver.resolve()
+
             if self.auto_detect:
                 real_available = await self._probe_real_bridge()
                 self.mock = not real_available
@@ -76,7 +78,7 @@ class AtemService:
                     real_bridge_available=real_available,
                     using_mock=self.mock,
                 )
-            
+
             if self.mock:
                 self._connected = await self._mock_client.connect(ip)
             else:
@@ -85,6 +87,16 @@ class AtemService:
                     json={"atem_ip": ip}
                 )
                 self._connected = response.json().get("ok", False)
+                if not self._connected and atem_ip is None:
+                    # The ATEM changed address (DHCP); rescan the subnets and retry once.
+                    fresh = await atem_resolver.resolve(force=True)
+                    if fresh and fresh != ip:
+                        ip = fresh
+                        response = await self._client.post(
+                            f"{self.bridge_url}/connect",
+                            json={"atem_ip": ip}
+                        )
+                        self._connected = response.json().get("ok", False)
             
             if self._connected:
                 # Refresh state

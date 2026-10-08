@@ -24,6 +24,20 @@ async def get_status(atem: AtemService = Depends(get_atem_service)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/resolver")
+async def resolver_status():
+    """The ATEM address the resolver is using (configured/discovered), for the UI."""
+    from app.atem.resolver import atem_resolver
+    from app.config import settings
+
+    return {
+        "enabled": settings.atem_resolve_enabled,
+        "configured_ip": settings.atem_ip,
+        "resolved_ip": atem_resolver._resolved,
+        "effective_ip": atem_resolver._resolved or settings.atem_ip,
+    }
+
+
 @router.post("/connect")
 async def connect(atem: AtemService = Depends(get_atem_service)):
     """Connect to ATEM."""
