@@ -8,6 +8,7 @@
 .venv-test/
 **/data/voice-outbox/
 **/data/piper-voices/
+**/data/ai_director_cycles.jsonl
 env/
 venv/
 ENV/

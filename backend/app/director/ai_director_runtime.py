@@ -30,6 +30,8 @@ from app.domain.service_state import ServiceState
 from app.events.bus import event_bus
 from app.logging_config import get_logger
 
+from . import cycle_log
+
 logger = get_logger(__name__)
 
 VALID_MODES = ("manual", "assisted", "ai_directed")
@@ -202,6 +204,11 @@ class AIDirectorRuntime:
 
         if self._mode == "assisted":
             self.pending_actions.extend(actions)
+            for action in actions:
+                cycle_log.log_action_outcome(
+                    getattr(ai_service_director, "last_cycle_id", None) or "unknown",
+                    action.model_dump(mode="json"), "pending_approval",
+                )
             event_bus.publish(
                 {
                     "event": "AI_ACTIONS_PENDING_APPROVAL",
@@ -246,8 +253,10 @@ class AIDirectorRuntime:
 
     async def _execute_directed(self, action: DirectorAction) -> None:
         """ai_directed path: fusion + adaptive gates, then the policy-gated engine."""
+        cycle_id = getattr(ai_service_director, "last_cycle_id", None) or "unknown"
         ok, reason = evidence_fusion.corroborates(action, service_context.vision)
         if not ok:
+            cycle_log.log_action_outcome(cycle_id, action.model_dump(mode="json"), "rejected", reason)
             event_bus.publish(
                 {"event": "AI_ACTION_REJECTED", "payload": {**action.model_dump(mode="json"), "reason": reason}}
             )
@@ -256,6 +265,7 @@ class AIDirectorRuntime:
 
         ok, reason = self._adaptive_gate(action)
         if not ok:
+            cycle_log.log_action_outcome(cycle_id, action.model_dump(mode="json"), "rejected", reason)
             event_bus.publish(
                 {"event": "AI_ACTION_REJECTED", "payload": {**action.model_dump(mode="json"), "reason": reason}}
             )
@@ -263,6 +273,7 @@ class AIDirectorRuntime:
 
         result = await self._engine().execute(action)
         if result.executed:
+            cycle_log.log_action_outcome(cycle_id, action.model_dump(mode="json"), "executed", result.detail)
             song_follower_service.notify_executed(action)
             await learning_recorder.record_auto(action)
             adaptive_confidence.record_outcome(_category_for(action.type), good=True)
@@ -284,6 +295,10 @@ class AIDirectorRuntime:
         action = self.pending_actions.pop(index)
         result = await self._engine().execute(action)
         if result.executed:
+            cycle_log.log_action_outcome(
+                getattr(ai_service_director, "last_cycle_id", None) or "unknown",
+                action.model_dump(mode="json"), "executed_after_approval", result.detail,
+            )
             song_follower_service.notify_executed(action)
             await self._maybe_shutdown(action)
         await learning_recorder.record_approval(action)

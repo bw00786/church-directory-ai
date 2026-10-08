@@ -36,6 +36,12 @@ def _system_prompt() -> str:
 class AIServiceDirector:
     """Reasoning-only AI Director. Produces DirectorDecision, never executes."""
 
+    _last_cycle_id: Optional[str] = None
+
+    @property
+    def last_cycle_id(self) -> Optional[str]:
+        return self._last_cycle_id
+
     async def decide(self, context: ServiceContext) -> DirectorDecision:
         decision = await self._decide_with_llm(context)
         if decision is not None:
@@ -80,6 +86,8 @@ class AIServiceDirector:
         )
 
     async def _decide_with_llm(self, context: ServiceContext) -> Optional[DirectorDecision]:
+        from app.director import cycle_log
+
         try:
             from app.agents.llm import get_director_llm, invoke_llm, response_text
 
@@ -87,6 +95,7 @@ class AIServiceDirector:
         except Exception:
             return None
 
+        cycle_id = cycle_log.new_cycle_id()
         snapshot = context.snapshot()
         plan_summary = "\n".join(
             f"- {el.id} ({el.type.value}); speaker={el.speaker}; camera={el.camera_role}"
@@ -112,10 +121,24 @@ class AIServiceDirector:
             content = response_text(response)
             match = re.search(r"\{.*\}", str(content), re.DOTALL)
             if not match:
+                cycle_log.log_model_cycle(
+                    cycle_id, {"snapshot": snapshot, "plan": plan_summary, "history": history},
+                    raw_response=content, decision=None, error="no JSON in response",
+                )
                 return None
             data = json.loads(match.group(0))
-            return DirectorDecision.model_validate(data)
+            decision = DirectorDecision.model_validate(data)
+            cycle_log.log_model_cycle(
+                cycle_id, {"snapshot": snapshot, "plan": plan_summary, "history": history},
+                raw_response=content, decision=decision.model_dump(mode="json"),
+            )
+            self._last_cycle_id = cycle_id
+            return decision
         except Exception as e:
+            cycle_log.log_model_cycle(
+                cycle_id, {"snapshot": snapshot, "plan": plan_summary, "history": history},
+                raw_response=None, decision=None, error=type(e).__name__,
+            )
             logger.warning("AI Director decision failed", error=str(e))
             return None
 
