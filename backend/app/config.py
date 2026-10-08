@@ -95,6 +95,13 @@ class Settings(BaseSettings):
     # falling back to the mock client automatically otherwise (overrides enable_mock_atem).
     atem_auto_detect: bool = True
     atem_probe_timeout_seconds: float = 1.5
+    # ATEM IP resolver: the switcher takes a new DHCP address when power-cycled,
+    # so discover it by MAC on the configured subnets instead of pinning ATEM_IP.
+    atem_resolve_enabled: bool = True
+    atem_resolve_subnets: str = ""  # comma-separated /24 prefixes, e.g. "192.168.4,192.168.1"
+    atem_resolve_oui: str = "7c:2e:0d"  # Blackmagic Design OUI
+    atem_resolve_mac: str = ""  # exact MAC to prefer over the OUI prefix
+    atem_resolve_ping_timeout_ms: int = 300
     enable_ai_director: bool = True
     enable_vision_detection: bool = False
     vision_enabled: bool = False
