@@ -15,6 +15,7 @@ from functools import lru_cache
 from typing import Optional
 
 import asyncio
+import re
 
 import numpy as np
 
@@ -105,6 +106,35 @@ def get_whisper_service() -> WhisperService:
 MAX_UTTERANCE_SECONDS = 15.0
 MIN_UTTERANCE_SECONDS = 0.4
 
+# Whisper's usual output for silence/noise; "thank you" is excluded because it's real speech.
+_NON_SPEECH_GUESSES = {"you", "thanks for watching", "thank you for watching"}
+_MAX_REPEATS = 3
+
+
+def clean_transcript(text: str) -> str:
+    """Drop Whisper's non-speech guesses and cap runaway repeats of the same phrase."""
+    if re.sub(r"[^a-z ]", "", text.lower()).strip() in _NON_SPEECH_GUESSES:
+        return ""
+    words = text.split()
+    for n in range(1, 7):
+        keys = [re.sub(r"\W+", "", w.lower()) for w in words]
+        out: list[str] = []
+        i = 0
+        while i < len(words):
+            chunk = keys[i : i + n]
+            count = 1
+            if len(chunk) == n and any(chunk):
+                while keys[i + count * n : i + (count + 1) * n] == chunk:
+                    count += 1
+            if count > _MAX_REPEATS:
+                out.extend(words[i : i + n * _MAX_REPEATS])
+                i += n * count
+            else:
+                out.append(words[i])
+                i += 1
+        words = out
+    return " ".join(words)
+
 
 def whisper_roles() -> set[str]:
     """Roles that receive per-channel ASR, from WHISPER_ROLES config."""
@@ -178,14 +208,15 @@ class MultiChannelTranscriber:
             return None
 
     def _emit(self, role, channel, result: Optional[TranscriptResult], t_start, t_end) -> None:
-        if result is None or not result.text:
+        text = clean_transcript(result.text) if result is not None else ""
+        if not text:
             return
         service_context.record_audio(
             AudioObservation(
                 channel=channel,
                 speaker_role=role,
                 speaking=True,
-                transcript=result.text,
+                transcript=text,
                 confidence=result.confidence,
                 duration_ms=int(max(0.0, t_end - t_start) * 1000),
             )
@@ -195,7 +226,7 @@ class MultiChannelTranscriber:
                 "event": "TRANSCRIPT",
                 "payload": {
                     "role": role,
-                    "text": result.text,
+                    "text": text,
                     "t_start": t_start,
                     "t_end": t_end,
                 },

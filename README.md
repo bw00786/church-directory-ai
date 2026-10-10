@@ -303,11 +303,9 @@ fetched automatically by CMake, and the Blackmagic SDK interface is compiled
 from the vendored `BMDSwitcherAPI.idl` — no separate SDK download is required.
 
 ```bash
-cd atem-bridge
-mkdir build && cd build
-cmake ..
-cmake --build . --config Release
-.\bin\atem-bridge.exe   # listens on http://127.0.0.1:8090
+cmake -S atem-bridge -B atem-bridge/build
+cmake --build atem-bridge/build --config Release
+.\atem-bridge\build\bin\Release\atem-bridge.exe   # listens on http://127.0.0.1:8090
 ```
 
 See [atem-bridge/README.md](atem-bridge/README.md) for endpoints, environment

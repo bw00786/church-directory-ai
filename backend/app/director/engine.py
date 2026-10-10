@@ -24,6 +24,7 @@ from app.mixer.service import mixer_service
 from .models import ActionType, AdvanceTrigger, Cue, CueAction, DirectorStatus, ServiceScript
 from .plan_builder import build_plan_from_script
 from .script import build_default_service_script
+from .transcript_triggers import classify_transcript
 
 logger = get_logger(__name__)
 
@@ -39,6 +40,7 @@ class ServiceDirector:
         self._advance_task: Optional[asyncio.Task] = None
         self._token = 0
         self._pending_suggestion: Optional[dict] = None
+        self._transcript_task: Optional[asyncio.Task] = None
         self._sync_plan()
 
     # -- public API -----------------------------------------------------------
@@ -64,6 +66,7 @@ class ServiceDirector:
 
         self._autonomous = autonomous
         self._running = True
+        self._transcript_task = asyncio.create_task(self._listen_for_transcripts())
 
         atem = get_atem_service_instance()
         if not await atem.is_connected():
@@ -80,6 +83,11 @@ class ServiceDirector:
     async def stop(self) -> DirectorStatus:
         self._running = False
         self._cancel_advance()
+        if self._transcript_task is not None:
+            self._transcript_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._transcript_task
+            self._transcript_task = None
         logger.info("Service director stopped")
         await self._broadcast()
         return self.status()
@@ -230,6 +238,32 @@ class ServiceDirector:
             ended = await mixer_service.wait_for_song_end(channels)
             if ended and token == self._token and self._running:
                 await self._enter_cue(self._index + 1)
+
+    async def _listen_for_transcripts(self) -> None:
+        queue = await event_bus.subscribe()
+        try:
+            while self._running:
+                message = await queue.get()
+                if not isinstance(message, dict) or message.get("event") != "TRANSCRIPT":
+                    continue
+                payload = message.get("payload") or {}
+                current = self.current_cue()
+                result = classify_transcript(
+                    current.id if current else "",
+                    str(payload.get("role", "")).lower(),
+                    str(payload.get("text", "")),
+                )
+                if result is None or current is None:
+                    continue
+                reason, confidence = result
+                await self.request_advance(
+                    source="transcript",
+                    reason=reason,
+                    confidence=confidence,
+                    cue_id=current.id,
+                )
+        finally:
+            await event_bus.unsubscribe(queue)
 
     def _cancel_advance(self) -> None:
         if self._advance_task is not None:

@@ -1,6 +1,7 @@
 """Application configuration from environment."""
 
 import sys
+from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings
@@ -351,8 +352,9 @@ class Settings(BaseSettings):
     slide_verify_semantic_threshold: float = 0.75
 
     class Config:
-        env_file = ".env"
+        env_file = Path(__file__).resolve().parents[2] / ".env"
         case_sensitive = False
+        extra = "ignore"
     
     @property
     def atem_bridge_url(self) -> str:

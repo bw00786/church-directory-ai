@@ -1,11 +1,49 @@
 """Tests for MultiChannelTranscriber: role attribution, VAD gating, isolation."""
 
 import numpy as np
+import pytest
 
 import app.audio.whisper_service as ws
-from app.audio.whisper_service import MultiChannelTranscriber
+from app.audio.whisper_service import MultiChannelTranscriber, clean_transcript
 from app.domain.observations import TranscriptResult
 from app.domain.service_context import ServiceContext
+
+
+@pytest.mark.parametrize("text", ["You", "you.", " You ", "Thanks for watching!", "Thank you for watching."])
+def test_clean_transcript_drops_non_speech_guesses(text):
+    assert clean_transcript(text) == ""
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Thank you.", "Amen", "Test test 1 2 1 2 test test 1 2 1 2 test test 1 2 test test", "you are welcome"],
+)
+def test_clean_transcript_keeps_real_speech(text):
+    assert clean_transcript(text) == text
+
+
+def test_clean_transcript_caps_runaway_repetition():
+    looped = "Testing Room 2, " * 50 + "Testing Room"
+    cleaned = clean_transcript(looped)
+    assert cleaned.lower().count("testing room 2") == 3
+    assert len(cleaned) < len(looped) / 5
+
+
+def test_noise_never_reaches_the_service_context(monkeypatch):
+    class NoiseWhisper:
+        available = True
+
+        def transcribe(self, audio, sample_rate=16000):
+            return TranscriptResult(text="You", confidence=1.0, start_time=0.0, end_time=1.0)
+
+    ctx = ServiceContext()
+    monkeypatch.setattr(ws, "service_context", ctx)
+    monkeypatch.setattr(ws, "get_whisper_service", lambda: NoiseWhisper())
+
+    t = MultiChannelTranscriber(roles={"pastor"})
+    t.feed("pastor", 1, _speech(0.5), speaking=True, t=0.0)
+    t.feed("pastor", 1, _speech(0.0, 0.1), speaking=False, t=1.0)
+    assert len(list(ctx.transcript)) == 0
 
 
 class FakeWhisper:

@@ -49,16 +49,14 @@ Build from a **Visual Studio Developer Command Prompt** so `midl.exe` and the
 compiler are on `PATH`:
 
 ```bash
-mkdir build
-cd build
-cmake ..
-cmake --build . --config Release
+cmake -S . -B build
+cmake --build build --config Release
 ```
 
 ## Running
 
 ```bash
-.\bin\atem-bridge.exe
+.\build\bin\Release\atem-bridge.exe
 ```
 
 The bridge listens on `http://127.0.0.1:8090`.

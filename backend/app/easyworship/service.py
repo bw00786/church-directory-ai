@@ -16,6 +16,11 @@ logger = get_logger(__name__)
 ACTIONS = ("next_slide", "prev_slide", "next_item", "prev_item", "clear", "logo", "black", "live")
 
 
+def _identity(state) -> tuple:
+    """What is on the live output; changes whenever EasyWorship moves, even if pres_no/slide_no stay 0."""
+    return (state.pres_rowid, state.slide_rowid, state.imagehash)
+
+
 class EasyWorshipService:
     """Controls EasyWorship slide advancement for the director and operators.
 
@@ -115,10 +120,14 @@ class EasyWorshipService:
             number = target_index + 1 + settings.easyworship_schedule_offset
             if not self._connected:
                 self._connected = await self._driver.connect()
+            before = self._remote_state()
+            before_id = _identity(before) if before else None
             ok = await self._driver.goto_schedule(number)  # type: ignore[attr-defined]
             if ok:
+                # With unreported positions a changed live slide is the only evidence; it can't tell "already live" from "failed".
                 ok = await self._confirm(
-                    lambda s, n=number: s.pres_no == n, f"pres_no == {number} ({label})"
+                    lambda s, n=number, b=before_id: s.pres_no == n or (not s.pres_no and _identity(s) != b),
+                    f"pres_no == {number} ({label})",
                 )
             if ok:
                 self._last_action = "select_item"
@@ -147,7 +156,7 @@ class EasyWorshipService:
             self._connected = await self._driver.connect()
 
         before = self._remote_state()
-        snapshot = (before.pres_no, before.slide_no, before.status_count) if before else None
+        snapshot = (before.pres_no, before.slide_no, before.status_count, _identity(before)) if before else None
 
         ok = await self._driver.send_action(name)
         if ok and snapshot is not None and name in SLIDE_CHANGE_ACTIONS:
@@ -166,7 +175,9 @@ class EasyWorshipService:
 
     @staticmethod
     def _navigation_predicate(name: str, snapshot: tuple) -> Callable:
-        pres_no, slide_no, count = snapshot
+        pres_no, slide_no, count, identity = snapshot
+        if not pres_no and not slide_no:
+            return lambda s: s.status_count > count and _identity(s) != identity
         if name == "next_slide" and slide_no is not None:
             # Past the last slide EasyWorship may roll into the next item.
             return lambda s: s.slide_no == slide_no + 1 or (
@@ -205,9 +216,14 @@ class EasyWorshipService:
         """Jump to slide ``number`` (1-based) in the live item (remote protocol only)."""
         if not self._driver.supports_confirmation:
             return False
+        before = self._remote_state()
+        before_id = _identity(before) if before else None
         ok = await self._driver.goto_slide(number)  # type: ignore[attr-defined]
         if ok:
-            ok = await self._confirm(lambda s, n=number: s.slide_no == n, f"slide_no == {number}")
+            ok = await self._confirm(
+                lambda s, n=number, b=before_id: s.slide_no == n or (not s.slide_no and _identity(s) != b),
+                f"slide_no == {number}",
+            )
         if ok:
             self._last_action = "goto_slide"
             if settings.slide_verify_enabled:

@@ -21,10 +21,18 @@ class FakeEasyWorship:
     ``push_status`` is False, to simulate a command that never took effect).
     """
 
-    def __init__(self, *, pair: bool = True, push_status: bool = True, slides_per_item: int = 3):
+    def __init__(
+        self,
+        *,
+        pair: bool = True,
+        push_status: bool = True,
+        slides_per_item: int = 3,
+        report_positions: bool = True,
+    ):
         self.pair = pair
         self.push_status = push_status
         self.slides_per_item = slides_per_item
+        self.report_positions = report_positions  # False: pres_no/slide_no always 0, as the real server does
         self.pres_no = 1
         self.slide_no = 1
         self.logo = False
@@ -70,8 +78,8 @@ class FakeEasyWorship:
             "rectype": 1,
             "pres_rowid": 1000 + self.pres_no,
             "slide_rowid": 5000 + self.slide_no,
-            "pres_no": self.pres_no,
-            "slide_no": self.slide_no,
+            "pres_no": self.pres_no if self.report_positions else 0,
+            "slide_no": self.slide_no if self.report_positions else 0,
             "schedulerev": "7",
             "liverev": str(self.requestrev),
             "imagehash": "abc",
@@ -301,6 +309,53 @@ async def test_service_reports_failure_when_slide_does_not_change():
     try:
         await svc.start()
         await driver.wait_for(lambda s: s.slide_no == 1, 1.0)
+        assert await svc.next_slide() is False
+        assert svc.status()["last_confirmed"] is False
+    finally:
+        await svc.stop()
+        await server.stop()
+
+
+async def test_service_confirms_next_item_when_positions_are_unreported():
+    server = FakeEasyWorship(report_positions=False)
+    await server.start()
+    driver = _driver(server)
+    svc = EasyWorshipService(driver=driver)
+    try:
+        await svc.start()
+        await driver.wait_for(lambda s: s.status_count >= 1, 1.0)
+        assert await svc.next_item() is True
+        state = svc.status()["remote_state"]
+        assert svc.status()["last_confirmed"] is True
+        assert state["pres_no"] == 0 and state["pres_rowid"] == 1002
+    finally:
+        await svc.stop()
+        await server.stop()
+
+
+async def test_service_confirms_next_slide_when_positions_are_unreported():
+    server = FakeEasyWorship(report_positions=False)
+    await server.start()
+    driver = _driver(server)
+    svc = EasyWorshipService(driver=driver)
+    try:
+        await svc.start()
+        await driver.wait_for(lambda s: s.status_count >= 1, 1.0)
+        assert await svc.next_slide() is True
+        assert svc.status()["remote_state"]["slide_rowid"] == 5002
+    finally:
+        await svc.stop()
+        await server.stop()
+
+
+async def test_service_still_fails_when_unreported_positions_and_nothing_changes():
+    server = FakeEasyWorship(report_positions=False, slides_per_item=1)
+    await server.start()
+    driver = _driver(server)
+    svc = EasyWorshipService(driver=driver)
+    try:
+        await svc.start()
+        await driver.wait_for(lambda s: s.status_count >= 1, 1.0)
         assert await svc.next_slide() is False
         assert svc.status()["last_confirmed"] is False
     finally:

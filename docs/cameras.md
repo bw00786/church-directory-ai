@@ -28,12 +28,12 @@ In `.env` (see [.env.example](../.env.example)):
 
 ```
 CAMERA_1_NAME=PTZOptics Camera 1
-CAMERA_1_HOST=192.168.1.200     # camera IP
+CAMERA_1_HOST=192.168.1.201     # camera IP
 CAMERA_1_PORT=80                # HTTP-CGI port
 CAMERA_1_USERNAME=admin
 CAMERA_1_PASSWORD=...
-CAMERA_1_VISCA_PORT=1240        # VISCA-over-IP TCP port
-CAMERA_1_VISCA_UDP=false        # true = UDP (Sony header) instead of TCP
+CAMERA_1_VISCA_PORT=1259        # VISCA-over-IP UDP port
+CAMERA_1_VISCA_UDP=true         # true = UDP (Sony header) instead of TCP
 ```
 
 - **VISCA transport:** TCP by default (raw VISCA). Set `CAMERA_1_VISCA_UDP=true`

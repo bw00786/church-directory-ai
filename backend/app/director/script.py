@@ -1,17 +1,19 @@
 """Default Sunday service script for Vernon UMC.
 
 Encodes the described flow as a cue sheet. Camera 1 is the PTZOptics camera;
-camera 2 is the EasyWorship laptop (slides). Mixer channel 5 is the vocalist and
-channel 8 is the congregation, used to detect when a song ends.
+camera 2 is the EasyWorship laptop (slides). The configured vocalist and
+congregation channels are used to detect when a song ends.
 """
 
 from app.config import settings
 
 from .models import ActionType, AdvanceTrigger, Cue, CueAction, ServiceScript
 
-# Mixer channels used for song-end detection.
-VOCALIST_CHANNEL = 5
-CONGREGATION_CHANNEL = 8
+# Mixer channels used for song-end detection. Keep these tied to the Yamaha
+# role mapping so a site change cannot silently make the detector listen to the
+# wrong input.
+VOCALIST_CHANNEL = settings.mixer_vocalist_channel
+CONGREGATION_CHANNEL = settings.mixer_congregation_channel
 
 
 def _atem(input_id: int, description: str) -> CueAction:
@@ -58,11 +60,11 @@ def build_cue_catalog() -> list[Cue]:
         Cue(
             id="first_song",
             name="First Song",
-            description="Vocalist (ch 5) and congregation (ch 8) sing over the slides.",
+            description=f"Vocalist (ch {VOCALIST_CHANNEL}) and congregation (ch {CONGREGATION_CHANNEL}) sing over the slides.",
             actions=[
                 _atem(cam2, "Stay on slides for song lyrics"),
                 _slide("next_item", "EasyWorship: advance to the first song"),
-                _note("Vocalist on channel 5; congregation on channel 8."),
+                _note(f"Vocalist on channel {VOCALIST_CHANNEL}; congregation on channel {CONGREGATION_CHANNEL}."),
             ],
             advance=AdvanceTrigger.SONG_END,
             channels=song_channels,
