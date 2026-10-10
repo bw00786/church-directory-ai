@@ -1,6 +1,7 @@
 """ATEM service implementation."""
 
 import asyncio
+import contextlib
 from datetime import datetime
 from typing import Optional
 
@@ -35,6 +36,14 @@ class AtemService:
         self._reported_failures: set[str] = set()
         self._client = httpx.AsyncClient(timeout=10.0)
         self._mock_client = None
+        self._connection_lock = asyncio.Lock()
+        self._monitor_task: Optional[asyncio.Task] = None
+        self._monitor_started = False
+        self._reconnect_enabled = False
+        self._real_seen = False
+        self._last_ip: Optional[str] = None
+        self._monitor_interval = 2.0
+        self._retry_max_seconds = 30.0
         
         if self.mock or self.auto_detect:
             from .mock import MockAtemClient
@@ -58,7 +67,61 @@ class AtemService:
         except Exception:
             return False
     
+    async def start(self) -> None:
+        self._monitor_started = True
+        self._reconnect_enabled = True
+        self._ensure_monitor()
+
+    def _ensure_monitor(self) -> None:
+        if self._monitor_task is None or self._monitor_task.done():
+            self._monitor_task = asyncio.create_task(self._monitor_connection())
+
+    async def stop(self) -> None:
+        self._monitor_started = False
+        self._reconnect_enabled = False
+        await self._stop_monitor()
+        await self._client.aclose()
+
+    async def _stop_monitor(self) -> None:
+        task, self._monitor_task = self._monitor_task, None
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    async def _monitor_connection(self) -> None:
+        retry_seconds = self._monitor_interval
+        while self._reconnect_enabled:
+            try:
+                if self._connected and not self.mock:
+                    await self.get_state()
+                needs_connection = not self._connected or (self.mock and self.auto_detect)
+                if needs_connection:
+                    async with self._connection_lock:
+                        await self._connect()
+                recovered = self._connected and not (self.mock and self.auto_detect)
+                delay = self._monitor_interval if recovered else retry_seconds
+                retry_seconds = self._monitor_interval if recovered else min(
+                    retry_seconds * 2, self._retry_max_seconds
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self._connected = False
+                logger.warning("ATEM monitor connection lost", exc_info=True)
+                delay = retry_seconds
+                retry_seconds = min(retry_seconds * 2, self._retry_max_seconds)
+            await asyncio.sleep(delay)
+
     async def connect(self, atem_ip: Optional[str] = None) -> bool:
+        async with self._connection_lock:
+            self._reconnect_enabled = True
+            connected = await self._connect(atem_ip)
+        if self._monitor_started:
+            self._ensure_monitor()
+        return connected
+
+    async def _connect(self, atem_ip: Optional[str] = None) -> bool:
         """Connect to ATEM via the bridge.
         
         Args:
@@ -68,11 +131,13 @@ class AtemService:
             True if connected, False otherwise.
         """
         try:
-            ip = atem_ip or await atem_resolver.resolve()
+            ip = atem_ip or self._last_ip or await atem_resolver.resolve()
 
             if self.auto_detect:
                 real_available = await self._probe_real_bridge()
-                self.mock = not real_available
+                self.mock = not real_available and not self._real_seen
+                if real_available:
+                    self._real_seen = True
                 logger.info(
                     "ATEM auto-detect probe",
                     real_bridge_available=real_available,
@@ -101,6 +166,8 @@ class AtemService:
             if self._connected:
                 # Refresh state
                 self._state = await self.get_state()
+                if not self.mock:
+                    self._last_ip = ip
                 logger.info("ATEM connected", atem_ip=ip, mock=self.mock)
             else:
                 logger.warning("Failed to connect to ATEM", atem_ip=ip)
@@ -112,6 +179,12 @@ class AtemService:
             return False
     
     async def disconnect(self) -> bool:
+        self._reconnect_enabled = False
+        await self._stop_monitor()
+        async with self._connection_lock:
+            return await self._disconnect()
+
+    async def _disconnect(self) -> bool:
         """Disconnect from ATEM.
         
         Returns:
@@ -155,6 +228,7 @@ class AtemService:
                 data = await self._mock_client.status()
             else:
                 response = await self._client.get(f"{self.bridge_url}/status")
+                response.raise_for_status()
                 data = response.json()
             
             state = AtemStateModel(
@@ -174,9 +248,13 @@ class AtemService:
             )
             
             self._detect_output_failures(state)
+            if not self.mock:
+                self._connected = state.connected
             self._state = state
             return state
         except Exception as e:
+            if not self.mock:
+                self._connected = False
             self._detect_output_failures(None)
             logger.error("Error reading ATEM state", error=str(e))
             raise ConnectionError(f"Failed to read ATEM state: {e}")

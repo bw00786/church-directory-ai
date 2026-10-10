@@ -37,8 +37,11 @@ async def test_auto_detect_uses_real_bridge_when_reachable(monkeypatch):
     class FakeResponse:
         status_code = 200
 
+        def raise_for_status(self):
+            pass
+
         def json(self):
-            return {"ok": True}
+            return {"ok": True, "connected": True, "inputs": []}
 
     async def fake_get(url, timeout=None):
         return FakeResponse()

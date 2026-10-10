@@ -126,7 +126,7 @@ async def lifespan(app: FastAPI):
     try:
         from app.dependencies import get_atem_service_instance
         atem_service = get_atem_service_instance()
-        asyncio.create_task(atem_service.connect())
+        await atem_service.start()
     except Exception:
         logger.exception("Failed to start ATEM auto-connect task")
 
@@ -153,6 +153,11 @@ async def lifespan(app: FastAPI):
     
     yield
     
+    try:
+        await get_atem_service_instance().stop()
+    except Exception:
+        logger.exception("Failed to stop ATEM connection monitor")
+
     if voice is not None:
         try:
             await voice.stop()
