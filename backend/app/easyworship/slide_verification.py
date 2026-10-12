@@ -266,7 +266,7 @@ def validate_slide_verify_config() -> None:
         )
 
 
-def _register_slide_capture_input() -> None:
+def register_slide_capture_input() -> None:
     use_dir = settings.vision_frame_source == "dir" and settings.vision_frame_dir
     if use_dir:
         frame_capture.register_input(SLIDE_TAG, dir_provider(f"{settings.vision_frame_dir}/{SLIDE_TAG}"))
@@ -303,7 +303,7 @@ async def start_slide_verification() -> None:
     validate_slide_verify_config()
     if not settings.slide_verify_enabled:
         return
-    _register_slide_capture_input()
+    register_slide_capture_input()
     await frame_capture.start()
     await _probe_device(lambda: frame_capture.get_frame(SLIDE_TAG)[0])
     logger.info(

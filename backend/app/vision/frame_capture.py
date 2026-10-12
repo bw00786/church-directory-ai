@@ -64,7 +64,15 @@ class FrameCaptureService:
     # -- registration ---------------------------------------------------------
     def register_input(self, tag: str, provider: FrameProvider, hz: Optional[float] = None) -> None:
         rate = settings.vision_snapshot_hz if hz is None else hz
-        self._inputs[tag] = _Input(tag, provider, rate, self._ring_frames)
+        old = self._inputs.get(tag)
+        if old is not None and old._task is not None:
+            old._task.cancel()
+        inp = _Input(tag, provider, rate, self._ring_frames)
+        self._inputs[tag] = inp
+        if self._running:
+            # start() already ran; poll the late-registered input too.
+            with contextlib.suppress(RuntimeError):
+                inp._task = asyncio.get_running_loop().create_task(self._poll(inp))
         logger.info("Vision input registered", tag=tag, hz=rate)
 
     def push_frame(self, tag: str, frame) -> None:

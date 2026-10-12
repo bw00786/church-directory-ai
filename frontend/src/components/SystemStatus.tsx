@@ -24,9 +24,10 @@ interface ReadyResponse {
   checks: Record<string, string>
 }
 
-interface ClaudeResponse {
-  status?: string
+interface OllamaResponse {
   ok?: boolean
+  model?: string
+  base_url?: string
   error?: string
 }
 
@@ -34,7 +35,7 @@ export function SystemStatus() {
   const { state: atem, error: atemError } = useAtem()
   const [ready, setReady] = useState<ReadyResponse | null>(null)
   const [backendDown, setBackendDown] = useState(false)
-  const [claude, setClaude] = useState<{ level: Level; text: string }>({
+  const [ollama, setOllama] = useState<{ level: Level; text: string }>({
     level: 'unknown',
     text: 'not tested',
   })
@@ -63,16 +64,20 @@ export function SystemStatus() {
     }
   }, [])
 
-  // On-demand only: this call bills against the Anthropic account.
-  const testClaude = useCallback(async () => {
+  // On-demand only: runs a real (short) inference on the EasyWorship PC's Ollama.
+  const testOllama = useCallback(async () => {
     setTesting(true)
     try {
-      const res = await fetch('/api/health/anthropic')
-      const body = (await res.json()) as ClaudeResponse
+      const res = await fetch('/api/health/ollama')
+      const body = (await res.json()) as OllamaResponse
       const good = res.ok && body.ok !== false && !body.error
-      setClaude({ level: good ? 'ok' : 'error', text: good ? 'responding' : body.error ?? 'failed' })
+      const where = body.base_url ? ` @ ${body.base_url}` : ''
+      setOllama({
+        level: good ? 'ok' : 'error',
+        text: good ? `${body.model ?? 'model'} responding${where}` : `${body.error ?? 'failed'}${where}`,
+      })
     } catch {
-      setClaude({ level: 'error', text: 'unreachable' })
+      setOllama({ level: 'error', text: 'unreachable' })
     } finally {
       setTesting(false)
     }
@@ -90,21 +95,21 @@ export function SystemStatus() {
       ? { level: 'ok', text: 'connected' }
       : { level: 'warn', text: 'not connected' }
 
-  const configured = ready?.checks?.anthropic === 'configured'
+  const configured = ready?.checks?.ollama === 'configured'
 
   const rows: Array<{ label: string; level: Level; text: string; action?: React.ReactNode }> = [
     { label: 'Backend API', ...backend },
     { label: 'ATEM', ...atemRow },
     {
-      label: 'Claude API key',
+      label: 'Ollama model',
       level: ready ? (configured ? 'ok' : 'warn') : 'unknown',
       text: ready ? (configured ? 'configured' : 'not configured') : 'checking',
     },
     {
-      label: 'Claude inference',
-      ...claude,
+      label: 'Ollama inference',
+      ...ollama,
       action: (
-        <Button size="small" onClick={testClaude} disabled={testing || backendDown}>
+        <Button size="small" onClick={testOllama} disabled={testing || backendDown}>
           {testing ? 'Testing...' : 'Test'}
         </Button>
       ),

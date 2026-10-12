@@ -49,6 +49,14 @@ _CUE_PLAN: dict[str, _Mapping] = {
 }
 
 
+def easyworship_item_for_cue(cue) -> Optional[str]:
+    """The EasyWorship schedule item label a cue puts live, if any."""
+    mapping = _CUE_PLAN.get(cue.id)
+    if mapping is not None:
+        return mapping.easyworship_item
+    return cue.name if any(a.type == ActionType.SLIDE for a in cue.actions) else None
+
+
 def build_plan_from_script(script: ServiceScript) -> ServicePlan:
     """One ServiceElement per cue, in cue order; unknown cues get a generic element."""
     elements = []

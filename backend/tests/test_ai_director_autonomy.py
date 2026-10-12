@@ -63,12 +63,48 @@ async def test_follower_proposal_queued_in_assisted_mode(monkeypatch):
 
     runtime = AIDirectorRuntime(action_engine=ActionEngine(PolicyEngine()))
     runtime.set_mode("assisted")
-    await runtime.tick()
+    await runtime.follow_transcript(list(ctx.transcript))
 
     assert len(runtime.pending_actions) == 1
     action = runtime.pending_actions[0]
-    assert action.type == DirectorActionType.EASYWORSHIP_NEXT
+    assert action.type == DirectorActionType.EASYWORSHIP_NEXT_SLIDE
     assert action.parameters["source"] == "song_follower"
+
+
+async def test_follower_not_driven_by_ai_tick(monkeypatch):
+    monkeypatch.setattr(settings, "song_follower_enabled", True)
+    monkeypatch.setattr(settings, "song_follower_roles", "vocalist")
+    monkeypatch.setattr(settings, "song_follower_cooldown_seconds", 0.0)
+    ctx = _ctx_with([("vocalist", "that saved a wretch like me")])
+    svc = SongFollowerService(text_source=lambda: ("song1", SLIDES))
+    _wire(monkeypatch, ai_decision=_continue(), ctx=ctx, song_follower=svc,
+          service_end=ServiceEndRecognizer())
+
+    runtime = AIDirectorRuntime(action_engine=ActionEngine(PolicyEngine()))
+    runtime.set_mode("assisted")
+    await runtime.tick()
+
+    assert runtime.pending_actions == []
+
+
+async def test_stale_follower_approval_is_not_executed(monkeypatch):
+    monkeypatch.setattr(settings, "song_follower_enabled", True)
+    monkeypatch.setattr(settings, "song_follower_roles", "vocalist")
+    monkeypatch.setattr(settings, "song_follower_cooldown_seconds", 0.0)
+    live = {"value": ("song1", SLIDES)}
+    svc = SongFollowerService(text_source=lambda: live["value"])
+    ctx = _ctx_with([("vocalist", "that saved a wretch like me")])
+    _wire(monkeypatch, ai_decision=_continue(), ctx=ctx, song_follower=svc,
+          service_end=ServiceEndRecognizer())
+
+    runtime = AIDirectorRuntime(action_engine=ActionEngine(PolicyEngine()))
+    runtime.set_mode("assisted")
+    await runtime.follow_transcript(list(ctx.transcript))
+    live["value"] = ("song2", ["Other words here", "More words"])
+    svc.process([TranscriptLine(speaker_role="vocalist", text="x", timestamp=datetime.now(timezone.utc))])
+
+    result = await runtime.approve_pending(0)
+    assert result["executed"] is False
 
 
 async def test_follower_executes_and_advances_in_ai_directed(monkeypatch):
@@ -79,8 +115,8 @@ async def test_follower_executes_and_advances_in_ai_directed(monkeypatch):
     ew_calls = []
 
     class _EW:
-        async def next_item(self):
-            ew_calls.append("next_item")
+        async def next_slide_in_item(self):
+            ew_calls.append("next_slide")
             return True
 
     import app.easyworship.service as ew_mod
@@ -94,9 +130,9 @@ async def test_follower_executes_and_advances_in_ai_directed(monkeypatch):
     policy = PolicyEngine(action_confidence_thresholds={"slide_change": 0.85})
     runtime = AIDirectorRuntime(action_engine=ActionEngine(policy))
     runtime.set_mode("ai_directed")
-    await runtime.tick()
+    await runtime.follow_transcript(list(ctx.transcript))
 
-    assert ew_calls == ["next_item"]
+    assert ew_calls == ["next_slide"]
     assert svc.follower.current_index == 1  # follower advanced after execution
 
 

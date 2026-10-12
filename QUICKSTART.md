@@ -1,14 +1,14 @@
 # Quick Start Guide
 
-Set up the Church Production Director. Initial dependencies may take longer
-than a few minutes.
+Set up the Church Production Director. Initial dependencies and model
+provisioning may take longer than a few minutes.
 
 ## Prerequisites
 
 - Windows 11
 - Python 3.11+ (download from python.org)
 - Node.js 18+ (download from nodejs.org)
-- An [Anthropic API key](https://console.anthropic.com/) with credits (AI features)
+- Ollama on the EasyWorship PC with the configured Qwen tag installed (AI features)
 - For a real ATEM: Blackmagic **ATEM Switchers** (ATEM Software Control) installed on the
   Windows host, at the same version as the SDK the bridge was built against (10.4)
 
@@ -73,26 +73,31 @@ For Phase 9+, start PostgreSQL:
 docker-compose up -d postgres
 ```
 
-For AI features, configure Anthropic using [.env.example](.env.example)
+For AI features, configure Ollama on the EasyWorship PC using [.env.example](.env.example)
 as a reference; preserve existing private credentials:
 
 ```
-ANTHROPIC_API_KEY=sk-ant-...
-ANTHROPIC_MODEL=claude-sonnet-5
-ANTHROPIC_FAST_MODEL=claude-haiku-4-5-20251001
-ANTHROPIC_VISION_MODEL=claude-sonnet-5
+OLLAMA_BASE_URL=            # empty => http://<EASYWORSHIP_REMOTE_HOST>:11434
+OLLAMA_MODEL=qwen3.8:latest
+OLLAMA_FAST_MODEL=qwen3.8:latest
+OLLAMA_VISION_MODEL=qwen3.8:latest
+OLLAMA_NUM_CTX=16384
+OLLAMA_KEEP_ALIVE=10m
+OLLAMA_REASONING=false
 LLM_TIMEOUT_SECONDS=120
 LLM_MAX_TOKENS=1024
 LLM_TEMPERATURE=0.0
 ```
 
-`ANTHROPIC_API_KEY` is required for AI features and stays in the gitignored
-`.env`. `ANTHROPIC_MODEL` is the main director/assistant model,
-`ANTHROPIC_FAST_MODEL` covers cheap classifications, and
-`ANTHROPIC_VISION_MODEL` the optional semantic-vision tier.
+`qwen3.8:latest` is the verified **locally installed** 27.3B `qwen35` tag,
+not `qwen3:8b` or a promise of an official downloadable model. Other machines
+must provision a matching tag or explicitly choose compatible model overrides.
+The setup/start scripts do not start Ollama or download any models. On the
+EasyWorship PC set `OLLAMA_HOST=0.0.0.0:11434` (Windows environment variable),
+restart Ollama, and allow inbound TCP 11434 only from the backend machine.
 
-Check `GET /health/anthropic` or run
-[backend/scripts/test_claude.py](backend/scripts/test_claude.py) from the backend
+Check `GET /health/ollama` or run
+[backend/scripts/test_ollama.py](backend/scripts/test_ollama.py) from the backend
 directory with the backend environment. This is an inference check, not just
 liveness; allow up to 120 seconds. `GET /health` does not invoke the model.
 
@@ -147,11 +152,13 @@ pip install -r requirements.txt
 - The installed ATEM Switchers version doesn't match the SDK the bridge was built
   with (different COM class IDs). Install ATEM Switchers 10.4, then restart the bridge.
 
-### Anthropic: invalid key, model not found, or timeout
-- Confirm `ANTHROPIC_API_KEY` is set in `backend/.env` and the account has
-    credits (a low balance returns an invalid-request error, not an auth error).
-- Check `/health/anthropic` for failure details. A successful liveness check
-    does not prove inference works.
+### Ollama: unavailable, model not found, or timeout
+- Confirm Ollama on the EasyWorship PC is reachable from the backend at
+    `OLLAMA_BASE_URL` (or `http://<EASYWORSHIP_REMOTE_HOST>:11434`): it must listen
+    on `0.0.0.0` and the Windows firewall must allow TCP 11434.
+- Run `ollama list` on the EasyWorship PC for the exact configured tag.
+- Check `/health/ollama` for failure details. A successful liveness check
+    does not prove inference works. Cold model loads may need the full 120 seconds.
 - The assistant chat timeout is 130 seconds; align it and any proxy timeout if
     increasing the backend budget. A timed-out chat is not automatically retried.
 - Keep manual controls available; do not enable autonomous mode to diagnose AI.
@@ -170,7 +177,7 @@ React/Vite (Port 5173)
     ↓ API calls
 FastAPI Backend (Port 8000)
     ├─ Production Services
-    ├─ LangGraph assistant + AI directors (Claude)
+    ├─ LangGraph assistant + AI directors (Ollama)
     └─ Mock ATEM
          ↓ (HTTP when real)
 C++ Bridge (Port 8090)
@@ -185,7 +192,7 @@ ATEM Mini Pro ISO
 **Mock ATEM** — Fully functional ATEM simulator for testing without hardware
 **Policy Engine** — Controls what AI can do (enabled/disabled, confidence thresholds)
 **State Verification** — Every command is verified, never assumed
-**Manual Control** — Works without AI, database, or the Anthropic API
+**Manual Control** — Works without AI, database, or the Ollama server
 
 ## Documentation
 
@@ -197,7 +204,7 @@ ATEM Mini Pro ISO
 
 ## What to Do Next
 
-1. Verify backend liveness and `/health/anthropic` separately.
+1. Verify backend liveness and `/health/ollama` separately.
 2. Validate with mock hardware and keep the AI Director in `assisted` mode.
 3. Follow [backend deployment guidance](docs/backend-setup.md) before live use.
 

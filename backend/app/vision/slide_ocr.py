@@ -12,6 +12,8 @@ match/mismatch. See app.easyworship.slide_verification for how this is used.
 
 from __future__ import annotations
 
+import threading
+
 from app.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -22,6 +24,7 @@ class SlideOCR:
 
     def __init__(self) -> None:
         self._reader = None
+        self._lock = threading.Lock()
 
     def _get_reader(self):
         if self._reader is None:
@@ -35,14 +38,20 @@ class SlideOCR:
         app.vision.frame_capture). Returns "" if `frame` is None or OCR
         fails/is unavailable -- callers must treat that as "unknown", not
         "blank slide"."""
+        return " ".join(self.read_segments(frame)).strip()
+
+    def read_segments(self, frame) -> list[str]:
+        """Like ``read_text`` but keeps each detected text block separate."""
         if frame is None:
-            return ""
+            return []
         try:
-            results = self._get_reader().readtext(frame, detail=0)
-            return " ".join(str(r) for r in results).strip()
+            # The slide verifier and song follower share one reader across threads.
+            with self._lock:
+                results = self._get_reader().readtext(frame, detail=0)
+            return [str(r).strip() for r in results if str(r).strip()]
         except Exception:
             logger.warning("Slide OCR read failed", exc_info=True)
-            return ""
+            return []
 
 
 # Module-level singleton

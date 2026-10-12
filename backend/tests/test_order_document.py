@@ -84,7 +84,7 @@ async def test_rules_parser_is_used_when_headings_are_recognised(monkeypatch):
 
 
 async def test_ai_fallback_used_when_rules_find_nothing(monkeypatch):
-    monkeypatch.setattr(settings, "anthropic_api_key", "test-key")
+    monkeypatch.setattr(settings, "ollama_model", "qwen3.8:latest")
 
     async def fake(_text):
         return ["sermon", "bogus_cue", "benediction", "sermon"]
@@ -96,13 +96,13 @@ async def test_ai_fallback_used_when_rules_find_nothing(monkeypatch):
 
 
 async def test_minutes_document_is_rejected_without_ai(monkeypatch):
-    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    monkeypatch.setattr(settings, "ollama_model", "")
     with pytest.raises(DocumentError):
         await build_script_from_document(MINUTES)
 
 
 async def test_ai_failure_becomes_document_error(monkeypatch):
-    monkeypatch.setattr(settings, "anthropic_api_key", "test-key")
+    monkeypatch.setattr(settings, "ollama_model", "qwen3.8:latest")
 
     async def boom(_text):
         raise RuntimeError("secret detail")
@@ -127,7 +127,7 @@ def test_upload_endpoint_loads_script():
 
 
 def test_upload_endpoint_rejects_bad_files(monkeypatch):
-    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    monkeypatch.setattr(settings, "ollama_model", "")
     pdf = client.post("/director/script/upload", files={"file": ("order.pdf", b"%PDF")})
     assert pdf.status_code == 415
     minutes = client.post(

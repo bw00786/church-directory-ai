@@ -62,7 +62,7 @@ def extract_text(filename: str, data: bytes) -> str:
 
 
 async def cue_ids_from_llm(text: str) -> List[str]:
-    """Ask Claude which known cues the document calls for, in order; unknown ids are dropped."""
+    """Ask the local Ollama model which known cues the document calls for, in order; unknown ids are dropped."""
     catalog = build_cue_catalog()
     allowed = {cue.id for cue in catalog}
     listing = "\n".join(f"- {cue.id}: {cue.name}. {cue.description}" for cue in catalog)
@@ -99,7 +99,7 @@ async def build_script_from_document(
             except ValueError as exc:
                 raise DocumentError(str(exc))
 
-    if not settings.anthropic_api_key.strip():
+    if not settings.ollama_model.strip():
         raise DocumentError("No recognised order-of-service items found, and AI parsing is not configured")
     try:
         cue_ids = await cue_ids_from_llm(text)

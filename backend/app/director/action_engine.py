@@ -136,6 +136,9 @@ class ActionEngine:
         if action.type == DirectorActionType.EASYWORSHIP_PREVIOUS:
             ok = await easyworship_service.previous_item()
             return f"easyworship prev_item ({'ok' if ok else 'failed'})"
+        if action.type == DirectorActionType.EASYWORSHIP_NEXT_SLIDE:
+            ok = await easyworship_service.next_slide_in_item()
+            return f"easyworship next_slide ({'ok' if ok else 'failed'})"
         if action.type == DirectorActionType.EASYWORSHIP_SELECT:
             label = action.target
             if not label:

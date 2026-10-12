@@ -1,7 +1,7 @@
 """Service Replay Mode.
 
 Replays a recorded sequence of audio observations through the AI Service
-Director (Claude) without touching any hardware, so decisions can be reviewed
+Director (Ollama) without touching any hardware, so decisions can be reviewed
 against an actual Sunday service before trusting AI_DIRECTED mode live.
 
 Usage:

@@ -67,6 +67,11 @@ class EasyWorshipService:
     def _remote_state(self):
         return getattr(self._driver, "state", None)
 
+    def live_slide_number(self) -> Optional[int]:
+        """1-based slide number EasyWorship reports for the live item, if known."""
+        state = self._remote_state()
+        return state.slide_no if state is not None and state.slide_no else None
+
     def _on_remote_state(self, state) -> None:
         self._connected = state.paired
         event_bus.publish({"event": "EASYWORSHIP_STATE", "payload": state.as_dict()})
@@ -196,6 +201,31 @@ class EasyWorshipService:
 
     async def next_slide(self) -> bool:
         return await self.action("next_slide")
+
+    async def next_slide_in_item(self) -> bool:
+        """Advance one slide without leaving the live schedule item.
+
+        Past the last slide EasyWorship rolls into the next item, which would
+        make the cue engine's own next_item skip one. When the remote protocol
+        reports that happened, step back and report failure. Keystroke drivers
+        can't see the position, so this is a plain next_slide for them.
+        """
+        before = self._remote_state()
+        pres_before = before.pres_no if before is not None else None
+        ok = await self.action("next_slide")
+        after = self._remote_state()
+        if ok and pres_before and after is not None and after.pres_no and after.pres_no != pres_before:
+            logger.warning(
+                "next_slide rolled into the next schedule item; stepping back",
+                pres_before=pres_before,
+                pres_after=after.pres_no,
+            )
+            await self.action("prev_slide")
+            event_bus.publish(
+                {"event": "EASYWORSHIP_END_OF_ITEM", "payload": {"pres_no": pres_before}}
+            )
+            return False
+        return ok
 
     async def previous_slide(self) -> bool:
         return await self.action("prev_slide")

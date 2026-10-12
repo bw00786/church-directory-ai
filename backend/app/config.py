@@ -13,13 +13,9 @@ class Settings(BaseSettings):
     @classmethod
     def settings_customise_sources(cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings):
         def production_dotenv():
-            # Voice validates its own settings without becoming a startup
-            # dependency. Legacy OLLAMA_* keys are ignored after the move to
-            # Anthropic, as are unknown ANTHROPIC_* keys from older setups.
-            known = {name.lower() for name in settings_cls.model_fields}
+            # Voice validates its own settings without becoming a startup dependency.
             return {key: value for key, value in dotenv_settings().items()
-                    if not key.lower().startswith(("voice_", "tts_", "ollama_"))
-                    and (not key.lower().startswith("anthropic_") or key.lower() in known)}
+                    if not key.lower().startswith(("voice_", "tts_", "anthropic_"))}
         return init_settings, env_settings, production_dotenv, file_secret_settings
     
     # API
@@ -41,12 +37,17 @@ class Settings(BaseSettings):
     postgres_pool_size: int = 10
     postgres_max_overflow: int = 20
     
-    # Anthropic (Claude). Set ANTHROPIC_API_KEY in backend/.env; all
-    # inference goes through app.agents.llm (build_llm and role factories).
-    anthropic_api_key: str = ""
-    anthropic_model: str = "claude-sonnet-5"
-    anthropic_fast_model: str = "claude-haiku-4-5-20251001"
-    anthropic_vision_model: str = "claude-sonnet-5"
+    # Ollama (Qwen) running on the EasyWorship PC; all inference goes through
+    # app.agents.llm over Ollama's REST API. Empty OLLAMA_BASE_URL => port
+    # 11434 on EASYWORSHIP_REMOTE_HOST (or the EASYWORSHIP_AGENT_URL host),
+    # else localhost. Existing ANTHROPIC_* dotenv entries are ignored.
+    ollama_base_url: str = ""
+    ollama_model: str = "qwen3.8:latest"
+    ollama_fast_model: str = "qwen3.8:latest"
+    ollama_vision_model: str = "qwen3.8:latest"
+    ollama_num_ctx: int = Field(default=16384, ge=2048, le=262144)
+    ollama_keep_alive: str = "10m"
+    ollama_reasoning: bool = False
     llm_max_tokens: int = Field(default=1024, ge=1, le=32768)
     llm_temperature: float = Field(default=0.0, ge=0, le=2)
     llm_timeout_seconds: int = Field(default=120, ge=1, le=600)
@@ -185,7 +186,7 @@ class Settings(BaseSettings):
     vad_silero_threshold: float = 0.5
 
     # Which role channels get per-channel Whisper ASR (comma-separated). The
-    # congregation channel is VAD-only by default (no ASR).
+    # song follower's roles (incl. congregation) are added while it is enabled.
     whisper_roles: str = "pastor,liturgist,vocalist"
 
     # EasyWorship slide control.
@@ -273,13 +274,25 @@ class Settings(BaseSettings):
     # approval (the safe default), "ai_directed" executes them policy-gated. --
 
     # Phase 1: song/reading text-follow slide advance. Aligns the live ASR
-    # transcript to the known slide/lyric text and proposes EASYWORSHIP_NEXT as
-    # the congregation crosses into the next slide.
-    song_follower_enabled: bool = False
-    song_follower_min_confidence: float = 0.72   # ordered-overlap ratio to advance
-    song_follower_min_anchor_words: int = 3      # next-slide opening words that must match
-    song_follower_roles: str = "vocalist,liturgist,congregation"  # transcript sources
+    # transcript (liturgist ch 2, vocalist, congregation ch 8) to the live
+    # slide's text and proposes EASYWORSHIP_NEXT_SLIDE when the reader reaches
+    # the end of the slide. Slide text comes from operator-supplied texts
+    # (/api/director/slide-texts) or, failing that, OCR of the camera-2 slides
+    # feed (SLIDE_VERIFY_DEVICE). Proposals honor ai_director_mode.
+    song_follower_enabled: bool = True
+    song_follower_min_confidence: float = 0.72   # matched fraction of the slide's closing words
+    song_follower_min_anchor_words: int = 3      # next-slide opening words that must match (catch-up)
+    song_follower_tail_words: int = 8            # closing words of a slide used to detect "finished"
+    song_follower_roles: str = "liturgist,congregation,vocalist"  # transcript sources
     song_follower_cooldown_seconds: float = 2.5  # min gap between proposed advances
+    # Cue ids during which the follower may advance slides (when the cue engine runs).
+    song_follower_cues: str = (
+        "first_song,call_to_worship_slides,hymn_of_praise,scripture_reading,"
+        "lords_prayer,doxology,closing_praise"
+    )
+    song_follower_texts_file: str = "data/slide-texts.json"  # operator-supplied slide texts
+    song_follower_ocr_enabled: bool = True       # fall back to OCR of the camera-2 slides feed
+    song_follower_ocr_wait_seconds: float = 3.0  # max wait for the new slide after an advance
 
     # Phase 2: event-driven decision ticks + predictive PTZ preview staging.
     ai_director_event_driven: bool = False       # nudge a decision tick on key events
@@ -327,7 +340,7 @@ class Settings(BaseSettings):
     ptz_unverified_max: int = 5            # consecutive unverified -> assisted
     ptz_subject_wait_seconds: float = 30.0  # empty-stage re-check window
 
-    # Claude vision escalation (FR-4). Optional, off by default, out of hot loop.
+    # Ollama vision escalation (FR-4). Optional, off by default, out of hot loop.
     vision_llm_enabled: bool = False
     vision_llm_max_px: int = 1024
     vision_llm_max_per_min: int = 2

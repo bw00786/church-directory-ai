@@ -6,7 +6,7 @@ import pytest
 
 from app.config import settings
 from app.director.action_models import DirectorActionType
-from app.director.text_follower import SongFollowerService, TextFollower
+from app.director.text_follower import LiveSlides, SongFollowerService, TextFollower
 from app.domain.service_context import TranscriptLine
 
 SLIDES = [
@@ -82,14 +82,14 @@ def test_service_disabled_returns_no_actions(monkeypatch):
     assert svc.process([_line("that saved a wretch like me")]) == []
 
 
-def test_service_emits_easyworship_next(monkeypatch):
+def test_service_emits_easyworship_next_slide(monkeypatch):
     monkeypatch.setattr(settings, "song_follower_enabled", True)
     monkeypatch.setattr(settings, "song_follower_roles", "vocalist")
     monkeypatch.setattr(settings, "song_follower_cooldown_seconds", 0.0)
     svc = SongFollowerService(text_source=lambda: ("song1", SLIDES))
     actions = svc.process([_line("that saved a wretch like me")])
     assert len(actions) == 1
-    assert actions[0].type == DirectorActionType.EASYWORSHIP_NEXT
+    assert actions[0].type == DirectorActionType.EASYWORSHIP_NEXT_SLIDE
     assert actions[0].parameters["source"] == "song_follower"
     assert actions[0].parameters["to_index"] == 1
 
@@ -130,3 +130,104 @@ def test_service_notify_executed_advances_follower(monkeypatch):
     actions = svc.process([_line("that saved a wretch like me")])
     svc.notify_executed(actions[0])
     assert svc.follower.current_index == 1
+
+
+# -- End-of-slide trigger (congregation reads from the screen) ------------------
+CALL_TO_WORSHIP = [
+    "The Lord be with you. And also with you. Lift up your hearts.",
+    "We lift them up to the Lord. Let us give thanks to the Lord our God.",
+    "It is right to give our thanks and praise.",
+]
+
+
+def test_finishing_current_slide_proposes_before_next_is_read():
+    f = TextFollower(min_confidence=0.72, tail_words=8)
+    f.load("ctw", CALL_TO_WORSHIP)
+    assert f.observe("the lord be with you") is None
+    proposal = f.observe("and also with you lift up your hearts")
+    assert proposal is not None
+    assert (proposal.from_index, proposal.to_index) == (0, 1)
+
+
+def test_finishing_tolerates_dropped_asr_words():
+    f = TextFollower(min_confidence=0.72, tail_words=8)
+    f.load("ctw", CALL_TO_WORSHIP)
+    # "the", "also" and "your" dropped by ASR.
+    assert f.observe("lord be with you and with you lift up hearts") is not None
+
+
+def test_closing_phrase_heard_early_does_not_fire():
+    f = TextFollower(min_confidence=0.72, tail_words=3)
+    f.load("ps", ["Praise the Lord. Give thanks for he is good and his love endures forever. Praise the Lord.", "next"])
+    # Only the opening words, which equal the closing words, have been read.
+    assert f.observe("praise the lord") is None
+
+
+def test_repeated_chorus_does_not_catch_up_early():
+    chorus = "Holy holy holy Lord God almighty"
+    f = TextFollower(min_confidence=0.72, min_anchor_words=3, tail_words=8)
+    f.load("song", [chorus + " early in the morning", chorus + " our song shall rise to thee"])
+    assert f.observe("holy holy holy lord god almighty") is None
+
+
+def test_unbounded_ocr_slide_proposes_then_waits_for_reload():
+    f = TextFollower(min_confidence=0.72, tail_words=8)
+    f.load("ocr:1", [CALL_TO_WORSHIP[0]], bounded=False)
+    proposal = f.observe("the lord be with you and also with you lift up your hearts")
+    assert proposal is not None and proposal.to_index == 1
+    f.confirm_advance(1)
+    # Same slide text still loaded: nothing until the source reloads.
+    assert f.observe("the lord be with you and also with you lift up your hearts") is None
+    f.load("ocr:2", [CALL_TO_WORSHIP[1]], bounded=False)
+    assert f.observe("we lift them up to the lord let us give thanks to the lord our god") is not None
+
+
+def test_sync_index_follows_operator_moves():
+    f = TextFollower()
+    f.load("song1", SLIDES)
+    f.sync_index(2)
+    assert f.current_index == 2
+    assert f.observe("i once was lost but now am found") is not None  # finishes slide 2
+
+
+def test_service_reloads_and_syncs_index_from_source(monkeypatch):
+    monkeypatch.setattr(settings, "song_follower_enabled", True)
+    monkeypatch.setattr(settings, "song_follower_roles", "congregation")
+    monkeypatch.setattr(settings, "song_follower_cooldown_seconds", 0.0)
+    live = {"value": LiveSlides(song_id="lib:ctw:1", slides=CALL_TO_WORSHIP, index=1)}
+    svc = SongFollowerService(text_source=lambda: live["value"])
+    actions = svc.process([_line("let us give thanks to the lord our god", role="congregation")])
+    assert actions and actions[0].parameters["to_index"] == 2
+
+
+def test_service_notify_rejected_allows_reproposal(monkeypatch):
+    monkeypatch.setattr(settings, "song_follower_enabled", True)
+    monkeypatch.setattr(settings, "song_follower_roles", "vocalist")
+    monkeypatch.setattr(settings, "song_follower_cooldown_seconds", 0.0)
+    svc = SongFollowerService(text_source=lambda: ("song1", SLIDES))
+    first = svc.process([_line("that saved a wretch like me")])
+    svc.notify_rejected(first[0])
+    assert svc.process([_line("that saved a wretch like me")])
+
+
+async def test_service_refresh_and_invalidate_reach_source(monkeypatch):
+    calls = []
+
+    class _Source:
+        def __call__(self):
+            return ("song1", SLIDES)
+
+        async def refresh(self):
+            calls.append("refresh")
+
+        def invalidate(self):
+            calls.append("invalidate")
+
+    monkeypatch.setattr(settings, "song_follower_enabled", True)
+    monkeypatch.setattr(settings, "song_follower_roles", "vocalist")
+    monkeypatch.setattr(settings, "song_follower_cooldown_seconds", 0.0)
+    svc = SongFollowerService(text_source=_Source())
+    await svc.refresh()
+    actions = svc.process([_line("that saved a wretch like me")])
+    svc.notify_executed(actions[0])
+    assert calls == ["refresh", "invalidate"]

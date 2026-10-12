@@ -21,6 +21,7 @@ class DirectorActionType(str, Enum):
     EASYWORSHIP_NEXT = "EASYWORSHIP_NEXT"
     EASYWORSHIP_PREVIOUS = "EASYWORSHIP_PREVIOUS"
     EASYWORSHIP_SELECT = "EASYWORSHIP_SELECT"
+    EASYWORSHIP_NEXT_SLIDE = "EASYWORSHIP_NEXT_SLIDE"
     SERVICE_STATE_CHANGE = "SERVICE_STATE_CHANGE"
 
 
@@ -31,6 +32,7 @@ SLIDE_ACTION_TYPES = {
     DirectorActionType.EASYWORSHIP_NEXT,
     DirectorActionType.EASYWORSHIP_PREVIOUS,
     DirectorActionType.EASYWORSHIP_SELECT,
+    DirectorActionType.EASYWORSHIP_NEXT_SLIDE,
 }
 # Action types gated by the "atem_transition" confidence threshold.
 ATEM_ACTION_TYPES = {

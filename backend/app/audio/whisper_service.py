@@ -137,8 +137,12 @@ def clean_transcript(text: str) -> str:
 
 
 def whisper_roles() -> set[str]:
-    """Roles that receive per-channel ASR, from WHISPER_ROLES config."""
-    return {r.strip().lower() for r in settings.whisper_roles.split(",") if r.strip()}
+    """Roles that receive per-channel ASR: WHISPER_ROLES plus, when the song
+    follower is on, SONG_FOLLOWER_ROLES (e.g. the congregation channel)."""
+    roles = {r.strip().lower() for r in settings.whisper_roles.split(",") if r.strip()}
+    if settings.song_follower_enabled:
+        roles |= {r.strip().lower() for r in settings.song_follower_roles.split(",") if r.strip()}
+    return roles
 
 
 class MultiChannelTranscriber:

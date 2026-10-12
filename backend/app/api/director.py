@@ -3,7 +3,7 @@
 from typing import Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.director.ai_director_runtime import ai_director_runtime
 from app.director.engine import service_director
@@ -17,6 +17,15 @@ from app.director.order_document import (
 from app.director.order_of_service import build_script_from_order
 from app.director.service_history import service_history
 from app.director.scheduler import service_scheduler
+from app.director.slide_text_source import (
+    MAX_LABEL_CHARS,
+    MAX_TEXT_CHARS,
+    follow_active,
+    live_item_label,
+    live_slide_text_source,
+    slide_text_library,
+)
+from app.director.text_follower import song_follower_service
 from app.domain.service_context import service_context
 from app.logging_config import get_logger
 
@@ -53,6 +62,11 @@ class OrderOfServiceRequest(BaseModel):
 
 class AiModeRequest(BaseModel):
     mode: str  # "manual" | "assisted" | "ai_directed"
+
+
+class SlideTextRequest(BaseModel):
+    label: str = Field(..., min_length=1, max_length=MAX_LABEL_CHARS)
+    text: str = Field(..., min_length=1, max_length=MAX_TEXT_CHARS)
 
 
 @router.get("/status")
@@ -274,3 +288,41 @@ async def reject_pending_action(index: int):
     """Reject (discard) a pending AI-proposed action."""
     ai_director_runtime.reject_pending(index)
     return {"ok": True}
+
+
+# -- Song / reading follower ---------------------------------------------------
+
+
+@router.get("/slide-texts")
+async def list_slide_texts():
+    """Slide texts the follower uses, keyed by EasyWorship item label."""
+    return {"items": slide_text_library.items()}
+
+
+@router.put("/slide-texts")
+async def set_slide_text(request: SlideTextRequest):
+    """Set the text for one EasyWorship item; separate slides with a blank line."""
+    try:
+        slides = slide_text_library.set(request.label, request.text)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return {"label": request.label, "slides": slides}
+
+
+@router.delete("/slide-texts/{label}")
+async def delete_slide_text(label: str):
+    """Remove an item's text (the follower falls back to OCR of the slides feed)."""
+    if not slide_text_library.delete(label):
+        raise HTTPException(status_code=404, detail="No text for that item")
+    return {"ok": True}
+
+
+@router.get("/follower")
+async def follower_status():
+    """What the slide follower is tracking right now."""
+    return {
+        **song_follower_service.status(),
+        "active": follow_active(),
+        "live_item": live_item_label(),
+        "ocr_text": live_slide_text_source.ocr.text,
+    }

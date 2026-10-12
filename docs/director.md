@@ -5,7 +5,7 @@ the ATEM and the PTZOptics camera. Human and AI share the same engine, so the
 operator can always override.
 
 > This is the deterministic cue engine. A separate reasoning layer, the **AI
-> Service Director**, now sits above it (audio VAD, Claude decisions, typed
+> Service Director**, now sits above it (audio VAD, Ollama decisions, typed
 > policy-gated actions, manual/assisted/ai_directed modes) — see
 > [docs/ai-director.md](ai-director.md).
 
@@ -91,7 +91,7 @@ The LLM/vision layer turns an observation into an advance decision and feeds the
 same engine:
 
 - `POST /director/observe` with `{"text": "..."}` → [DirectorAI](../backend/app/agents/director_ai.py)
-  asks Claude (or a keyword heuristic fallback) whether the current cue's
+  asks Ollama (or a keyword heuristic fallback) whether the current cue's
   `exit_hint` is satisfied, then calls `request_advance`.
 - `POST /director/suggest` with `{source, reason, confidence, cue_id?}` feeds a
   raw suggestion directly.
@@ -107,13 +107,15 @@ Gating in `request_advance`:
 Example `exit_hint`: *"Advance when the liturgist finishes reading the scripture
 (switch to the pastor)."*
 
-With `langchain-anthropic` installed and `ANTHROPIC_API_KEY` configured,
-decisions use `get_fast_llm()` with a bounded invocation. The
-`ANTHROPIC_FAST_MODEL` default is `claude-haiku-4-5-20251001`, chosen for cheap
-classification; the main director/assistant model is `ANTHROPIC_MODEL`
-(`claude-sonnet-5` by default). The timeout is `LLM_TIMEOUT_SECONDS=120`. Full
-settings and the manual probe are in
-[backend setup](backend-setup.md#claude-inference-check).
+With `langchain-ollama` installed and the configured Ollama server reachable,
+decisions use `get_fast_llm()` in JSON mode with a bounded invocation. The
+`OLLAMA_FAST_MODEL` default is `qwen3.8:latest`, the exact locally installed tag
+(27.3B, family `qwen35`), not `qwen3:8b` or a promise of public registry
+availability. Other machines need a matching provisioned tag or an explicit
+compatible override. Ollama runs on the EasyWorship PC: `OLLAMA_BASE_URL`, or
+`http://<EASYWORSHIP_REMOTE_HOST>:11434` when empty;
+the timeout is `LLM_TIMEOUT_SECONDS=120`. Full settings and the manual probe
+are in [backend setup](backend-setup.md#ollama-inference-check).
 
 When inference is unavailable or invalid, the keyword heuristic (e.g. "amen",
 "the word of the Lord", "please stand") remains the cue engine's fallback;
@@ -142,8 +144,8 @@ advisory notes to the operator.
 
 The companion's `/api/advise` Claude advisor is an **independent external
 service**, not migrated here. Its provider, credentials and availability remain
-the companion application's responsibility; this application's own LLM provider
-choice does not make that advisor local or remove its external dependency.
+the companion application's responsibility; using local Ollama for this
+application does not make that advisor local or remove its external dependency.
 
 The desk is also used two ways for *listening*:
 
@@ -379,7 +381,7 @@ SLIDE_VERIFY_SEMANTIC_THRESHOLD=0.75      # fuzzy-match acceptance threshold
 | GET      | `/director/status`       | Running state + current/next cue     |
 | GET      | `/director/script`       | Full cue sheet                       |
 | POST     | `/director/script/order`  | Build the cue sheet from order-of-service text (`{"text": ...}`) |
-| POST     | `/director/script/upload` | Build the cue sheet from an uploaded `.docx`/`.txt` order of service (form fields `file`, optional `parser`: `auto`/`rules`/`ai`). Headings are matched by rules first; Claude is used only if none match. Rejected while the service is running. |
+| POST     | `/director/script/upload` | Build the cue sheet from an uploaded `.docx`/`.txt` order of service (form fields `file`, optional `parser`: `auto`/`rules`/`ai`). Headings are matched by rules first; the Ollama model is used only if none match. Rejected while the service is running. |
 | GET      | `/director/script/history` | Previously uploaded orders of service (newest first; `?limit=`) |
 | GET      | `/director/script/history/{id}` | One saved order including its original text |
 | GET      | `/director/cycles`         | Recent AI Director decision cycles (inputs, model reply, decision, action outcomes) |
@@ -398,7 +400,7 @@ cue and Start/Next/Stop controls, surfaces pending AI suggestions, and has a
 **Load Order of Service** button that uploads a `.docx`/`.txt` to
 `/director/script/upload` (disabled while the service runs). The
 [SystemStatus](../frontend/src/components/SystemStatus.tsx) panel shows backend,
-ATEM and Claude status; its Test button makes a real, billed Claude call.
+ATEM and Ollama status; its Test button runs a short real inference on the EasyWorship PC.
 
 ### Service history and the AI Director's plan
 

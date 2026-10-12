@@ -13,19 +13,19 @@ available as the manual/fallback script.
 import asyncio
 import contextlib
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from app.ai.decision import DirectorActionSpec, DirectorDecision
 from app.ai.service_director import ai_service_director
 from app.config import settings
 from app.director.action_engine import ActionEngine, _category_for, build_action_engine
-from app.director.action_models import CAMERA_ACTION_TYPES, DirectorAction, DirectorActionType
+from app.director.action_models import CAMERA_ACTION_TYPES, ActionResult, DirectorAction, DirectorActionType
 from app.director.autonomy import adaptive_confidence, evidence_fusion, learning_recorder
 from app.director.predictive_ptz import predictive_preview
 from app.director.service_end import run_shutdown_bundle, service_end_recognizer
 from app.director.text_follower import song_follower_service
-from app.domain.service_context import service_context
+from app.domain.service_context import TranscriptLine, service_context
 from app.domain.service_state import ServiceState
 from app.events.bus import event_bus
 from app.logging_config import get_logger
@@ -77,6 +77,10 @@ def _to_director_action(spec: DirectorActionSpec, decision: DirectorDecision) ->
     )
 
 
+def _is_follower(action: DirectorAction) -> bool:
+    return action.parameters.get("source") == "song_follower"
+
+
 class AIDirectorRuntime:
     """Owns the AI Director's operating mode and background decision loop."""
 
@@ -85,6 +89,7 @@ class AIDirectorRuntime:
         self._action_engine = action_engine
         self._task: Optional[asyncio.Task] = None
         self._event_task: Optional[asyncio.Task] = None
+        self._follower_task: Optional[asyncio.Task] = None
         self._running = False
         self.pending_actions: List[DirectorAction] = []
         # Phase 2 event-driven ticks.
@@ -122,19 +127,28 @@ class AIDirectorRuntime:
             from app.easyworship.slide_expected import expected_text_provider
 
             expected_text_provider.set_matcher(song_follower_service.follower)
+        try:
+            from app.director.slide_text_source import live_slide_text_source, start_song_follower_capture
+
+            song_follower_service.set_text_source(live_slide_text_source)
+            await start_song_follower_capture()
+        except Exception:
+            logger.exception("Song follower slide-text source unavailable")
         self._task = asyncio.create_task(self._run())
         self._event_task = asyncio.create_task(self._event_listener())
+        self._follower_task = asyncio.create_task(self._follower_listener())
         logger.info("AI Director runtime started", mode=self._mode)
 
     async def stop(self) -> None:
         self._running = False
-        for task in (self._task, self._event_task):
+        for task in (self._task, self._event_task, self._follower_task):
             if task is not None:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
         self._task = None
         self._event_task = None
+        self._follower_task = None
 
     async def _run(self) -> None:
         while self._running:
@@ -170,6 +184,40 @@ class AIDirectorRuntime:
             with contextlib.suppress(Exception):
                 await event_bus.unsubscribe(queue)
 
+    async def _follower_listener(self) -> None:
+        """Follow slides line by line as transcripts arrive, not on the slower AI tick."""
+        queue = await event_bus.subscribe()
+        try:
+            while self._running:
+                message = await queue.get()
+                if not isinstance(message, dict) or message.get("event") != "TRANSCRIPT":
+                    continue
+                payload = message.get("payload") or {}
+                line = TranscriptLine(
+                    speaker_role=str(payload.get("role", "")).lower(),
+                    text=str(payload.get("text", "")),
+                    timestamp=datetime.now(timezone.utc),
+                )
+                try:
+                    await self.follow_transcript([line])
+                except Exception:
+                    logger.exception("Song follower failed")
+        except asyncio.CancelledError:
+            raise
+        finally:
+            with contextlib.suppress(Exception):
+                await event_bus.unsubscribe(queue)
+
+    async def follow_transcript(self, lines: List[TranscriptLine]) -> List[DirectorAction]:
+        """Feed transcript lines to the song follower and route its proposals."""
+        if not settings.song_follower_enabled or not lines:
+            return []
+        await song_follower_service.refresh()
+        actions = song_follower_service.process(lines)
+        if actions:
+            await self._route(actions)
+        return actions
+
     async def tick(self) -> DirectorDecision:
         """Run one decision cycle. Exposed directly for tests/replay mode."""
         decision = await ai_service_director.decide(service_context)
@@ -191,18 +239,27 @@ class AIDirectorRuntime:
         decision_actions = [
             a for a in (_to_director_action(spec, decision) for spec in decision.actions) if a
         ]
-        follower_actions = song_follower_service.process(new_lines)
         proposal = service_end_recognizer.evaluate()
         end_actions = list(proposal.actions) if proposal else []
-        actions = decision_actions + follower_actions + end_actions
+        await self._route(decision_actions + end_actions)
+        return decision
 
-        if self._mode == "manual" or not actions:
-            return decision
+    async def _route(self, actions: List[DirectorAction]) -> None:
+        """Apply the operating-mode gate to proposed actions."""
+        if not actions:
+            return
+        if self._mode == "manual":
+            for action in actions:
+                song_follower_service.notify_rejected(action)
+            return
 
         # Pre-stage camera shots on preview (never cuts) so the take is instant.
         await self._prestage(actions)
 
         if self._mode == "assisted":
+            if any(_is_follower(a) for a in actions):
+                # Only the newest slide advance is meaningful; drop superseded ones.
+                self.pending_actions = [a for a in self.pending_actions if not _is_follower(a)]
             self.pending_actions.extend(actions)
             for action in actions:
                 cycle_log.log_action_outcome(
@@ -215,13 +272,11 @@ class AIDirectorRuntime:
                     "payload": [a.model_dump(mode="json") for a in actions],
                 }
             )
-            return decision
+            return
 
         # ai_directed: execute immediately (still policy-gated per action).
         for action in actions:
             await self._execute_directed(action)
-
-        return decision
 
     def _drain_new_transcript(self) -> List:
         """Return transcript lines not yet seen by the autonomy components."""
@@ -261,6 +316,7 @@ class AIDirectorRuntime:
                 {"event": "AI_ACTION_REJECTED", "payload": {**action.model_dump(mode="json"), "reason": reason}}
             )
             adaptive_confidence.record_outcome(_category_for(action.type), good=False)
+            song_follower_service.notify_rejected(action)
             return
 
         ok, reason = self._adaptive_gate(action)
@@ -269,6 +325,7 @@ class AIDirectorRuntime:
             event_bus.publish(
                 {"event": "AI_ACTION_REJECTED", "payload": {**action.model_dump(mode="json"), "reason": reason}}
             )
+            song_follower_service.notify_rejected(action)
             return
 
         result = await self._engine().execute(action)
@@ -278,6 +335,8 @@ class AIDirectorRuntime:
             await learning_recorder.record_auto(action)
             adaptive_confidence.record_outcome(_category_for(action.type), good=True)
             await self._maybe_shutdown(action)
+        else:
+            song_follower_service.notify_rejected(action)
 
     async def _maybe_shutdown(self, action: DirectorAction) -> None:
         if (
@@ -293,6 +352,11 @@ class AIDirectorRuntime:
         if index < 0 or index >= len(self.pending_actions):
             raise IndexError("pending action index out of range")
         action = self.pending_actions.pop(index)
+        if _is_follower(action) and action.parameters.get("song_id") != song_follower_service.follower.song_id:
+            # The live item changed since this was proposed; advancing now would skip a slide.
+            return ActionResult(
+                action=action, approved=False, executed=False, detail="stale slide advance (live item changed)"
+            ).model_dump(mode="json")
         result = await self._engine().execute(action)
         if result.executed:
             cycle_log.log_action_outcome(
@@ -308,8 +372,7 @@ class AIDirectorRuntime:
     def reject_pending(self, index: int) -> None:
         if 0 <= index < len(self.pending_actions):
             action = self.pending_actions.pop(index)
-            if action.parameters.get("source") == "song_follower":
-                song_follower_service.follower.reject_advance()
+            song_follower_service.notify_rejected(action)
             adaptive_confidence.record_outcome(_category_for(action.type), good=False)
             with contextlib.suppress(RuntimeError):
                 asyncio.ensure_future(learning_recorder.record_rejection(action))
