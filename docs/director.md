@@ -23,8 +23,9 @@ operator can always override.
 | Camera 1    | PTZOptics camera                          | `ATEM_CAMERA1_INPUT` (default 1) |
 | Camera 2    | EasyWorship laptop (slides)               | `ATEM_CAMERA2_INPUT` (default 2) |
 | PTZ id      | CameraService id for the PTZOptics camera | `PTZ_CAMERA_ID` (default 1)      |
-| Channel 5   | Vocalist mic (song-end detection)         | mixer meter feed      |
-| Channel 8   | Congregation mic (song-end detection)     | mixer meter feed      |
+| Channel 2   | Liturgist mic (transcript cues, slide follower) | mixer channel `MIXER_LITURGIST_CHANNEL` |
+| Channel 4   | Vocalist mic (song-end detection, slide follower) | `MIXER_VOCALIST_CHANNEL` |
+| Channel 8   | Congregation mic (song-end detection, slide follower) | `MIXER_CONGREGATION_CHANNEL` |
 
 ## Cue sheet
 
@@ -363,6 +364,36 @@ SLIDE_VERIFY_SEMANTIC_ENABLED=false       # lyric-aware correctness check (WO-EW
 SLIDE_VERIFY_SEMANTIC_THRESHOLD=0.75      # fuzzy-match acceptance threshold
 ```
 
+### Line-by-line slide follower
+
+While a song, Call to Worship / opening prayer, scripture, Lord's Prayer or
+doxology cue is live (`SONG_FOLLOWER_CUES`), the song follower listens to the
+liturgist (ch 2), vocalist and congregation (ch 8) transcripts and proposes the
+next slide **within** the live EasyWorship item once the closing words of the
+current slide are heard. The cue engine still owns moving between items.
+
+- Slide text comes from per-item texts you supply (below) or, failing that,
+  OCR of the camera-2 slides tap (`SLIDE_VERIFY_DEVICE`).
+- With the remote driver, a `next_slide` that rolls into the next item is
+  stepped back, so the cue engine's `next_item` never skips one.
+- Proposals follow the AI Director mode: queued for approval in `assisted`,
+  executed (policy-gated) in `ai_directed`, ignored in `manual`.
+- Needs per-channel ASR (`MGX_USB_ENABLED=true`, `ENABLE_WHISPER=true`); the
+  follower's roles are added to `WHISPER_ROLES` automatically.
+
+Supply slide text per EasyWorship item (label as in the cue sheet, e.g.
+`Call to Worship`, `Hymn of Praise`, `Scripture`), one blank line between
+slides, matching the slide breaks in EasyWorship:
+
+```bash
+curl -X PUT http://localhost:8000/api/director/slide-texts \
+  -H 'Content-Type: application/json' \
+  -d '{"label": "Call to Worship", "text": "The Lord be with you.\nAnd also with you.\n\nLift up your hearts."}'
+```
+
+See [ai-director.md](ai-director.md#phase-1--songreading-text-follow-slide-advance-on-by-default)
+for the matching rules and all `SONG_FOLLOWER_*` settings.
+
 ### EasyWorship API
 
 | Method | Path                          | Description                     |
@@ -392,6 +423,10 @@ SLIDE_VERIFY_SEMANTIC_THRESHOLD=0.75      # fuzzy-match acceptance threshold
 | GET/POST | `/director/schedule`     | View / set auto-start schedule       |
 | POST     | `/director/suggest`      | Raw advance suggestion               |
 | POST     | `/director/observe`      | AI decides from an observation       |
+| GET      | `/director/slide-texts`  | Slide texts used by the follower, per EasyWorship item |
+| PUT      | `/director/slide-texts`  | Set an item's slide text (`{"label": ..., "text": ...}`, blank line between slides) |
+| DELETE   | `/director/slide-texts/{label}` | Remove an item's text (follower falls back to OCR) |
+| GET      | `/director/follower`     | What the slide follower is tracking (item, slide, OCR text, pending advance) |
 | WS       | `/ws/director`           | Live cue/action stream               |
 
 The frontend [CueSheet](../frontend/src/components/CueSheet.tsx) panel

@@ -175,16 +175,19 @@ Service Director** panel. See [docs/ai-director.md](docs/ai-director.md) for
 the full design and [docs/current-architecture.md](docs/current-architecture.md)
 for the system as it existed before this layer was added.
 
-### Autonomy roadmap (opt-in, default off)
+### Autonomy roadmap
 
-Four components extend the director toward full autonomy. **All are gated off by
-default**; when enabled their proposals still honor the operating mode (queued
-for approval in `assisted`). See the
+Four components extend the director toward full autonomy. All except the Phase 1
+slide follower are **gated off by default**; their proposals honor the operating
+mode (queued for approval in `assisted`). See the
 [Autonomy roadmap](docs/ai-director.md#autonomy-roadmap-phases-14) for details.
 
-- **Phase 1 — Song/reading text-follow:** aligns the live transcript to the
-  slide/lyric text and advances EasyWorship as the congregation reaches the next
-  slide (`SONG_FOLLOWER_ENABLED`).
+- **Phase 1 — Line-by-line slide follower (on by default):** follows the
+  liturgist (ch 2), vocalist and congregation (ch 8) as they read or sing and
+  advances to the next slide *within* the live EasyWorship item when the closing
+  words of the current slide are heard. Slide text comes from per-item texts
+  (`PUT /api/director/slide-texts`) or OCR of the camera-2 slides feed
+  (`SONG_FOLLOWER_ENABLED`, see [director.md](docs/director.md#line-by-line-slide-follower)).
 - **Phase 2 — Event-driven ticks + predictive PTZ:** wakes the decision loop on
   perception events and pre-stages the next shot on ATEM *preview* without
   cutting (`AI_DIRECTOR_EVENT_DRIVEN`, `PTZ_PREDICTIVE_PREVIEW`).

@@ -152,9 +152,13 @@ the browser to allow transport overhead. Longer budgets require corresponding
 browser/proxy configuration. Do not automatically retry a chat timeout: a tool
 may already have executed. Inspect status and pending confirmations first.
 
-Keep Ollama bound to loopback or behind an authenticated network boundary.
-For containers, `127.0.0.1` refers to the container, so configure a reachable
-server address explicitly. The migration uses JSON for director/classifier/vision
+Ollama runs on the EasyWorship PC. With `OLLAMA_BASE_URL` empty the backend
+calls `http://<EASYWORSHIP_REMOTE_HOST>:11434` (or the `EASYWORSHIP_AGENT_URL`
+host, else localhost). On the EasyWorship PC set the Windows environment
+variable `OLLAMA_HOST=0.0.0.0:11434`, restart Ollama, and allow inbound TCP
+11434 only from the backend machine: Ollama has no authentication. For
+containers, configure a server address reachable from inside the container.
+The migration uses JSON for director/classifier/vision
 results, normal tool-calling for the assistant, and retains all policy gates.
 It does not change RAG embedding providers or enable voice. Voyage embeddings
 and the separate mixer companion's Claude advisor remain independent services.
