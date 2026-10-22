@@ -9,6 +9,7 @@
 **/data/voice-outbox/
 **/data/piper-voices/
 **/data/ai_director_cycles.jsonl
+**/data/slide-texts-learned.json
 env/
 venv/
 ENV/

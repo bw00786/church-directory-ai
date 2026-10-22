@@ -107,6 +107,35 @@ async def test_stale_follower_approval_is_not_executed(monkeypatch):
     assert result["executed"] is False
 
 
+async def test_watcher_drops_pending_advance_after_manual_click(monkeypatch):
+    from app.director.text_follower import LiveSlides
+
+    monkeypatch.setattr(settings, "song_follower_enabled", True)
+    monkeypatch.setattr(settings, "song_follower_roles", "vocalist")
+    monkeypatch.setattr(settings, "song_follower_cooldown_seconds", 0.0)
+    live = {"index": 0}
+    svc = SongFollowerService(text_source=lambda: LiveSlides(song_id="lib:s:1", slides=SLIDES, index=live["index"]))
+    ctx = _ctx_with([("vocalist", "that saved a wretch like me")])
+    _wire(monkeypatch, ai_decision=_continue(), ctx=ctx, song_follower=svc,
+          service_end=ServiceEndRecognizer())
+    events = []
+    monkeypatch.setattr("app.director.ai_director_runtime.event_bus.publish", events.append)
+
+    runtime = AIDirectorRuntime(action_engine=ActionEngine(PolicyEngine()))
+    runtime.set_mode("assisted")
+    await runtime.follow_transcript(list(ctx.transcript))
+    assert len(runtime.pending_actions) == 1
+    assert await runtime.watch_slides() is False
+    assert len(runtime.pending_actions) == 1
+
+    live["index"] = 2  # operator clicked ahead in EasyWorship
+    assert await runtime.watch_slides() is True
+    assert runtime.pending_actions == []
+    assert svc.follower.current_index == 2
+    names = [e["event"] for e in events]
+    assert "AI_ACTIONS_PENDING_DROPPED" in names and "SLIDE_FOLLOWER_RESYNCED" in names
+
+
 async def test_follower_executes_and_advances_in_ai_directed(monkeypatch):
     monkeypatch.setattr(settings, "song_follower_enabled", True)
     monkeypatch.setattr(settings, "song_follower_roles", "vocalist")

@@ -27,6 +27,7 @@ Everything is gated by ``settings.song_follower_enabled``.
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from collections import deque
@@ -70,6 +71,26 @@ def _match_ratio(heard: Sequence[str], target: Sequence[str]) -> float:
     return _lcs_len(heard, target) / len(target) if target else 0.0
 
 
+def fuse_confidence(audio: float, screen: Optional[float], screen_weight: float) -> float:
+    """Blend the transcript match with camera-2 screen agreement (``None`` = no screen evidence)."""
+    if screen is None or screen_weight <= 0:
+        return audio
+    w = min(screen_weight, 1.0)
+    return max(0.0, min(1.0, (1 - w) * audio + w * screen))
+
+
+def parse_role_weights(spec: str) -> dict:
+    """``"vocalist:1.0,congregation:0.85"`` -> ``{role: weight}``; bad entries are ignored."""
+    weights = {}
+    for part in (spec or "").split(","):
+        role, _, value = part.partition(":")
+        try:
+            weights[role.strip().lower()] = max(0.0, min(1.0, float(value)))
+        except ValueError:
+            continue
+    return weights
+
+
 @dataclass
 class FollowProposal:
     """A proposal to advance from ``from_index`` to ``to_index``."""
@@ -99,7 +120,8 @@ class SlideTextSource(Protocol):
 
     Returns ``LiveSlides`` (or a ``(song_id, [slide_text, ...])`` tuple), or
     ``None`` when the live item shouldn't be followed (sermon, media, nothing
-    known). Sources may also provide ``async refresh()`` and ``invalidate()``.
+    known). Sources may also provide ``async refresh()``, ``invalidate()`` and
+    ``screen_agreement(slide_text) -> Optional[float]`` (camera-2 evidence).
     """
 
     def __call__(self) -> SourceResult:
@@ -156,13 +178,30 @@ class TextFollower:
     def pending(self) -> bool:
         return self._proposed_to is not None
 
-    def sync_index(self, index: int) -> None:
-        """Follow a position change made elsewhere (operator, EasyWorship read-back)."""
-        if not self._bounded or self._proposed_to is not None:
-            return
-        if 0 <= index < len(self._slides) and index != self._index:
-            self._index = index
-            self._heard.clear()
+    @property
+    def bounded(self) -> bool:
+        return self._bounded
+
+    @property
+    def waiting_for_new_slide(self) -> bool:
+        return self._stale
+
+    @property
+    def current_text(self) -> Optional[str]:
+        return self._raw_slides[self._index] if self._raw_slides else None
+
+    def sync_index(self, index: int) -> bool:
+        """Follow a position change made elsewhere (operator, EasyWorship read-back).
+
+        Returns True when the move was not this follower's own pending advance.
+        """
+        if not self._bounded or not 0 <= index < len(self._slides) or index == self._index:
+            return False
+        own = index == self._proposed_to
+        self._index = index
+        self._proposed_to = None
+        self._heard.clear()
+        return not own
 
     def confirm_advance(self, to_index: Optional[int] = None) -> None:
         """Mark a proposed advance as actually applied (executed/approved)."""
@@ -292,6 +331,7 @@ class SongFollowerService:
         self._now = now
         self._last_advance_at = 0.0
         self._warned_no_source = False
+        self._refresh_lock = asyncio.Lock()
 
     @property
     def follower(self) -> TextFollower:
@@ -308,36 +348,82 @@ class SongFollowerService:
         refresh = getattr(self._source, "refresh", None)
         if refresh is None:
             return
-        try:
-            await refresh()
-        except Exception:
-            logger.warning("Song follower text source refresh failed", exc_info=True)
+        # The transcript listener and the slide watcher both refresh; OCR reads must not overlap.
+        async with self._refresh_lock:
+            try:
+                await refresh()
+            except Exception:
+                logger.warning("Song follower text source refresh failed", exc_info=True)
 
-    def _sync_song(self) -> bool:
-        """Ensure the follower holds the live item's slides. Returns loaded?"""
+    def _sync_song(self) -> Tuple[bool, bool]:
+        """Ensure the follower holds the live item's slides.
+
+        Returns ``(loaded, moved_externally)``; the latter is True when the live
+        slide changed without a pending/just-executed follower advance.
+        """
         if self._source is None:
             if not self._warned_no_source:
                 logger.info("Song follower has no slide-text source; inactive")
                 self._warned_no_source = True
-            return False
+            return False, False
         try:
             live = _as_live(self._source())
         except Exception:
             logger.warning("Song follower text source failed", exc_info=True)
-            return False
+            return False, False
         if live is None or not live.slides:
-            return False
-        if live.song_id != self._follower.song_id:
-            self._follower.load(live.song_id, live.slides, index=live.index or 0, bounded=live.bounded)
+            return False, False
+        f = self._follower
+        moved = False
+        if live.song_id != f.song_id:
+            moved = f.loaded and not f.pending and not f.waiting_for_new_slide
+            f.load(live.song_id, live.slides, index=live.index or 0, bounded=live.bounded)
         elif live.index is not None:
-            self._follower.sync_index(live.index)
-        return self._follower.loaded
+            moved = f.sync_index(live.index)
+        return f.loaded, moved
+
+    def resync(self) -> bool:
+        """Pick up slide changes made outside the follower (e.g. the operator clicked ahead)."""
+        if not settings.song_follower_enabled:
+            return False
+        moved = self._sync_song()[1]
+        if moved:
+            logger.info("Song follower resynced to a manual slide change", **self._follower.status())
+        return moved
+
+    def is_stale(self, action: DirectorAction) -> bool:
+        """Would running this follower proposal now skip or repeat a slide?"""
+        params = action.parameters
+        if params.get("source") != "song_follower":
+            return False
+        if params.get("song_id") != self._follower.song_id:
+            return True
+        from_index = params.get("from_index")
+        return self._follower.bounded and from_index is not None and from_index != self._follower.current_index
+
+    def _role_weight(self, role: str) -> float:
+        return parse_role_weights(settings.song_follower_role_weights).get(role, 1.0)
+
+    def _screen_agreement(self) -> Optional[float]:
+        """How well camera 2 agrees with the slide the follower thinks is live."""
+        # With OCR as the text source the slide text *is* the screen: no independent evidence.
+        if not self._follower.bounded:
+            return None
+        agreement = getattr(self._source, "screen_agreement", None)
+        text = self._follower.current_text
+        if agreement is None or not text:
+            return None
+        try:
+            return agreement(text)
+        except Exception:
+            logger.warning("Song follower screen agreement failed", exc_info=True)
+            return None
 
     def process(self, new_lines: List[TranscriptLine]) -> List[DirectorAction]:
         """Feed new transcript lines; return advance proposals as actions."""
         if not settings.song_follower_enabled or not new_lines:
             return []
-        if not self._sync_song():
+        if not self._sync_song()[0]:
             return []
 
         roles = self._roles()
@@ -351,19 +437,31 @@ class SongFollowerService:
             if self._now() - self._last_advance_at < settings.song_follower_cooldown_seconds:
                 self._follower.reject_advance()
                 continue
+            audio = proposal.confidence * self._role_weight(line.speaker_role)
+            screen = self._screen_agreement()
+            confidence = round(fuse_confidence(audio, screen, settings.song_follower_screen_weight), 3)
+            if confidence < settings.song_follower_min_confidence:
+                # Weak evidence (e.g. room-mic ASR alone): let a stronger line re-propose.
+                self._follower.reject_advance()
+                continue
             self._last_advance_at = self._now()
+            screen_note = f", screen={screen:.2f}" if screen is not None else ""
             actions.append(
                 DirectorAction(
                     type=DirectorActionType.EASYWORSHIP_NEXT_SLIDE,
                     parameters={
                         "song_id": proposal.song_id,
+                        "from_index": proposal.from_index,
                         "to_index": proposal.to_index,
                         "source": "song_follower",
+                        "role": line.speaker_role,
+                        "audio_confidence": round(audio, 3),
+                        "screen_agreement": round(screen, 3) if screen is not None else None,
                     },
-                    confidence=proposal.confidence,
+                    confidence=confidence,
                     reason=(
                         f"{line.speaker_role} finished slide {proposal.from_index + 1} "
-                        f"(\"{proposal.matched_text}\", match={proposal.confidence:.2f})"
+                        f"(\"{proposal.matched_text}\", match={proposal.confidence:.2f}{screen_note})"
                     ),
                 )
             )
@@ -373,6 +471,8 @@ class SongFollowerService:
         """Advance the follower's position after a proposal actually ran."""
         if action.parameters.get("source") != "song_follower":
             return
+        if action.parameters.get("song_id") != self._follower.song_id:
+            return  # the watcher already loaded the new slide
         self._follower.confirm_advance(action.parameters.get("to_index"))
         invalidate = getattr(self._source, "invalidate", None)
         if invalidate is not None:
@@ -386,6 +486,7 @@ class SongFollowerService:
     def status(self) -> dict:
         return {
             "enabled": settings.song_follower_enabled,
+            "scope": settings.song_follower_scope,
             "roles": sorted(self._roles()),
             "has_source": self._source is not None,
             **self._follower.status(),

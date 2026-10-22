@@ -90,6 +90,7 @@ class AIDirectorRuntime:
         self._task: Optional[asyncio.Task] = None
         self._event_task: Optional[asyncio.Task] = None
         self._follower_task: Optional[asyncio.Task] = None
+        self._watch_task: Optional[asyncio.Task] = None
         self._running = False
         self.pending_actions: List[DirectorAction] = []
         # Phase 2 event-driven ticks.
@@ -137,11 +138,13 @@ class AIDirectorRuntime:
         self._task = asyncio.create_task(self._run())
         self._event_task = asyncio.create_task(self._event_listener())
         self._follower_task = asyncio.create_task(self._follower_listener())
+        if settings.song_follower_watch_seconds > 0:
+            self._watch_task = asyncio.create_task(self._slide_watch_loop())
         logger.info("AI Director runtime started", mode=self._mode)
 
     async def stop(self) -> None:
         self._running = False
-        for task in (self._task, self._event_task, self._follower_task):
+        for task in (self._task, self._event_task, self._follower_task, self._watch_task):
             if task is not None:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -149,6 +152,7 @@ class AIDirectorRuntime:
         self._task = None
         self._event_task = None
         self._follower_task = None
+        self._watch_task = None
 
     async def _run(self) -> None:
         while self._running:
@@ -214,9 +218,42 @@ class AIDirectorRuntime:
             return []
         await song_follower_service.refresh()
         actions = song_follower_service.process(lines)
+        self._drop_stale_follower_actions()
         if actions:
             await self._route(actions)
         return actions
+
+    async def _slide_watch_loop(self) -> None:
+        """Notice slide changes made outside the follower even when nobody is singing."""
+        while self._running:
+            await asyncio.sleep(settings.song_follower_watch_seconds)
+            try:
+                await self.watch_slides()
+            except Exception:
+                logger.exception("Slide watcher failed")
+
+    async def watch_slides(self) -> bool:
+        """Resync the follower to the live slide (EasyWorship + camera 2); True on a manual change."""
+        if not settings.song_follower_enabled:
+            return False
+        await song_follower_service.refresh()
+        moved = song_follower_service.resync()
+        self._drop_stale_follower_actions()
+        if moved:
+            event_bus.publish(
+                {"event": "SLIDE_FOLLOWER_RESYNCED", "payload": song_follower_service.follower.status()}
+            )
+        return moved
+
+    def _drop_stale_follower_actions(self) -> None:
+        """Pending slide advances the live slide has moved past would skip a slide if approved."""
+        stale = [a for a in self.pending_actions if song_follower_service.is_stale(a)]
+        if not stale:
+            return
+        self.pending_actions = [a for a in self.pending_actions if not song_follower_service.is_stale(a)]
+        event_bus.publish(
+            {"event": "AI_ACTIONS_PENDING_DROPPED", "payload": [a.model_dump(mode="json") for a in stale]}
+        )
 
     async def tick(self) -> DirectorDecision:
         """Run one decision cycle. Exposed directly for tests/replay mode."""
@@ -352,10 +389,10 @@ class AIDirectorRuntime:
         if index < 0 or index >= len(self.pending_actions):
             raise IndexError("pending action index out of range")
         action = self.pending_actions.pop(index)
-        if _is_follower(action) and action.parameters.get("song_id") != song_follower_service.follower.song_id:
-            # The live item changed since this was proposed; advancing now would skip a slide.
+        if song_follower_service.is_stale(action):
+            # The live slide moved since this was proposed; advancing now would skip a slide.
             return ActionResult(
-                action=action, approved=False, executed=False, detail="stale slide advance (live item changed)"
+                action=action, approved=False, executed=False, detail="stale slide advance (live slide changed)"
             ).model_dump(mode="json")
         result = await self._engine().execute(action)
         if result.executed:

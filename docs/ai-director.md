@@ -348,9 +348,26 @@ slide's opening words (text known by heart) is a catch-up trigger.
      last slide; the position re-syncs from EasyWorship's reported `slide_no`.
   2. Otherwise OCR of the camera-2 (EasyWorship PC) slides feed captured on
      `SLIDE_VERIFY_DEVICE`. Copyright/CCLI footers are dropped; after an advance
-     it waits for the screen to change before following again.
-- Only active on the cues in `SONG_FOLLOWER_CUES` (or, without the cue engine,
-  in song / call to worship / prayer / scripture service states).
+     it waits for the screen to change before following again. Each slide read
+     is remembered per item + EasyWorship `slide_no` in
+     `SONG_FOLLOWER_OCR_LEARN_FILE` (`SONG_FOLLOWER_OCR_LEARN`), so later passes
+     through the item also know the next slide (catch-up look-ahead).
+- Manual slide changes: every `SONG_FOLLOWER_WATCH_SECONDS` the runtime re-reads
+  EasyWorship's live slide and the camera-2 OCR, even when nobody is singing. If
+  the operator moved the slide, the follower resyncs (`SLIDE_FOLLOWER_RESYNCED`)
+  and pending advances the live slide has moved past are dropped
+  (`AI_ACTIONS_PENDING_DROPPED`); approving one later is refused.
+- Confidence: the transcript match is scaled by the speaker's role weight
+  (`SONG_FOLLOWER_ROLE_WEIGHTS`; the congregation room mic counts for less),
+  then, with supplied texts, blended with how well camera 2 matches the slide
+  the follower thinks is live (`SONG_FOLLOWER_SCREEN_WEIGHT`). Below
+  `SONG_FOLLOWER_MIN_CONFIDENCE` nothing is proposed; the `slide_change` policy
+  threshold still applies in `ai_directed`. Each proposal carries `role`,
+  `audio_confidence` and `screen_agreement`.
+- When: `SONG_FOLLOWER_SCOPE=cues` follows only the cues in `SONG_FOLLOWER_CUES`
+  (or, without the cue engine, song / call to worship / prayer / scripture
+  service states); `texts` (default) also follows any live item with supplied
+  texts; `always` follows every live item, OCR included.
 - `EasyWorshipService.next_slide_in_item()` steps back if `next_slide` rolled
   into the next schedule item (remote-protocol driver only), so the cue
   engine's own `next_item` never skips an item.
@@ -360,7 +377,10 @@ slide's opening words (text known by heart) is a catch-up trigger.
   `SONG_FOLLOWER_MIN_ANCHOR_WORDS`, `SONG_FOLLOWER_TAIL_WORDS`,
   `SONG_FOLLOWER_ROLES`, `SONG_FOLLOWER_COOLDOWN_SECONDS`, `SONG_FOLLOWER_CUES`,
   `SONG_FOLLOWER_TEXTS_FILE`, `SONG_FOLLOWER_OCR_ENABLED`,
-  `SONG_FOLLOWER_OCR_WAIT_SECONDS`.
+  `SONG_FOLLOWER_OCR_WAIT_SECONDS`, `SONG_FOLLOWER_SCOPE`,
+  `SONG_FOLLOWER_WATCH_SECONDS`, `SONG_FOLLOWER_OCR_LEARN`,
+  `SONG_FOLLOWER_OCR_LEARN_FILE`, `SONG_FOLLOWER_SCREEN_WEIGHT`,
+  `SONG_FOLLOWER_ROLE_WEIGHTS`.
 
 ### Phase 2 — event-driven ticks + predictive PTZ preview
 

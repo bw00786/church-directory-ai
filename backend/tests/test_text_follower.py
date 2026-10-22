@@ -6,7 +6,13 @@ import pytest
 
 from app.config import settings
 from app.director.action_models import DirectorActionType
-from app.director.text_follower import LiveSlides, SongFollowerService, TextFollower
+from app.director.text_follower import (
+    LiveSlides,
+    SongFollowerService,
+    TextFollower,
+    fuse_confidence,
+    parse_role_weights,
+)
 from app.domain.service_context import TranscriptLine
 
 SLIDES = [
@@ -231,3 +237,109 @@ async def test_service_refresh_and_invalidate_reach_source(monkeypatch):
     actions = svc.process([_line("that saved a wretch like me")])
     svc.notify_executed(actions[0])
     assert calls == ["refresh", "invalidate"]
+
+
+# -- Manual slide changes, confidence fusion, role weights ----------------------
+def _follow_settings(monkeypatch, roles="vocalist,congregation"):
+    monkeypatch.setattr(settings, "song_follower_enabled", True)
+    monkeypatch.setattr(settings, "song_follower_roles", roles)
+    monkeypatch.setattr(settings, "song_follower_cooldown_seconds", 0.0)
+    monkeypatch.setattr(settings, "song_follower_min_confidence", 0.72)
+    monkeypatch.setattr(settings, "song_follower_role_weights", "vocalist:1.0,congregation:0.85")
+    monkeypatch.setattr(settings, "song_follower_screen_weight", 0.3)
+
+
+def test_fuse_confidence_and_role_weights():
+    assert fuse_confidence(0.8, None, 0.3) == 0.8
+    assert fuse_confidence(0.8, 1.0, 0.0) == 0.8
+    assert fuse_confidence(0.8, 1.0, 0.3) == pytest.approx(0.86)
+    assert fuse_confidence(0.8, 0.0, 0.3) == pytest.approx(0.56)
+    assert parse_role_weights("vocalist:1, congregation:0.85,bad,x:abc") == {"vocalist": 1.0, "congregation": 0.85}
+
+
+def test_sync_index_reports_manual_moves_and_clears_pending():
+    f = TextFollower()
+    f.load("song1", SLIDES)
+    assert f.observe("that saved a wretch like me") is not None  # pending -> 1
+    assert f.sync_index(1) is False  # EasyWorship caught up with our own advance
+    assert not f.pending
+    assert f.sync_index(3) is True  # operator jumped ahead
+    assert f.current_index == 3
+
+
+def test_resync_follows_operator_click_ahead(monkeypatch):
+    _follow_settings(monkeypatch)
+    live = {"index": 0}
+    svc = SongFollowerService(text_source=lambda: LiveSlides(song_id="lib:s:1", slides=SLIDES, index=live["index"]))
+    actions = svc.process([_line("that saved a wretch like me")])
+    assert actions and actions[0].parameters["from_index"] == 0
+    assert svc.resync() is False
+    live["index"] = 2  # operator clicked ahead past the proposal
+    assert svc.resync() is True
+    assert svc.follower.current_index == 2
+    assert svc.is_stale(actions[0])
+
+
+def test_resync_reloads_ocr_slide_changed_by_operator(monkeypatch):
+    _follow_settings(monkeypatch)
+    live = {"value": LiveSlides(song_id="ocr:1", slides=[SLIDES[0]], bounded=False)}
+    svc = SongFollowerService(text_source=lambda: live["value"])
+    assert svc.resync() is False  # first load isn't a manual change
+    live["value"] = LiveSlides(song_id="ocr:2", slides=[SLIDES[1]], bounded=False)
+    assert svc.resync() is True
+    assert svc.follower.song_id == "ocr:2"
+
+
+def test_notify_executed_skips_when_watcher_already_loaded_next_slide(monkeypatch):
+    _follow_settings(monkeypatch)
+    live = {"value": LiveSlides(song_id="ocr:1", slides=[SLIDES[0]], bounded=False)}
+    svc = SongFollowerService(text_source=lambda: live["value"])
+    actions = svc.process([_line("amazing grace how sweet the sound")])
+    assert actions
+    live["value"] = LiveSlides(song_id="ocr:2", slides=[SLIDES[1]], bounded=False)
+    assert svc.resync() is False  # our own pending advance, not a manual move
+    svc.notify_executed(actions[0])
+    assert svc.follower.status()["waiting_for_new_slide"] is False
+
+
+def test_congregation_needs_stronger_match_than_vocalist(monkeypatch):
+    _follow_settings(monkeypatch)
+    monkeypatch.setattr(settings, "song_follower_min_confidence", 0.9)
+    svc = SongFollowerService(text_source=lambda: ("song1", SLIDES))
+    # 0.85 role weight drops a perfect room-mic match below 0.9.
+    assert svc.process([_line("amazing grace how sweet the sound", role="congregation")]) == []
+    actions = svc.process([_line("amazing grace how sweet the sound", role="vocalist")])
+    assert actions and actions[0].parameters["role"] == "vocalist"
+
+
+class _ScreenSource:
+    def __init__(self, agreement):
+        self.agreement = agreement
+
+    def __call__(self):
+        return LiveSlides(song_id="lib:s:1", slides=SLIDES, index=0)
+
+    def screen_agreement(self, slide_text):
+        return self.agreement
+
+
+def test_screen_agreement_raises_and_lowers_confidence(monkeypatch):
+    _follow_settings(monkeypatch)
+    agree = SongFollowerService(text_source=_ScreenSource(1.0))
+    action = agree.process([_line("amazing grace how sweet the sound")])[0]
+    assert action.confidence == 1.0 and action.parameters["screen_agreement"] == 1.0
+
+    # Camera 2 shows a different slide: confidence drops below the follower minimum.
+    disagree = SongFollowerService(text_source=_ScreenSource(0.0))
+    assert disagree.process([_line("amazing grace how sweet the sound")]) == []
+
+
+def test_ocr_text_source_has_no_independent_screen_evidence(monkeypatch):
+    _follow_settings(monkeypatch)
+
+    class _Ocr(_ScreenSource):
+        def __call__(self):
+            return LiveSlides(song_id="ocr:1", slides=[SLIDES[0]], bounded=False)
+
+    action = SongFollowerService(text_source=_Ocr(0.0)).process([_line("amazing grace how sweet the sound")])[0]
+    assert action.parameters["screen_agreement"] is None

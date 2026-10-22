@@ -4,6 +4,7 @@ import pytest
 
 from app.config import settings
 from app.director.slide_text_source import (
+    LearnedSlideTexts,
     LiveSlideTextSource,
     OcrSlideReader,
     SlideTextLibrary,
@@ -105,8 +106,9 @@ async def test_ocr_reader_accepts_identical_slide_after_wait(monkeypatch):
 def _source(tmp_path, *, active=True, label="Call to Worship", slide_number=None, ocr_segments=None):
     lib = SlideTextLibrary(str(tmp_path / "t.json"))
     ocr = OcrSlideReader(read_segments=lambda: ocr_segments or [])
+    learned = LearnedSlideTexts(str(tmp_path / "learned.json"))
     return lib, LiveSlideTextSource(
-        lib, ocr, active=lambda: active, label=lambda: label, slide_number=lambda: slide_number
+        lib, ocr, active=lambda: active, label=lambda: label, slide_number=lambda: slide_number, learned=learned
     )
 
 
@@ -127,11 +129,88 @@ async def test_source_falls_back_to_ocr(tmp_path, monkeypatch):
     assert live.slides == ["Give thanks to the Lord"] and live.bounded is False
 
 
-async def test_source_inactive_outside_followed_cues(tmp_path):
+async def test_source_inactive_outside_followed_cues(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "song_follower_scope", "cues")
     lib, source = _source(tmp_path, active=False)
     lib.set("Call to Worship", "One\n\nTwo")
     await source.refresh()
     assert source() is None
+
+
+async def test_scope_texts_follows_supplied_items_outside_cues(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "song_follower_scope", "texts")
+    monkeypatch.setattr(settings, "song_follower_ocr_enabled", True)
+    lib, source = _source(tmp_path, active=False, ocr_segments=["Announcements"])
+    await source.refresh()
+    assert source() is None  # OCR-only items still need a followed cue
+    lib.set("Call to Worship", "One\n\nTwo")
+    assert source().slides == ["One", "Two"]
+
+
+async def test_scope_always_follows_ocr_outside_cues(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "song_follower_scope", "always")
+    monkeypatch.setattr(settings, "song_follower_ocr_enabled", True)
+    _, source = _source(tmp_path, active=False, ocr_segments=["Welcome to worship"])
+    await source.refresh()
+    assert source().slides == ["Welcome to worship"]
+
+
+def test_learned_texts_persist_and_ignore_ocr_jitter(tmp_path):
+    path = tmp_path / "learned.json"
+    learned = LearnedSlideTexts(str(path))
+    assert learned.record("Amazing Grace", 2, "That saved a wretch like me") is True
+    assert learned.record("amazing grace", 2, "That saved a wretch like mc") is False  # OCR jitter
+    assert learned.record("Amazing Grace", 0, "bad slide number") is False
+    assert LearnedSlideTexts(str(path)).get("AMAZING GRACE", 2) == "That saved a wretch like me"
+    assert learned.get("Amazing Grace", 3) is None
+
+
+async def test_ocr_source_learns_slides_and_offers_next_slide(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "song_follower_ocr_enabled", True)
+    monkeypatch.setattr(settings, "song_follower_ocr_learn", True)
+    clock = _Clock()
+    screen = {"segments": ["Amazing grace how sweet the sound"], "number": 1}
+    lib = SlideTextLibrary(str(tmp_path / "t.json"))
+    learned = LearnedSlideTexts(str(tmp_path / "learned.json"))
+    ocr = OcrSlideReader(read_segments=lambda: screen["segments"], now=clock)
+    source = LiveSlideTextSource(
+        lib, ocr, active=lambda: True, label=lambda: "Amazing Grace",
+        slide_number=lambda: screen["number"], learned=learned,
+    )
+
+    # A slide is only learned after two fresh reads agree on number + text.
+    await source.refresh()
+    assert learned.get("Amazing Grace", 1) is None
+    clock.t += 2
+    await source.refresh()
+    assert learned.get("Amazing Grace", 1) == "Amazing grace how sweet the sound"
+
+    screen.update(segments=["That saved a wretch like me"], number=2)
+    for _ in range(2):
+        clock.t += 2
+        await source.refresh()
+    assert learned.get("Amazing Grace", 2) == "That saved a wretch like me"
+
+    # Next time through the song, slide 1 also knows slide 2's text.
+    screen.update(segments=["Amazing grace how sweet the sound"], number=1)
+    clock.t += 2
+    await source.refresh()
+    live = source()
+    assert live.slides == ["Amazing grace how sweet the sound", "That saved a wretch like me"]
+    assert live.bounded is False
+
+
+async def test_screen_agreement_compares_camera2_to_slide(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "song_follower_ocr_enabled", True)
+    monkeypatch.setattr(settings, "song_follower_screen_weight", 0.3)
+    lib, source = _source(tmp_path, slide_number=1, ocr_segments=["One bread one body"])
+    lib.set("Call to Worship", "One bread one body\n\nOne Lord of all")
+    assert source.screen_agreement("One bread one body") is None  # nothing read yet
+    await source.refresh()  # library item: OCR still runs as evidence
+    assert source.screen_agreement("One bread one body") > 0.9
+    assert source.screen_agreement("One Lord of all") < 0.7
+    source.invalidate()
+    assert source.screen_agreement("One bread one body") is None
 
 
 # -- EasyWorship: advance within the live item only -----------------------------

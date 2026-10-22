@@ -2,6 +2,7 @@
 
 import sys
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings
@@ -293,6 +294,21 @@ class Settings(BaseSettings):
     song_follower_texts_file: str = "data/slide-texts.json"  # operator-supplied slide texts
     song_follower_ocr_enabled: bool = True       # fall back to OCR of the camera-2 slides feed
     song_follower_ocr_wait_seconds: float = 3.0  # max wait for the new slide after an advance
+    # When to follow: "cues" = only SONG_FOLLOWER_CUES / song service states;
+    # "texts" = those, plus any live item with operator-supplied slide texts;
+    # "always" = any live item (OCR included), whatever the cue.
+    song_follower_scope: Literal["cues", "texts", "always"] = "texts"
+    # Poll EasyWorship's live slide + the camera-2 OCR between transcript lines so
+    # operator (manual) slide changes resync the follower and drop stale proposals. 0 = off.
+    song_follower_watch_seconds: float = 1.0
+    # Remember OCR'd slides per EasyWorship item + slide number, so later passes
+    # through an item have the next slide's text (look-ahead) without supplied texts.
+    song_follower_ocr_learn: bool = True
+    song_follower_ocr_learn_file: str = "data/slide-texts-learned.json"
+    # Weight of camera-2 screen agreement in a proposal's confidence (0 = audio only).
+    song_follower_screen_weight: float = 0.3
+    # Per-role trust in the transcript (role:weight); the congregation room mic is noisier.
+    song_follower_role_weights: str = "vocalist:1.0,liturgist:1.0,congregation:0.85"
 
     # Phase 2: event-driven decision ticks + predictive PTZ preview staging.
     ai_director_event_driven: bool = False       # nudge a decision tick on key events

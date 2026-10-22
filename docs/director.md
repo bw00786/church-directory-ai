@@ -380,6 +380,16 @@ current slide are heard. The cue engine still owns moving between items.
   executed (policy-gated) in `ai_directed`, ignored in `manual`.
 - Needs per-channel ASR (`MGX_USB_ENABLED=true`, `ENABLE_WHISPER=true`); the
   follower's roles are added to `WHISPER_ROLES` automatically.
+- If you click a slide by hand, the follower notices within
+  `SONG_FOLLOWER_WATCH_SECONDS` (EasyWorship read-back + camera-2 OCR), follows
+  from there and drops any pending advance that would now skip a slide.
+- Camera 2 also scores each proposal: when the screen doesn't show the slide
+  the follower expects, its confidence drops. Congregation-only matches count
+  for less than the vocalist (`SONG_FOLLOWER_ROLE_WEIGHTS`).
+- Without supplied texts, slides read off camera 2 are remembered per item, so
+  the next time through a song the follower also knows the next slide.
+- `SONG_FOLLOWER_SCOPE=texts` (default) also follows any item you supplied texts
+  for, whatever the cue; `always` follows every item.
 
 Supply slide text per EasyWorship item (label as in the cue sheet, e.g.
 `Call to Worship`, `Hymn of Praise`, `Scripture`), one blank line between
