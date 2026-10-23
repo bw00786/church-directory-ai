@@ -77,7 +77,8 @@ For AI features, configure Ollama on the EasyWorship PC using [.env.example](.en
 as a reference; preserve existing private credentials:
 
 ```
-OLLAMA_BASE_URL=            # empty => http://<EASYWORSHIP_REMOTE_HOST>:11434
+OLLAMA_BASE_URL=            # empty => auto-discover Ollama on the EasyWorship PC (DHCP-safe)
+OLLAMA_DISCOVERY_SUBNETS=   # optional /24 prefixes to sweep, e.g. 192.168.4
 OLLAMA_MODEL=qwen3.8:latest
 OLLAMA_FAST_MODEL=qwen3.8:latest
 OLLAMA_VISION_MODEL=qwen3.8:latest
@@ -94,7 +95,14 @@ not `qwen3:8b` or a promise of an official downloadable model. Other machines
 must provision a matching tag or explicitly choose compatible model overrides.
 The setup/start scripts do not start Ollama or download any models. On the
 EasyWorship PC set `OLLAMA_HOST=0.0.0.0:11434` (Windows environment variable),
-restart Ollama, and allow inbound TCP 11434 only from the backend machine.
+restart Ollama, and allow inbound TCP 11434 only from the local subnet.
+
+The EasyWorship PC gets its address from DHCP, so leave `OLLAMA_BASE_URL` empty
+and the backend finds Ollama itself: the configured EasyWorship host, the PC the
+EasyWorship remote connection found (mDNS), the backend machine, then a sweep of
+the local /24 for port 11434. It re-checks every minute and after any failed AI
+call; `GET /health/ollama` shows what it found under `discovery`. Details:
+[backend setup](docs/backend-setup.md#ollama-inference-check).
 
 Check `GET /health/ollama` or run
 [backend/scripts/test_ollama.py](backend/scripts/test_ollama.py) from the backend
@@ -153,9 +161,11 @@ pip install -r requirements.txt
   with (different COM class IDs). Install ATEM Switchers 10.4, then restart the bridge.
 
 ### Ollama: unavailable, model not found, or timeout
-- Confirm Ollama on the EasyWorship PC is reachable from the backend at
-    `OLLAMA_BASE_URL` (or `http://<EASYWORSHIP_REMOTE_HOST>:11434`): it must listen
-    on `0.0.0.0` and the Windows firewall must allow TCP 11434.
+- Confirm Ollama on the EasyWorship PC is reachable from the backend (the
+    address in `GET /health/ollama` -> `base_url` / `discovery`): it must listen
+    on `0.0.0.0` and the Windows firewall must allow TCP 11434. If discovery
+    can't find it, set `OLLAMA_DISCOVERY_SUBNETS` to the EasyWorship PC's /24
+    (e.g. `192.168.4`), or pin `OLLAMA_BASE_URL` (turns discovery off).
 - Run `ollama list` on the EasyWorship PC for the exact configured tag.
 - Check `/health/ollama` for failure details. A successful liveness check
     does not prove inference works. Cold model loads may need the full 120 seconds.

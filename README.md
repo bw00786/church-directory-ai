@@ -11,10 +11,10 @@ This is a production-grade system designed for churches to automate and assist i
 - **Blackmagic ATEM Control** — Program/Preview switching, Cut/Auto transitions, streaming, recording. The switcher takes a new DHCP address each time it boots, so a built-in resolver discovers it by MAC on your subnets (`ATEM_RESOLVE_SUBNETS`) — no `.env` edit or backend restart between Sundays.
 - **PTZOptics Camera Control** — Full driver over VISCA-over-IP (TCP/UDP) + HTTP-CGI: pan/tilt/zoom, presets, and press-and-hold joystick
 - **Scripted Service Director** — Runs a Sunday cue sheet that drives the ATEM and PTZOptics camera, advancing manually, on a timer, on song-end, or by AI decision
-- **EasyWorship Slide Control** — Drives EasyWorship 7.3+ over its native Remote Control TCP protocol (the same channel as EW's Stream Deck plug-in): no window focus, absolute `gotoSchedule`/`gotoSlide` jumps, and live position read-back so every slide change is confirmed. Keystroke injection remains as a fallback
+- **EasyWorship Slide Control** — Drives EasyWorship 7.3+ over its native Remote Control TCP protocol (the same channel as EW's Stream Deck plug-in): no window focus, absolute `gotoSchedule`/`gotoSlide` jumps, and live position read-back so every slide change is confirmed. The EasyWorship PC is found over mDNS and rediscovered when its DHCP address changes. Keystroke injection remains as a fallback
 - **Scheduled Auto-Start** — Optionally starts the service automatically at a configured time on selected weekdays
 - **Yamaha MGX16 Mixer** — Captures per-channel PCM from the MGX16 USB MAIN interface for real Silero VAD + per-role Whisper, and controls the companion `mgx-ai-mixer` software-DSP layer on the USB return path (per-channel HPF/EQ/comp/trim, feedback guard, mix keeper). The desk's own faders/preamps/mutes have no remote protocol and stay advisory
-- **Cue-Advance AI** — Ollama (Qwen, on the EasyWorship PC) decides cue advances from observations (transcript/vision), gated by the policy engine
+- **Cue-Advance AI** — Ollama (Qwen, on the EasyWorship PC) decides cue advances from observations (transcript/vision), gated by the policy engine. With `OLLAMA_BASE_URL` empty the backend auto-discovers Ollama on the EasyWorship PC, so DHCP address changes need no `.env` edit
 - **AI Service Director** — A reasoning layer above the cue engine: the Ollama model observes a live `ServiceContext` (state, speaker, transcript, camera/ATEM/EasyWorship) and proposes typed actions, executed only after per-category confidence checks in `manual`/`assisted`/`ai_directed` mode
 - **AI Assistant** — Chat with the Ollama-backed assistant to query production history and control every subsystem by name ("frame the pastor", "go to the Sermon slides", "put a 120 Hz high-pass on the vocalist"); high-risk actions (stream, record, mic mute, preset overwrite, mixer DSP engage) require operator confirmation
 - **Production Control Panel** — React/Vite web interface with real-time WebSocket updates (cue sheet with order-of-service upload, camera joystick, AI Director panel, System Status)
@@ -188,6 +188,10 @@ mode (queued for approval in `assisted`). See the
   words of the current slide are heard. Slide text comes from per-item texts
   (`PUT /api/director/slide-texts`) or OCR of the camera-2 slides feed
   (`SONG_FOLLOWER_ENABLED`, see [director.md](docs/director.md#line-by-line-slide-follower)).
+  It resyncs when the operator clicks a slide by hand, remembers OCR'd slides
+  for next-slide look-ahead, blends camera-2 screen agreement into its
+  confidence, trusts the congregation mic less than the vocalist, and can follow
+  beyond song cues (`SONG_FOLLOWER_SCOPE`).
 - **Phase 2 — Event-driven ticks + predictive PTZ:** wakes the decision loop on
   perception events and pre-stages the next shot on ATEM *preview* without
   cutting (`AI_DIRECTOR_EVENT_DRIVEN`, `PTZ_PREDICTIVE_PREVIEW`).
