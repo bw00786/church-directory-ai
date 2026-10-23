@@ -176,7 +176,9 @@ retrieval, not training: nothing is fine-tuned, and a retrieval failure (e.g.
 no database) just means the model reasons without history, same as before this
 existed. Config: `AI_DIRECTOR_USE_MEMORY_RAG` (default `true`),
 `AI_DIRECTOR_MEMORY_RESULTS` (default `5`), `AI_DIRECTOR_MEMORY_MIN_SIMILARITY`
-(default `0.15`).
+(default `0.15`). Besides cue and AI history, memory holds the operator's own
+slide advances (`operator_slide_advance`, see
+[Learning from the operator](#learning-from-the-operators-own-slide-advances)).
 
 Retrieval quality depends on [`app/memory/embeddings.py`](../backend/app/memory/embeddings.py),
 which tries three tiers in order (`EMBEDDING_PROVIDER=auto`, the default):
@@ -309,6 +311,7 @@ All hardware is mocked; no live ATEM/PTZ/EasyWorship/mixer required:
 - [`tests/test_ai_director_runtime.py`](../backend/tests/test_ai_director_runtime.py) — manual/assisted/ai_directed mode gating.
 - [`tests/test_text_follower.py`](../backend/tests/test_text_follower.py) — ASR→slide alignment, end-of-slide/catch-up triggers, OCR mode, cooldown (Phase 1).
 - [`tests/test_slide_text_source.py`](../backend/tests/test_slide_text_source.py) — slide-text library, camera-2 OCR reader, in-item next slide (Phase 1).
+- [`tests/test_operator_learning.py`](../backend/tests/test_operator_learning.py) — recording manual advances (EasyWorship + camera 2), learned cues and slide-time guard in the follower.
 - [`tests/test_predictive_ptz.py`](../backend/tests/test_predictive_ptz.py) — preview staging without a program cut (Phase 2).
 - [`tests/test_service_end.py`](../backend/tests/test_service_end.py) — arm/fire recognition and permission-gated shutdown bundle (Phase 3).
 - [`tests/test_autonomy.py`](../backend/tests/test_autonomy.py) — learning recorder, adaptive confidence bounds, evidence-fusion veto (Phase 4).
@@ -382,6 +385,51 @@ slide's opening words (text known by heart) is a catch-up trigger.
   `SONG_FOLLOWER_WATCH_SECONDS`, `SONG_FOLLOWER_OCR_LEARN`,
   `SONG_FOLLOWER_OCR_LEARN_FILE`, `SONG_FOLLOWER_SCREEN_WEIGHT`,
   `SONG_FOLLOWER_ROLE_WEIGHTS`.
+
+#### Learning from the operator's own slide advances
+
+[`operator_learning.py`](../backend/app/director/operator_learning.py) runs in
+every mode (including `manual`) and watches EasyWorship's live slide (remote
+read-back) and the camera-2 OCR. A slide change this app didn't command within
+`OPERATOR_LEARNING_COMMAND_WINDOW_SECONDS` is the operator's click, and is
+recorded with:
+
+- the slide's text read off camera 2 (two agreeing OCR reads; a stale read of
+  the old slide right after the change is ignored), else the supplied/learned
+  text for that item + slide number;
+- the last `OPERATOR_LEARNING_TAIL_WORDS` heard on the follower's channels in
+  the `OPERATOR_LEARNING_CONTEXT_SECONDS` before the click, who said them, and
+  how long after the last word the click came;
+- how long the slide was up, the EasyWorship item (its service-plan label, from
+  `pres_no` + `EASYWORSHIP_SCHEDULE_OFFSET`, else the live cue) and slide number.
+
+Without EasyWorship read-back (keystroke/agent drivers) camera 2 alone detects
+the change (two agreeing reads of new text). Forward advances within an item go
+to `OPERATOR_LEARNING_FILE`, keyed by the slide's *text*, so the same song is
+recognised in any later service whatever the plan calls it. Every advance,
+item change and step back also goes to production memory as an
+`operator_slide_advance` observation (`OPERATOR_LEARNING_MEMORY`), where the AI
+director's retrieval finds it next to the cue history of uploaded service plans.
+The slides it reads also feed `SONG_FOLLOWER_OCR_LEARN_FILE`, even when the
+follower isn't active.
+
+Once a slide has `OPERATOR_LEARNING_MIN_SAMPLES` samples the follower uses them:
+
+- **Learned cues:** the words the operator advanced after become an extra
+  trigger (`trigger: operator_cue`). They are in ASR's own words, so they work
+  where Whisper consistently mishears the lyric.
+- **Typical slide time:** no advance is proposed before
+  `OPERATOR_LEARNING_MIN_DWELL_FRACTION` of the median time the operator kept
+  that slide up.
+
+Advances the app made (AI director, cue sheet, approved proposals) are not
+learned as operator behaviour. `GET /api/director/operator-advances` shows the
+recorder state and the learned history. Config: `OPERATOR_LEARNING_ENABLED`,
+`OPERATOR_LEARNING_POLL_SECONDS`, `OPERATOR_LEARNING_COMMAND_WINDOW_SECONDS`,
+`OPERATOR_LEARNING_CONTEXT_SECONDS`, `OPERATOR_LEARNING_TAIL_WORDS`,
+`OPERATOR_LEARNING_FILE`, `OPERATOR_LEARNING_MAX_SAMPLES`,
+`OPERATOR_LEARNING_MIN_SAMPLES`, `OPERATOR_LEARNING_MIN_DWELL_FRACTION`,
+`OPERATOR_LEARNING_MEMORY`.
 
 ### Phase 2 — event-driven ticks + predictive PTZ preview
 

@@ -326,3 +326,14 @@ async def follower_status():
         "live_item": live_item_label(),
         "ocr_text": live_slide_text_source.ocr.text,
     }
+
+
+@router.get("/operator-advances")
+async def operator_advances(limit: int = 50):
+    """What has been learned from the operator's own slide advances."""
+    from app.director.operator_learning import operator_advance_history, operator_advance_recorder
+
+    return {
+        **operator_advance_recorder.status(),
+        "history": operator_advance_history.summary(limit=max(1, min(limit, 500))),
+    }

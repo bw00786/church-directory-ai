@@ -10,6 +10,7 @@
 **/data/piper-voices/
 **/data/ai_director_cycles.jsonl
 **/data/slide-texts-learned.json
+**/data/operator-slide-advances.json
 env/
 venv/
 ENV/

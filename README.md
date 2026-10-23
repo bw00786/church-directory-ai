@@ -19,7 +19,7 @@ This is a production-grade system designed for churches to automate and assist i
 - **AI Assistant** — Chat with the Ollama-backed assistant to query production history and control every subsystem by name ("frame the pastor", "go to the Sermon slides", "put a 120 Hz high-pass on the vocalist"); high-risk actions (stream, record, mic mute, preset overwrite, mixer DSP engage) require operator confirmation
 - **Production Control Panel** — React/Vite web interface with real-time WebSocket updates (cue sheet with order-of-service upload, camera joystick, AI Director panel, System Status)
 - **Event Audit Trail** — Complete logging of all production actions and AI decisions
-- **Production Memory** — PostgreSQL + pgvector for semantic retrieval of past services
+- **Production Memory** — PostgreSQL + pgvector for semantic retrieval of past services, including how the operator advanced slides by hand
 - **Indexed RAG** — Server-side cosine search with HNSW indexes and explicit
   embedding-model isolation. Run the additive
   [database migration](docs/backend-setup.md#database-migrations) before starting
@@ -191,7 +191,12 @@ mode (queued for approval in `assisted`). See the
   It resyncs when the operator clicks a slide by hand, remembers OCR'd slides
   for next-slide look-ahead, blends camera-2 screen agreement into its
   confidence, trusts the congregation mic less than the vocalist, and can follow
-  beyond song cues (`SONG_FOLLOWER_SCOPE`).
+  beyond song cues (`SONG_FOLLOWER_SCOPE`). It also learns from the operator:
+  every slide advanced by hand (any mode, including `manual`) is recorded with
+  the camera-2 slide text, the words heard just before the click and the timing,
+  then reused as advance cues and timing guards, and written to production
+  memory for the AI director (`OPERATOR_LEARNING_ENABLED`,
+  `GET /api/director/operator-advances`).
 - **Phase 2 — Event-driven ticks + predictive PTZ:** wakes the decision loop on
   perception events and pre-stages the next shot on ATEM *preview* without
   cutting (`AI_DIRECTOR_EVENT_DRIVEN`, `PTZ_PREDICTIVE_PREVIEW`).

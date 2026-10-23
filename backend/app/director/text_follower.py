@@ -45,6 +45,7 @@ _WORD_RE = re.compile(r"[a-z0-9']+")
 # The reader must have covered at least this much of the slide before its
 # closing words count, so a repeated closing phrase heard early can't fire.
 _MIN_SLIDE_COVERAGE = 0.5
+_MIN_CUE_COVERAGE = 0.25
 _HEARD_WINDOW_WORDS = 200
 
 
@@ -100,6 +101,7 @@ class FollowProposal:
     to_index: int
     confidence: float
     matched_text: str
+    trigger: str = "slide_end"  # slide_end | next_slide_start | operator_cue
 
 
 @dataclass
@@ -149,13 +151,30 @@ class TextFollower:
         self._index = 0
         self._heard: Deque[str] = deque(maxlen=_HEARD_WINDOW_WORDS)
         self._proposed_to: Optional[int] = None
+        self._cues: List[List[List[str]]] = []
 
     # -- lifecycle ------------------------------------------------------------
-    def load(self, song_id: str, slides: List[str], index: int = 0, bounded: bool = True) -> None:
-        """Load the slide text for a song/reading and start at ``index``."""
+    def load(
+        self,
+        song_id: str,
+        slides: List[str],
+        index: int = 0,
+        bounded: bool = True,
+        advance_cues: Optional[List[List[str]]] = None,
+    ) -> None:
+        """Load the slide text for a song/reading and start at ``index``.
+
+        ``advance_cues[i]`` are phrases the operator advanced slide ``i`` after
+        in past services (see app.director.operator_learning).
+        """
         self._song_id = song_id
         self._raw_slides = list(slides)
         self._slides = [_tokenize(s) for s in slides]
+        cues = list(advance_cues or [])
+        self._cues = [
+            [t for t in (_tokenize(c) for c in (cues[i] if i < len(cues) else [])) if len(t) >= self._min_anchor_words]
+            for i in range(len(slides))
+        ]
         self._bounded = bounded
         self._stale = False
         self._index = max(0, min(index, max(len(self._slides) - 1, 0)))
@@ -235,10 +254,15 @@ class TextFollower:
 
         heard = list(self._heard)
         current = self._slides[self._index]
+        trigger = "slide_end"
         score, matched = self._finished_score(heard, current), current[-self._tail_words:]
         if score is None and has_next:
             nxt = self._slides[next_index]
+            trigger = "next_slide_start"
             score, matched = self._started_score(heard, current, nxt), nxt[: self._tail_words]
+        if score is None:
+            trigger = "operator_cue"
+            score, matched = self._cue_score(heard, current)
         if score is None:
             return None
 
@@ -249,6 +273,7 @@ class TextFollower:
             to_index=next_index,
             confidence=round(score, 3),
             matched_text=" ".join(matched),
+            trigger=trigger,
         )
 
     def _finished_score(self, heard: List[str], current: List[str]) -> Optional[float]:
@@ -279,6 +304,19 @@ class TextFollower:
         score = _match_ratio(heard[-(len(opening) * 2 + 4):], opening)
         return score if score >= self._min_confidence else None
 
+    def _cue_score(self, heard: List[str], current: List[str]) -> Tuple[Optional[float], List[str]]:
+        """Score when the words the operator advanced after in past services were just heard."""
+        cues = self._cues[self._index] if self._index < len(self._cues) else []
+        # Learned cues are in ASR's own words, so a lighter read-through check is enough.
+        if not cues or (current and _match_ratio(heard, current) < _MIN_CUE_COVERAGE):
+            return None, []
+        best, best_cue = None, []
+        for cue in cues:
+            score = _match_ratio(heard[-(len(cue) * 2 + 4):], cue)
+            if score >= self._min_confidence and (best is None or score > best):
+                best, best_cue = score, cue
+        return best, best_cue
+
     # -- LyricMatcher protocol (app.easyworship.slide_expected) --------------
     def expected_slide_text(self, song_id: str, slide_index: int) -> Optional[str]:
         """Back the slide verifier's expected-text provider (WO-EWVERIFY-3)."""
@@ -297,6 +335,7 @@ class TextFollower:
             "source": "library" if self._bounded else "ocr",
             "pending_advance_to": self._proposed_to,
             "waiting_for_new_slide": self._stale,
+            "learned_cues": len(self._cues[self._index]) if self._index < len(self._cues) else 0,
         }
 
 
@@ -332,6 +371,10 @@ class SongFollowerService:
         self._last_advance_at = 0.0
         self._warned_no_source = False
         self._refresh_lock = asyncio.Lock()
+        # app.director.operator_learning.OperatorAdvanceHistory (duck-typed to keep this module pure).
+        self._history = None
+        self._slide_key: Optional[tuple] = None
+        self._slide_since = now()
 
     @property
     def follower(self) -> TextFollower:
@@ -339,6 +382,10 @@ class SongFollowerService:
 
     def set_text_source(self, source: Optional[SlideTextSource]) -> None:
         self._source = source
+
+    def set_history(self, history) -> None:
+        """Operator advance history: learned cues per slide + typical slide durations."""
+        self._history = history
 
     def _roles(self) -> set:
         return {r.strip() for r in settings.song_follower_roles.split(",") if r.strip()}
@@ -377,10 +424,42 @@ class SongFollowerService:
         moved = False
         if live.song_id != f.song_id:
             moved = f.loaded and not f.pending and not f.waiting_for_new_slide
-            f.load(live.song_id, live.slides, index=live.index or 0, bounded=live.bounded)
+            f.load(live.song_id, live.slides, index=live.index or 0, bounded=live.bounded,
+                   advance_cues=self._learned_cues(live.slides))
         elif live.index is not None:
             moved = f.sync_index(live.index)
+        self._track_slide()
         return f.loaded, moved
+
+    def _learned_cues(self, slides: List[str]) -> Optional[List[List[str]]]:
+        if self._history is None:
+            return None
+        try:
+            return [self._history.advance_cues(s) for s in slides]
+        except Exception:
+            logger.warning("Operator advance history lookup failed", exc_info=True)
+            return None
+
+    def _track_slide(self) -> None:
+        key = (self._follower.song_id, self._follower.current_index)
+        if key != self._slide_key:
+            self._slide_key, self._slide_since = key, self._now()
+
+    def _too_early(self) -> Optional[str]:
+        """Reason to hold back when the slide has been up far less than the operator usually keeps it."""
+        fraction = settings.operator_learning_min_dwell_fraction
+        text = self._follower.current_text
+        if self._history is None or fraction <= 0 or not text:
+            return None
+        try:
+            typical = self._history.typical_dwell(text)
+        except Exception:
+            logger.warning("Operator advance history lookup failed", exc_info=True)
+            return None
+        elapsed = self._now() - self._slide_since
+        if typical and elapsed < fraction * typical:
+            return f"slide up {elapsed:.0f}s, operator usually keeps it {typical:.0f}s"
+        return None
 
     def resync(self) -> bool:
         """Pick up slide changes made outside the follower (e.g. the operator clicked ahead)."""
@@ -437,6 +516,11 @@ class SongFollowerService:
             if self._now() - self._last_advance_at < settings.song_follower_cooldown_seconds:
                 self._follower.reject_advance()
                 continue
+            early = self._too_early()
+            if early:
+                logger.info("Song follower holding an advance", reason=early)
+                self._follower.reject_advance()
+                continue
             audio = proposal.confidence * self._role_weight(line.speaker_role)
             screen = self._screen_agreement()
             confidence = round(fuse_confidence(audio, screen, settings.song_follower_screen_weight), 3)
@@ -454,6 +538,7 @@ class SongFollowerService:
                         "from_index": proposal.from_index,
                         "to_index": proposal.to_index,
                         "source": "song_follower",
+                        "trigger": proposal.trigger,
                         "role": line.speaker_role,
                         "audio_confidence": round(audio, 3),
                         "screen_agreement": round(screen, 3) if screen is not None else None,
@@ -461,7 +546,8 @@ class SongFollowerService:
                     confidence=confidence,
                     reason=(
                         f"{line.speaker_role} finished slide {proposal.from_index + 1} "
-                        f"(\"{proposal.matched_text}\", match={proposal.confidence:.2f}{screen_note})"
+                        f"(\"{proposal.matched_text}\", match={proposal.confidence:.2f}{screen_note}"
+                        f"{', learned from the operator' if proposal.trigger == 'operator_cue' else ''})"
                     ),
                 )
             )
@@ -474,6 +560,7 @@ class SongFollowerService:
         if action.parameters.get("song_id") != self._follower.song_id:
             return  # the watcher already loaded the new slide
         self._follower.confirm_advance(action.parameters.get("to_index"))
+        self._track_slide()
         invalidate = getattr(self._source, "invalidate", None)
         if invalidate is not None:
             invalidate()

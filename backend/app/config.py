@@ -318,6 +318,20 @@ class Settings(BaseSettings):
     # Per-role trust in the transcript (role:weight); the congregation room mic is noisier.
     song_follower_role_weights: str = "vocalist:1.0,liturgist:1.0,congregation:0.85"
 
+    # Learn from the operator's own slide advances (app.director.operator_learning):
+    # slide changes the app didn't command are recorded with the camera-2 slide
+    # text, the words heard just before, and timing; the follower reuses them.
+    operator_learning_enabled: bool = True
+    operator_learning_poll_seconds: float = 1.0
+    operator_learning_command_window_seconds: float = 3.0  # app-sent commands within this aren't the operator's
+    operator_learning_context_seconds: float = 20.0     # transcript window before a click
+    operator_learning_tail_words: int = 12               # words of that window kept per advance
+    operator_learning_file: str = "data/operator-slide-advances.json"
+    operator_learning_max_samples: int = 8               # newest samples kept per slide
+    operator_learning_min_samples: int = 2               # before the follower uses a slide's history
+    operator_learning_min_dwell_fraction: float = 0.35   # no advance before this share of the usual slide time (0 = off)
+    operator_learning_memory: bool = True                # also write advances to production memory (RAG)
+
     # Phase 2: event-driven decision ticks + predictive PTZ preview staging.
     ai_director_event_driven: bool = False       # nudge a decision tick on key events
     ai_director_event_min_interval_seconds: float = 1.0  # debounce event nudges

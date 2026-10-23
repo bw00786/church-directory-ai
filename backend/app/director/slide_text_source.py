@@ -68,6 +68,7 @@ _OCR_JUNK = re.compile(
 )
 _SAME_SLIDE_RATIO = 0.85
 _OCR_MIN_INTERVAL_SECONDS = 1.5
+_OCR_SHARE_SECONDS = 1.0
 
 
 def _key(label: str) -> str:
@@ -230,9 +231,27 @@ def _clean_ocr(segments: List[str]) -> str:
     return " ".join(s for s in segments if not _OCR_JUNK.search(s)).strip()
 
 
+_ocr_cache_lock = threading.Lock()
+_ocr_cache: tuple = (float("-inf"), [])
+
+
 def _read_slides_feed() -> List[str]:
-    frame, _ = frame_capture.get_frame(SLIDE_TAG)
-    return slide_ocr.read_segments(frame)
+    """OCR the camera-2 slides feed; reads within _OCR_SHARE_SECONDS are shared."""
+    global _ocr_cache
+    # The follower and the operator-advance recorder both read the screen; OCR is the costly part.
+    with _ocr_cache_lock:
+        at, segments = _ocr_cache
+        if time.monotonic() - at < _OCR_SHARE_SECONDS:
+            return list(segments)
+        frame, _ = frame_capture.get_frame(SLIDE_TAG)
+        segments = slide_ocr.read_segments(frame)
+        _ocr_cache = (time.monotonic(), segments)
+        return list(segments)
+
+
+def read_slide_text() -> str:
+    """Cleaned text currently on the camera-2 slides feed ("" when unknown)."""
+    return _clean_ocr(_read_slides_feed())
 
 
 class OcrSlideReader:
@@ -430,6 +449,21 @@ def _live_slide_number() -> Optional[int]:
     return easyworship_service.live_slide_number()
 
 
+def slides_capture_available() -> bool:
+    use_dir = settings.vision_frame_source == "dir" and bool(settings.vision_frame_dir)
+    return use_dir or bool(settings.slide_verify_device)
+
+
+async def ensure_slides_capture() -> bool:
+    """Capture the camera-2 slides feed if a device is configured; True when available."""
+    if not slides_capture_available():
+        return False
+    if not frame_capture.has_input(SLIDE_TAG):
+        register_slide_capture_input()
+    await frame_capture.start()
+    return True
+
+
 async def start_song_follower_capture() -> None:
     """Make sure the camera-2 slides feed is captured for follower OCR.
 
@@ -441,15 +475,12 @@ async def start_song_follower_capture() -> None:
         return
     if settings.slide_verify_enabled:
         return
-    use_dir = settings.vision_frame_source == "dir" and bool(settings.vision_frame_dir)
-    if not use_dir and not settings.slide_verify_device:
+    if not await ensure_slides_capture():
         logger.warning(
             "Song follower OCR has no slides feed; set SLIDE_VERIFY_DEVICE to the camera-2 "
             "(EasyWorship PC) capture device, or supply slide texts"
         )
         return
-    register_slide_capture_input()
-    await frame_capture.start()
     logger.info("Song follower slides capture started", device=settings.slide_verify_device)
 
 

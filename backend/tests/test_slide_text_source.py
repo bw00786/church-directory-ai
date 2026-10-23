@@ -250,9 +250,11 @@ class _RollDriver:
 async def test_next_slide_in_item_advances():
     driver = _RollDriver()
     svc = EasyWorshipService(driver=driver)
+    assert svc.commanded_within(3.0) is False
     assert await svc.next_slide_in_item() is True
     assert (driver.state.pres_no, driver.state.slide_no) == (2, 2)
     assert svc.live_slide_number() == 2
+    assert svc.commanded_within(3.0) is True  # operator learning ignores this change
 
 
 async def test_next_slide_in_item_steps_back_at_end_of_item():
@@ -282,6 +284,8 @@ def test_slide_texts_api_roundtrip(tmp_path, monkeypatch):
     assert client.delete("/director/slide-texts/Scripture").status_code == 200
     assert client.delete("/director/slide-texts/Scripture").status_code == 404
     assert client.get("/director/follower").status_code == 200
+    learned = client.get("/director/operator-advances")
+    assert learned.status_code == 200 and "history" in learned.json()
 
 
 def test_whisper_roles_include_follower_roles(monkeypatch):

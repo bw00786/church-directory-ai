@@ -75,6 +75,9 @@ class FrameCaptureService:
                 inp._task = asyncio.get_running_loop().create_task(self._poll(inp))
         logger.info("Vision input registered", tag=tag, hz=rate)
 
+    def has_input(self, tag: str) -> bool:
+        return tag in self._inputs
+
     def push_frame(self, tag: str, frame) -> None:
         """Directly set a frame (used by tests and the dir replay driver)."""
         inp = self._inputs.get(tag)

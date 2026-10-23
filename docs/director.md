@@ -390,6 +390,13 @@ current slide are heard. The cue engine still owns moving between items.
   the next time through a song the follower also knows the next slide.
 - `SONG_FOLLOWER_SCOPE=texts` (default) also follows any item you supplied texts
   for, whatever the cue; `always` follows every item.
+- It learns from you. Every slide you advance by hand (in any mode, including
+  `manual`) is recorded with the slide text from camera 2, the words heard just
+  before your click and how long the slide was up. After a couple of services
+  the follower advances on the same words you did and won't move a slide much
+  earlier than you usually would. The AI director also finds these advances in
+  production memory. See `GET /api/director/operator-advances` and
+  [ai-director.md](ai-director.md#learning-from-the-operators-own-slide-advances).
 
 Supply slide text per EasyWorship item (label as in the cue sheet, e.g.
 `Call to Worship`, `Hymn of Praise`, `Scripture`), one blank line between
@@ -437,6 +444,7 @@ for the matching rules and all `SONG_FOLLOWER_*` settings.
 | PUT      | `/director/slide-texts`  | Set an item's slide text (`{"label": ..., "text": ...}`, blank line between slides) |
 | DELETE   | `/director/slide-texts/{label}` | Remove an item's text (follower falls back to OCR) |
 | GET      | `/director/follower`     | What the slide follower is tracking (item, slide, OCR text, pending advance) |
+| GET      | `/director/operator-advances` | What's been learned from the operator's manual slide advances |
 | WS       | `/ws/director`           | Live cue/action stream               |
 
 The frontend [CueSheet](../frontend/src/components/CueSheet.tsx) panel

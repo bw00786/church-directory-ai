@@ -128,6 +128,13 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Failed to start Ollama discovery")
 
+    # Learn from the operator's own slide advances (EasyWorship + camera 2).
+    try:
+        from app.director.operator_learning import operator_advance_recorder
+        await operator_advance_recorder.start()
+    except Exception:
+        logger.exception("Failed to start operator slide-advance learning")
+
     # Auto-detect ATEM: connect the shared service at startup so the real
     # bridge is used automatically when reachable, mock otherwise.
     try:
@@ -226,6 +233,11 @@ async def lifespan(app: FastAPI):
         await ollama_locator.stop()
     except Exception:
         logger.exception("Failed to stop Ollama discovery")
+    try:
+        from app.director.operator_learning import operator_advance_recorder
+        await operator_advance_recorder.stop()
+    except Exception:
+        logger.exception("Failed to stop operator slide-advance learning")
     logger.info("Church Production Director shutting down...")
 
 

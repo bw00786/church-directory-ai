@@ -135,6 +135,10 @@ class AIDirectorRuntime:
             await start_song_follower_capture()
         except Exception:
             logger.exception("Song follower slide-text source unavailable")
+        if settings.operator_learning_enabled:
+            from app.director.operator_learning import operator_advance_history
+
+            song_follower_service.set_history(operator_advance_history)
         self._task = asyncio.create_task(self._run())
         self._event_task = asyncio.create_task(self._event_listener())
         self._follower_task = asyncio.create_task(self._follower_listener())

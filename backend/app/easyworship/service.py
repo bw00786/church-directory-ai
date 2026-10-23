@@ -1,6 +1,7 @@
 """EasyWorship slide-control service."""
 
 import asyncio
+import time
 from typing import Callable, Optional
 
 from app.config import settings
@@ -39,6 +40,7 @@ class EasyWorshipService:
         # plan's easyworship_item order). See select_item().
         self._current_item_index = 0
         self._current_item_label: Optional[str] = None
+        self._last_command_at = float("-inf")
         if self._driver.supports_confirmation:
             self._driver.on_state = self._on_remote_state  # type: ignore[attr-defined]
 
@@ -76,6 +78,23 @@ class EasyWorshipService:
         """1-based slide number EasyWorship reports for the live item, if known."""
         state = self._remote_state()
         return state.slide_no if state is not None and state.slide_no else None
+
+    @property
+    def live_state(self):
+        """EasyWorship's reported live state (remote-protocol driver only), else None."""
+        return self._remote_state()
+
+    def commanded_within(self, seconds: float) -> bool:
+        """Did this app send EasyWorship a navigation command in the last ``seconds``?"""
+        return time.monotonic() - self._last_command_at <= seconds
+
+    def item_label_for(self, pres_no: Optional[int]) -> Optional[str]:
+        """Service-plan label of the EasyWorship schedule item ``pres_no`` (1-based)."""
+        if not pres_no:
+            return None
+        index = pres_no - 1 - settings.easyworship_schedule_offset
+        labels = self._item_labels()
+        return labels[index] if 0 <= index < len(labels) else None
 
     def _on_remote_state(self, state) -> None:
         self._connected = state.paired
@@ -125,6 +144,7 @@ class EasyWorshipService:
             logger.warning("Unknown EasyWorship item label", label=label)
             return False
         target_index = labels.index(label)
+        self._last_command_at = time.monotonic()
 
         if self._driver.supports_confirmation:
             number = target_index + 1 + settings.easyworship_schedule_offset
@@ -165,6 +185,7 @@ class EasyWorshipService:
             # Try a lazy (re)connect before giving up.
             self._connected = await self._driver.connect()
 
+        self._last_command_at = time.monotonic()
         before = self._remote_state()
         snapshot = (before.pres_no, before.slide_no, before.status_count, _identity(before)) if before else None
 
@@ -253,6 +274,7 @@ class EasyWorshipService:
             return False
         before = self._remote_state()
         before_id = _identity(before) if before else None
+        self._last_command_at = time.monotonic()
         ok = await self._driver.goto_slide(number)  # type: ignore[attr-defined]
         if ok:
             ok = await self._confirm(
