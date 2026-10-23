@@ -36,9 +36,10 @@ service.
 ## Ollama inference configuration
 
 Ollama runs on the EasyWorship PC and is called over its REST API by the shared
-`ChatOllama` factory. `OLLAMA_BASE_URL` overrides the server; when empty it is
-`http://<EASYWORSHIP_REMOTE_HOST>:11434` (or the `EASYWORSHIP_AGENT_URL` host),
-falling back to `http://127.0.0.1:11434`. `OLLAMA_MODEL`, `OLLAMA_FAST_MODEL` and
+`ChatOllama` factory. `OLLAMA_BASE_URL` overrides the server; when empty the
+backend auto-discovers Ollama on the EasyWorship PC (DHCP-safe: configured
+EasyWorship host, the remote driver's / mDNS-discovered PC, localhost, then a
+port-11434 subnet sweep; see `OLLAMA_DISCOVERY_*`). `OLLAMA_MODEL`, `OLLAMA_FAST_MODEL` and
 `OLLAMA_VISION_MODEL` all default to `qwen3.8:latest`: the exact locally installed
 tag, **not** `qwen3:8b` or a claim of official registry availability. Local metadata
 reports 27.3B, family `qwen35`, with completion, tools, thinking and vision

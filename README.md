@@ -268,7 +268,7 @@ the EasyWorship PC. Configure the following in your private environment, using
 [.env.example](.env.example) as a reference (do not overwrite existing secrets):
 
 ```dotenv
-OLLAMA_BASE_URL=            # empty => http://<EASYWORSHIP_REMOTE_HOST>:11434
+OLLAMA_BASE_URL=            # empty => auto-discover Ollama on the EasyWorship PC (DHCP-safe)
 OLLAMA_MODEL=qwen3.8:latest
 OLLAMA_FAST_MODEL=qwen3.8:latest
 OLLAMA_VISION_MODEL=qwen3.8:latest
@@ -287,8 +287,11 @@ official registry availability**. Other machines need a matching provisioned tag
 or explicit model overrides with the required capabilities. Setup/start scripts
 do not install Ollama, start its server, or download models. On the EasyWorship
 PC, set the Windows environment variable `OLLAMA_HOST=0.0.0.0:11434`, restart
-Ollama, and allow inbound TCP 11434 **only from the backend machine** (Ollama has
-no authentication). Run `ollama list` there to confirm the exact tag.
+Ollama, and allow inbound TCP 11434 **only from the local subnet** (Ollama has
+no authentication). Run `ollama list` there to confirm the exact tag. With
+`OLLAMA_BASE_URL` empty the backend finds the EasyWorship PC's Ollama by itself
+after DHCP address changes (see `OLLAMA_DISCOVERY_*` in
+[backend setup](docs/backend-setup.md#ollama-inference-check)).
 
 `GET /health/ollama` replaces `/health/anthropic`: it checks model metadata and
 performs bounded inference. Normal `GET /health` remains lightweight and does not

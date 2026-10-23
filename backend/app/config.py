@@ -39,13 +39,21 @@ class Settings(BaseSettings):
     postgres_max_overflow: int = 20
     
     # Ollama (Qwen) running on the EasyWorship PC; all inference goes through
-    # app.agents.llm over Ollama's REST API. Empty OLLAMA_BASE_URL => port
-    # 11434 on EASYWORSHIP_REMOTE_HOST (or the EASYWORSHIP_AGENT_URL host),
-    # else localhost. Existing ANTHROPIC_* dotenv entries are ignored.
+    # app.agents.llm over Ollama's REST API. Empty OLLAMA_BASE_URL => found
+    # automatically (see app.agents.ollama_discovery), starting with port 11434
+    # on EASYWORSHIP_REMOTE_HOST / the EASYWORSHIP_AGENT_URL host.
+    # Existing ANTHROPIC_* dotenv entries are ignored.
     ollama_base_url: str = ""
     ollama_model: str = "qwen3.8:latest"
     ollama_fast_model: str = "qwen3.8:latest"
     ollama_vision_model: str = "qwen3.8:latest"
+    # DHCP auto-discovery of the EasyWorship PC's Ollama (only when OLLAMA_BASE_URL
+    # is empty): EasyWorship host/mDNS, localhost, then a port-11434 sweep.
+    ollama_discovery_enabled: bool = True
+    ollama_discovery_scan: bool = True
+    ollama_discovery_subnets: str = ""  # comma-separated /24 prefixes; empty => this machine's /24
+    ollama_discovery_interval_seconds: float = Field(default=60.0, ge=5)
+    ollama_discovery_timeout_seconds: float = Field(default=1.5, gt=0, le=30)
     ollama_num_ctx: int = Field(default=16384, ge=2048, le=262144)
     ollama_keep_alive: str = "10m"
     ollama_reasoning: bool = False

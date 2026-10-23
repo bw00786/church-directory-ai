@@ -153,10 +153,20 @@ browser/proxy configuration. Do not automatically retry a chat timeout: a tool
 may already have executed. Inspect status and pending confirmations first.
 
 Ollama runs on the EasyWorship PC. With `OLLAMA_BASE_URL` empty the backend
-calls `http://<EASYWORSHIP_REMOTE_HOST>:11434` (or the `EASYWORSHIP_AGENT_URL`
-host, else localhost). On the EasyWorship PC set the Windows environment
+finds it automatically, which suits a DHCP network
+([`ollama_discovery.py`](../backend/app/agents/ollama_discovery.py)). It tries,
+in order: the last address that answered, `EASYWORSHIP_REMOTE_HOST` / the
+`EASYWORSHIP_AGENT_URL` host, the EasyWorship PC found by the remote driver or
+mDNS, localhost, then a sweep of `OLLAMA_DISCOVERY_SUBNETS` (default: the
+backend's own /24) for port 11434. A host counts only if `/api/tags` answers
+like Ollama; one with `OLLAMA_MODEL` installed wins. It re-checks every
+`OLLAMA_DISCOVERY_INTERVAL_SECONDS` and right after a failed call, so a new
+lease heals without a restart; `GET /health/ollama` shows the result under
+`discovery`. Setting `OLLAMA_BASE_URL` turns discovery off. The EasyWorship
+remote driver likewise rediscovers the PC over mDNS when a discovered address
+stops answering. On the EasyWorship PC set the Windows environment
 variable `OLLAMA_HOST=0.0.0.0:11434`, restart Ollama, and allow inbound TCP
-11434 only from the backend machine: Ollama has no authentication. For
+11434 only from the local subnet: Ollama has no authentication. For
 containers, configure a server address reachable from inside the container.
 The migration uses JSON for director/classifier/vision
 results, normal tool-calling for the assistant, and retains all policy gates.

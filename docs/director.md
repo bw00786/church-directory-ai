@@ -114,7 +114,7 @@ decisions use `get_fast_llm()` in JSON mode with a bounded invocation. The
 (27.3B, family `qwen35`), not `qwen3:8b` or a promise of public registry
 availability. Other machines need a matching provisioned tag or an explicit
 compatible override. Ollama runs on the EasyWorship PC: `OLLAMA_BASE_URL`, or
-`http://<EASYWORSHIP_REMOTE_HOST>:11434` when empty;
+auto-discovered on the network when empty (DHCP-safe);
 the timeout is `LLM_TIMEOUT_SECONDS=120`. Full settings and the manual probe
 are in [backend setup](backend-setup.md#ollama-inference-check).
 

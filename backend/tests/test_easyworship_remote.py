@@ -451,3 +451,24 @@ def test_state_as_dict_roundtrip():
     s = EWState(paired=True, pres_no=3, slide_no=2)
     d = s.as_dict()
     assert d["paired"] is True and d["pres_no"] == 3 and d["slide_no"] == 2
+
+
+async def test_discovered_address_is_rediscovered_after_connect_failure(monkeypatch):
+    import app.easyworship.remote_protocol as rp
+
+    found = iter([("127.0.0.1", 1, "Old lease"), ("127.0.0.1", 2, "New lease")])
+
+    async def discover(timeout, server_name=None):
+        return next(found)
+
+    monkeypatch.setattr(rp, "discover_easyworship", discover)
+    driver = RemoteProtocolDriver(uid="u", discovery_seconds=1, connect_timeout=0.5)
+    driver.host = driver.port = None
+    assert await driver._open_once() is False  # nothing listens on port 1
+    assert driver.host is None and driver.port is None
+    assert await driver._resolve_address() is True
+    assert driver.port == 2
+
+    configured = RemoteProtocolDriver("127.0.0.1", 1, uid="u", discovery_seconds=0, connect_timeout=0.5)
+    assert await configured._open_once() is False
+    assert configured.host == "127.0.0.1"  # configured addresses are kept

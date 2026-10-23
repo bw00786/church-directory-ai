@@ -215,6 +215,7 @@ class RemoteProtocolDriver(EasyWorshipDriver):
         self._retry_started_at: Optional[float] = None
         self._retry_attempts = 0
         self.reconnect_count = 0
+        self._discovered = False
 
     # -- identity / addressing -----------------------------------------------
     @property
@@ -233,6 +234,7 @@ class RemoteProtocolDriver(EasyWorshipDriver):
             logger.warning("No EasyWorship remote server discovered via mDNS")
             return False
         self.host, self.port, name = result
+        self._discovered = True
         logger.info("Discovered EasyWorship server", server=name, host=self.host, port=self.port)
         return True
 
@@ -322,6 +324,10 @@ class RemoteProtocolDriver(EasyWorshipDriver):
         except Exception as e:
             logger.warning("EasyWorship remote connect failed", host=self.host, port=self.port, error=str(e))
             self._reader = self._writer = None
+            if self._discovered:
+                # A DHCP lease change moves the PC (and the announced port): rediscover next time.
+                self.host = self.port = None
+                self._discovered = False
             return False
 
         self.state.connected = True

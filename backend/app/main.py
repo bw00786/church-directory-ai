@@ -121,6 +121,13 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Failed to start EasyWorship service")
 
+    # Find Ollama on the EasyWorship PC (DHCP) unless OLLAMA_BASE_URL is set.
+    try:
+        from app.agents.ollama_discovery import ollama_locator
+        await ollama_locator.start()
+    except Exception:
+        logger.exception("Failed to start Ollama discovery")
+
     # Auto-detect ATEM: connect the shared service at startup so the real
     # bridge is used automatically when reachable, mock otherwise.
     try:
@@ -214,6 +221,11 @@ async def lifespan(app: FastAPI):
         await easyworship_service.stop()
     except Exception:
         logger.exception("Failed to stop EasyWorship service")
+    try:
+        from app.agents.ollama_discovery import ollama_locator
+        await ollama_locator.stop()
+    except Exception:
+        logger.exception("Failed to stop Ollama discovery")
     logger.info("Church Production Director shutting down...")
 
 

@@ -6,26 +6,19 @@ from typing import Optional
 from urllib.parse import urlsplit
 
 import httpx
+from httpx import TransportError
 from langchain_ollama import ChatOllama
 
+from app.agents.ollama_discovery import OLLAMA_DEFAULT_PORT, ollama_locator  # noqa: F401
 from app.config import settings
 from app.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-OLLAMA_DEFAULT_PORT = 11434
-
 
 def ollama_base_url() -> str:
-    """OLLAMA_BASE_URL, else Ollama's default port on the EasyWorship PC."""
-    configured = settings.ollama_base_url.strip()
-    if configured:
-        return configured.rstrip("/")
-    host = settings.easyworship_remote_host or urlsplit(settings.easyworship_agent_url or "").hostname
-    host = (host or "127.0.0.1").strip()
-    if ":" in host and not host.startswith("["):
-        host = f"[{host}]"
-    return f"http://{host}:{OLLAMA_DEFAULT_PORT}"
+    """OLLAMA_BASE_URL, else Ollama on the EasyWorship PC (auto-discovered on DHCP networks)."""
+    return ollama_locator.base_url()
 
 
 def build_llm(*, model: Optional[str] = None, temperature: Optional[float] = None,
@@ -82,7 +75,12 @@ def response_text(response) -> str:
 
 
 async def invoke_llm(llm, messages):
-    return await asyncio.wait_for(llm.ainvoke(messages), timeout=settings.llm_timeout_seconds)
+    try:
+        return await asyncio.wait_for(llm.ainvoke(messages), timeout=settings.llm_timeout_seconds)
+    except (TransportError, ConnectionError, asyncio.TimeoutError):
+        # The EasyWorship PC may have a new DHCP address.
+        ollama_locator.request_resolve()
+        raise
 
 
 async def check_ollama_connection() -> dict:
@@ -97,8 +95,10 @@ async def check_ollama_connection() -> dict:
             if not reply:
                 raise ValueError("Ollama returned an empty response")
             return {"ok": True, "provider": "ollama", "model": settings.ollama_model, "base_url": ollama_base_url(),
-                    "capabilities": capabilities, "reply": reply}
+                    "capabilities": capabilities, "reply": reply, "discovery": ollama_locator.status()}
     except Exception as exc:
         logger.warning("Ollama connectivity check failed", error_type=type(exc).__name__)
+        ollama_locator.request_resolve()
         return {"ok": False, "provider": "ollama", "model": settings.ollama_model, "base_url": ollama_base_url(),
+                "discovery": ollama_locator.status(),
                 "error": f"Ollama check failed ({type(exc).__name__}); check server, model tag and timeout"}

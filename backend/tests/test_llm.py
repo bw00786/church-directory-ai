@@ -22,6 +22,11 @@ FACTORIES = (
     llm_module.get_fast_llm, llm_module.get_vision_llm,
 )
 
+# OLLAMA_BASE_URL is set in these tests, so discovery stays off.
+CONFIGURED_DISCOVERY = {
+    "enabled": False, "host": None, "source": None, "base_url": "http://ollama.invalid:11434",
+}
+
 
 @pytest.fixture(autouse=True)
 def isolated_llm_settings(monkeypatch):
@@ -286,6 +291,7 @@ async def test_check_ollama_connection_success(probe):
         "ok": True, "provider": "ollama", "model": "qwen3.8:latest",
         "base_url": "http://ollama.invalid:11434",
         "capabilities": ["completion", "tools", "vision"], "reply": "pong",
+        "discovery": CONFIGURED_DISCOVERY,
     }
     probe.builder.assert_called_once_with(max_tokens=32)
     assert probe.options == [{"timeout": 120, "trust_env": False}]
@@ -300,7 +306,7 @@ async def test_check_ollama_connection_success(probe):
 def assert_probe_failure(result, error_type):
     assert result == {
         "ok": False, "provider": "ollama", "model": "qwen3.8:latest",
-        "base_url": "http://ollama.invalid:11434",
+        "base_url": "http://ollama.invalid:11434", "discovery": CONFIGURED_DISCOVERY,
         "error": f"Ollama check failed ({error_type}); check server, model tag and timeout",
     }
 

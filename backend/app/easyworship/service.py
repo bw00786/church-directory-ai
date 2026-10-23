@@ -63,6 +63,11 @@ class EasyWorshipService:
     def confirms_actions(self) -> bool:
         return self._driver.supports_confirmation and settings.easyworship_confirm_actions
 
+    @property
+    def remote_host(self) -> Optional[str]:
+        """The EasyWorship PC's address when the driver knows it (configured or mDNS-discovered)."""
+        return getattr(self._driver, "host", None)
+
     # -- remote-protocol state ------------------------------------------------
     def _remote_state(self):
         return getattr(self._driver, "state", None)
