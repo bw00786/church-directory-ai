@@ -92,6 +92,16 @@ export function useAtem() {
     }
   }
 
+  /** Undo the last program change (hard cut back). 409 = nothing to undo. */
+  const undoProgram = async () => {
+    try {
+      await atemAPI.undoProgram()
+      await refreshStatus()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Nothing to undo')
+    }
+  }
+
   const setStreaming = async (streaming: boolean) => {
     try {
       await (streaming ? atemAPI.startStream() : atemAPI.stopStream())
@@ -128,6 +138,7 @@ export function useAtem() {
     setPreview,
     performCut,
     performAuto,
+    undoProgram,
     setStreaming,
     setRecording,
     setMicMuted,

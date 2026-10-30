@@ -320,9 +320,16 @@ async def test_easyworship_slide_action_rejects_unknown():
     assert result["ok"] is False
 
 
-def test_list_easyworship_items_matches_plan():
+def test_list_easyworship_items_matches_plan(monkeypatch):
+    # Other suites may install the cue-sheet plan on the global context; the
+    # tool must list whatever plan is live, so pin the default one here.
+    from app.domain.service_context import service_context
+    from app.domain.service_plan import build_default_service_plan
+
+    monkeypatch.setattr(service_context, "plan", build_default_service_plan())
     result = _parse(assistant_tools.list_easyworship_items.invoke({}))
     assert "Sermon" in result["items"]
+    assert result["items"] == [el.easyworship_item for el in service_context.plan.elements if el.easyworship_item]
 
 
 # -- Mixer (software-DSP layer via mgx-ai-mixer) -------------------------------

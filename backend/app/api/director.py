@@ -227,7 +227,8 @@ async def suggest(request: SuggestRequest):
 
 @router.post("/observe")
 async def observe(request: ObserveRequest):
-    """Let the AI evaluate an observation and decide whether to advance."""
+    """Let the AI evaluate an observation; any advance becomes a CUE_ADVANCE
+    proposal in the AI Director's queue and honours the operating mode."""
     from app.agents.director_ai import director_ai
 
     return await director_ai.observe(request.text)
@@ -238,17 +239,23 @@ async def observe(request: ObserveRequest):
 
 @router.get("/ai/status")
 async def ai_status():
-    """Current AI Director mode, service context snapshot, and pending actions."""
+    """Current AI Director mode, service context snapshot, pending proposals
+    (with ids, TTL and hold reasons), last cycle timing and adaptive thresholds."""
     from app.audio.audio_observer import audio_observer
     from app.vision.perception import perception_loop
 
     return {
-        "mode": ai_director_runtime.mode,
+        **ai_director_runtime.status(),
         "context": service_context.snapshot(),
-        "pending_actions": [a.model_dump(mode="json") for a in ai_director_runtime.pending_actions],
         "perception": audio_observer.perception_status(),
         "vision": perception_loop.status(),
     }
+
+
+@router.get("/ai/pending")
+async def list_pending_actions():
+    """Pending AI proposals awaiting operator approval (or a pacing retry)."""
+    return {"pending_actions": ai_director_runtime.pending_proposals()}
 
 
 @router.get("/ai/mode")
@@ -274,20 +281,29 @@ async def ai_tick():
     return decision.model_dump(mode="json")
 
 
-@router.post("/ai/pending/{index}/approve")
-async def approve_pending_action(index: int):
-    """Approve and execute a pending (assisted-mode) AI-proposed action."""
+@router.post("/ai/pending/{ref}/approve")
+async def approve_pending_action(ref: str):
+    """Approve and execute a pending (assisted-mode) AI proposal by **id**.
+
+    A purely numeric ``ref`` is treated as the legacy queue index (kept for one
+    release; index routes resolve index -> id before acting)."""
     try:
-        return await ai_director_runtime.approve_pending(index)
+        return await ai_director_runtime.approve_pending(ref)
     except IndexError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"No pending proposal {ref}")
 
 
-@router.post("/ai/pending/{index}/reject")
-async def reject_pending_action(index: int):
-    """Reject (discard) a pending AI-proposed action."""
-    ai_director_runtime.reject_pending(index)
-    return {"ok": True}
+@router.post("/ai/pending/{ref}/reject")
+async def reject_pending_action(ref: str):
+    """Reject (discard) a pending AI proposal by id (or legacy index)."""
+    try:
+        return ai_director_runtime.reject_pending(ref)
+    except IndexError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"No pending proposal {ref}")
 
 
 # -- Song / reading follower ---------------------------------------------------

@@ -107,7 +107,14 @@ class EasyWorshipService:
 
     def _on_remote_state(self, state) -> None:
         self._connected = state.paired
-        event_bus.publish({"event": "EASYWORSHIP_STATE", "payload": state.as_dict()})
+        payload = state.as_dict()
+        # Service-plan label of the live schedule item, so subscribers (the
+        # context sync, the operator UI) need not repeat the pres_no lookup.
+        try:
+            payload["item_label"] = self.item_label_for(getattr(state, "pres_no", None))
+        except Exception:
+            payload["item_label"] = None
+        event_bus.publish({"event": "EASYWORSHIP_STATE", "payload": payload})
 
     async def _confirm(self, predicate: Callable, description: str) -> bool:
         """Wait for EasyWorship to report the expected position."""

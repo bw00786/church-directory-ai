@@ -1,6 +1,7 @@
 """ATEM service implementation."""
 
 import asyncio
+from collections import deque
 import contextlib
 from datetime import datetime
 from typing import Optional
@@ -71,6 +72,8 @@ class AtemService:
         self._mic_mute_supported: Optional[bool] = None
         # Last program/preview this service commanded: (input_id, monotonic time).
         self._commanded: dict[str, tuple[int, float]] = {}
+        # Program history (newest last) for "undo last cut": (previous_input, new_input, monotonic time).
+        self._program_history: deque[tuple[int, int, float]] = deque(maxlen=20)
         
         if self.mock or self.auto_detect:
             from .mock import MockAtemClient
@@ -119,6 +122,8 @@ class AtemService:
             )
             if by_us:
                 self._commanded.pop(field, None)
+            if field == "program_input":
+                self._program_history.append((old_value, new_value, now))
             event_bus.publish({
                 "event": event,
                 "payload": {
@@ -136,6 +141,36 @@ class AtemService:
 
     def _note_command(self, field: str, input_id: int) -> None:
         self._commanded[field] = (input_id, asyncio.get_running_loop().time())
+
+    def last_program_change(self) -> Optional[dict]:
+        """The most recent program change seen by polling: {previous, current, age_seconds}."""
+        if not self._program_history:
+            return None
+        previous, current, at = self._program_history[-1]
+        return {
+            "previous": previous,
+            "current": current,
+            "age_seconds": round(asyncio.get_running_loop().time() - at, 1),
+        }
+
+    async def undo_last_program(self) -> "AtemStateModel":
+        """Cut program back to the input that was live before the last change.
+
+        Operator safety net for a wrong cut (human or AI). Uses a hard cut so
+        the recovery is instant, and records the undo itself as a change so a
+        second undo redoes. Raises ``LookupError`` when there is nothing to undo.
+        """
+        if not self._connected:
+            raise ConnectionError("ATEM not connected")
+        state = await self.get_state()
+        last = self.last_program_change()
+        if last is None:
+            raise LookupError("no program change to undo")
+        target = last["previous"]
+        if target == state.program_input:
+            raise LookupError(f"program is already on input {target}")
+        logger.info("Undoing last program change", from_input=state.program_input, to_input=target)
+        return await self.set_program(target)
 
     @staticmethod
     def _json(response: httpx.Response) -> dict:

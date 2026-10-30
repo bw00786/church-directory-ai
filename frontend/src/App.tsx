@@ -24,6 +24,7 @@ import { ApiKeyGate } from './components/ApiKeyGate'
 import { SystemStatus } from './components/SystemStatus'
 import { VisionPanel } from './components/VisionPanel'
 import { VoiceAttentionPanel } from './components/VoiceAttentionPanel'
+import { useHealth } from './hooks/useHealth'
 
 export function App() {
   return (
@@ -40,13 +41,7 @@ export function App() {
               AI-assisted worship production control
             </Typography>
           </Box>
-          <Chip
-            icon={<FiberManualRecordIcon sx={{ fontSize: 12 }} />}
-            label="System Online"
-            color="success"
-            variant="outlined"
-            size="small"
-          />
+          <SystemChip />
         </Toolbar>
       </AppBar>
 
@@ -96,7 +91,9 @@ export function App() {
             }}
           >
             <VoiceAttentionPanel />
-            <SystemStatus />
+            <Box id="system-status" sx={{ scrollMarginTop: 24 }}>
+              <SystemStatus />
+            </Box>
           </Box>
 
           <Box id="ai-director-panel" tabIndex={-1} sx={{ scrollMarginTop: 24 }}>
@@ -113,6 +110,28 @@ export function App() {
         </Stack>
       </Container>
     </Box>
+  )
+}
+
+/** Live readiness chip: ready / degraded / not ready / offline from GET /health/ready. */
+function SystemChip() {
+  const { ready, backendDown } = useHealth()
+  const status = backendDown ? 'offline' : ready?.status ?? 'checking'
+  const color = status === 'ready' ? 'success' : status === 'degraded' ? 'warning' : status === 'checking' ? 'default' : 'error'
+  const label = status === 'ready' ? 'System Ready' : status === 'degraded' ? 'Degraded' : status === 'not_ready' ? 'Not Ready' : status === 'offline' ? 'Backend Offline' : 'Checking…'
+  const down = ready ? Object.entries(ready.components).filter(([, c]) => c.status === 'down' || c.status === 'degraded').map(([k, c]) => `${k}: ${c.detail}`) : []
+  return (
+    <Chip
+      icon={<FiberManualRecordIcon sx={{ fontSize: 12 }} />}
+      label={label}
+      color={color}
+      variant="outlined"
+      size="small"
+      title={down.join('\n') || undefined}
+      component="a"
+      href="#system-status"
+      clickable
+    />
   )
 }
 

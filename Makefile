@@ -1,82 +1,94 @@
-.PHONY: help setup install dev test build clean docker-up docker-down format lint
+# Church Production Director — developer targets (POSIX shells: macOS, Linux,
+# Git Bash / WSL on Windows). Windows operators use the PowerShell launchers in
+# scripts/ instead (setup-windows.ps1, start-all.ps1).
+#
+# Backend commands run inside backend/ with the project's virtualenv if present.
+
+PY      ?= $(shell test -x backend/.venv/bin/python && echo backend/.venv/bin/python || echo python3)
+PYTEST  ?= $(PY) -m pytest -q -p no:cacheprovider
+NPM     ?= npm
+
+.PHONY: help setup install dev backend frontend test test-backend test-frontend \
+        lint lint-backend lint-frontend format typecheck build version clean \
+        docker-up docker-down migrate
 
 help:
 	@echo "Church Production Director - Build Targets"
 	@echo ""
-	@echo "setup            Setup development environment"
-	@echo "install          Install Python and Node dependencies"
-	@echo "dev              Start development servers"
-	@echo "backend          Start FastAPI backend"
-	@echo "frontend         Start React frontend"
-	@echo "test             Run all tests"
-	@echo "test-backend     Run backend tests"
-	@echo "test-frontend    Run frontend tests"
-	@echo "lint             Run linters (Python + TypeScript)"
-	@echo "format           Auto-format code"
-	@echo "build            Build production artifacts"
-	@echo "clean            Clean build artifacts"
-	@echo "docker-up        Start PostgreSQL via docker-compose"
-	@echo "docker-down      Stop docker services"
-	@echo ""
+	@echo "  setup            Create backend venv, install Python + Node dependencies, create .env"
+	@echo "  install          Install Python and Node dependencies into existing environments"
+	@echo "  backend          Start the FastAPI backend (reload) on API_HOST/API_PORT from .env"
+	@echo "  frontend         Start the Vite dev server"
+	@echo "  dev              Start backend and frontend (background jobs in this shell)"
+	@echo "  test             Run backend + frontend tests"
+	@echo "  lint             Ruff/black check + ESLint + tsc"
+	@echo "  format           Auto-format Python (black, isort) and TypeScript (prettier)"
+	@echo "  typecheck        mypy (backend) + tsc --noEmit (frontend)"
+	@echo "  build            Build the frontend bundle and the backend wheel"
+	@echo "  migrate          Create/upgrade the PostgreSQL schema"
+	@echo "  version          Check app/version.py, pyproject.toml and package.json agree"
+	@echo "  docker-up/down   Start/stop PostgreSQL (docker compose)"
+	@echo "  clean            Remove build artifacts"
 
 setup:
-	@echo "Setting up development environment..."
-	cd backend && python -m venv venv
-	.\backend\venv\Scripts\activate && pip install -r backend\requirements.txt
-	cd frontend && npm install
+	cd backend && python3 -m venv .venv && .venv/bin/pip install --upgrade pip && .venv/bin/pip install -r requirements.txt
+	cd frontend && $(NPM) install
+	@test -f .env || (cp .env.example .env && $(PY) scripts/generate_secrets.py .env && echo "Created .env with generated secrets; edit the hardware settings.")
 
 install:
-	@echo "Installing dependencies..."
-	cd backend && pip install -r requirements.txt
-	cd frontend && npm install
-
-dev:
-	@echo "Starting development servers..."
-	@start powershell -NoExit -Command "cd backend && python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
-	@timeout /t 2
-	@start powershell -NoExit -Command "cd frontend && npm run dev"
+	cd backend && $(PY) -m pip install -r requirements.txt
+	cd frontend && $(NPM) install
 
 backend:
-	cd backend && python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+	cd backend && $(PY) -m uvicorn app.main:app --reload --host $${API_HOST:-127.0.0.1} --port $${API_PORT:-8000}
 
 frontend:
-	cd frontend && npm run dev
+	cd frontend && $(NPM) run dev
 
-test:
-	@echo "Running all tests..."
-	cd backend && pytest
-	cd frontend && npm run test
+dev:
+	$(MAKE) backend & $(MAKE) frontend
+
+test: test-backend test-frontend
 
 test-backend:
-	cd backend && pytest -v
+	cd backend && $(PYTEST)
 
 test-frontend:
-	cd frontend && npm run test
+	cd frontend && $(NPM) run test
 
-lint:
-	@echo "Linting code..."
-	cd backend && pylint app tests
-	cd frontend && npm run lint
+lint: lint-backend lint-frontend
+
+lint-backend:
+	cd backend && $(PY) -m black --check app tests && $(PY) -m isort --check-only app tests
+
+lint-frontend:
+	cd frontend && $(NPM) run lint && npx tsc --noEmit
+
+typecheck:
+	cd backend && $(PY) -m mypy app || true
+	cd frontend && npx tsc --noEmit
 
 format:
-	@echo "Formatting code..."
-	cd backend && black app tests
-	cd frontend && npm run format
+	cd backend && $(PY) -m black app tests && $(PY) -m isort app tests
+	cd frontend && $(NPM) run format
 
 build:
-	@echo "Building production artifacts..."
-	cd backend && python -m pip install --upgrade build && python -m build
-	cd frontend && npm run build
+	cd frontend && $(NPM) run build
+	cd backend && $(PY) -m pip install --upgrade build >/dev/null && $(PY) -m build
 
-clean:
-	@echo "Cleaning build artifacts..."
-	cd backend && rm -r build dist *.egg-info __pycache__ .pytest_cache .coverage
-	cd frontend && rm -r dist node_modules
+migrate:
+	cd backend && $(PY) -m app.database.cli migrate
+
+version:
+	$(PY) scripts/check_version.py
 
 docker-up:
-	docker-compose up -d
+	docker compose up -d
 
 docker-down:
-	docker-compose down
+	docker compose down
 
-.PHONY: setup install dev backend frontend test test-backend test-frontend lint format build clean docker-up docker-down
+clean:
+	rm -rf backend/build backend/dist backend/*.egg-info backend/.pytest_cache backend/.coverage
+	find backend -name __pycache__ -type d -prune -exec rm -rf {} +
+	rm -rf frontend/dist

@@ -324,3 +324,47 @@ def test_plan_step_is_frozen():
     step = PlanStep("settle")
     with pytest.raises(Exception):
         step.op = "take"  # type: ignore[misc]
+
+
+# -- context sync hooks -------------------------------------------------------
+async def test_enter_cue_publishes_cue_entered_event_with_plan_entry(wiring):
+    atem, _, _, _ = wiring
+    atem.program = CAM2
+    d = ServiceDirector()
+    d._running = True
+    queue = await engine_mod.event_bus.subscribe()
+    try:
+        index = next(i for i, c in enumerate(d.script.cues) if c.id == "sermon")
+        await d._enter_cue(index)
+        events = []
+        while not queue.empty():
+            events.append(queue.get_nowait())
+    finally:
+        await engine_mod.event_bus.unsubscribe(queue)
+    entered = [e for e in events if isinstance(e, dict) and e.get("event") == engine_mod.EVENT_CUE_ENTERED]
+    assert len(entered) == 1
+    payload = entered[0]["payload"]
+    assert payload["cue_id"] == "sermon" and payload["index"] == index
+    assert payload["total"] == len(d.script.cues)
+    assert payload["label"] == "Sermon — Pastor"
+    assert payload["state"] == "sermon"
+    assert payload["speaker_role"] == "pastor" and payload["camera_role"] == "pastor"
+    assert payload["easyworship_item"] is None and payload["followable"] is False
+    # The event is published before the cue's actions run (so the context is
+    # right by the time the first cut lands).
+    first_action = next(i for i, e in enumerate(events) if isinstance(e, dict) and e.get("type") == "director_action")
+    assert events.index(entered[0]) < first_action
+
+
+async def test_engine_program_changes_go_through_context_setters(wiring):
+    atem, _, _, _ = wiring
+    atem.program = CAM2
+    ctx = engine_mod.service_context
+    ctx.set_program(CAM2)
+    version = ctx.version
+    d = _director([_atem(CAM1), _preset(3, "pastor")])
+    await d._enter_cue(0)
+    assert ctx.current_atem_program == CAM1
+    assert ctx.current_camera_role == "pastor"
+    assert ctx.last_cut_at is not None
+    assert ctx.version > version

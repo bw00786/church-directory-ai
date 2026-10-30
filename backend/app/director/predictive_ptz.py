@@ -59,6 +59,13 @@ class PredictivePreview:
         camera_id = _camera_for_role(role)
         if camera_id is None:
             return False
+        if self.is_on_program(role):
+            # Moving the camera that is on program would be an on-air pan.
+            logger.info("Predictive preview skipped: camera is on program", role=role, camera_id=camera_id)
+            event_bus.publish(
+                {"event": "PTZ_PRESTAGE_SKIPPED", "payload": {"role": role, "camera_id": camera_id, "reason": "on_program"}}
+            )
+            return False
 
         from app.cameras.service import camera_service
 
@@ -93,6 +100,18 @@ class PredictivePreview:
 
     def clear(self) -> None:
         self._staged_role = None
+
+    @classmethod
+    def is_on_program(cls, role: str) -> bool:
+        """True when the camera configured for ``role`` is the current ATEM program."""
+        from app.domain.service_context import service_context
+
+        camera_id = _camera_for_role(role)
+        if camera_id is None:
+            return False
+        atem_input = cls._atem_input_for(int(camera_id))
+        program = service_context.current_atem_program
+        return atem_input is not None and program is not None and int(program) == int(atem_input)
 
     @staticmethod
     def _atem_input_for(camera_id: int) -> Optional[int]:

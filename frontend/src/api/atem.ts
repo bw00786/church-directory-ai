@@ -34,6 +34,11 @@ export const atemAPI = {
     return client.post('/atem/auto')
   },
 
+  /** Cut back to the input that was on program before the last change (undo a wrong cut). */
+  async undoProgram() {
+    return client.post('/atem/program/undo')
+  },
+
   async startStream() {
     return client.post('/atem/stream/start')
   },

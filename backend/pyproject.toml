@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "church-production-director"
-version = "1.0.0"
+version = "1.1.0"
 description = "AI-assisted church worship production control system"
 readme = "README.md"
 license = {text = "MIT"}
@@ -15,52 +15,46 @@ authors = [
 requires-python = ">=3.11"
 
 dependencies = [
-    # Web Framework
+    # Web framework
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.35.0",
     "pydantic>=2.11.0",
     "pydantic-settings>=2.10.0",
-    
+
     # Database
     "sqlalchemy>=2.0.41",
     "psycopg[binary]>=3.3.0",
     "alembic>=1.12.0",
     "pgvector>=0.2.0",
-    
-    # AI/LangChain
+
+    # LLM (Ollama) + assistant graph
     "langgraph>=1.2.11,<1.3",
     "langgraph-prebuilt>=1.1.0,<1.2",
     "langchain-core>=1.6.3,<2",
     "langchain-ollama>=1.1.0,<2",
-    "voyageai>=0.3.0",
-    "sentence-transformers>=3.3.0",
-    "einops>=0.8.0",
-    "easyocr>=1.7.0",
-    
-    # Vision
-    "opencv-python>=4.10.0",
+
+    # Core numerics (audio resampler, frame handling)
     "numpy>=2.1.0",
 
-    # HTTP Client
+    # HTTP / WebSocket clients
     "httpx>=0.27.0,<1",
     "requests>=2.31.0",
     "websockets>=15.0,<17",
 
     # EasyWorship remote-protocol mDNS discovery
     "zeroconf>=0.132.0",
-    
+
     # Utilities
     "python-dotenv>=1.0.0",
     "structlog>=23.1.0",
     "python-multipart>=0.0.6",
-    
-    # Testing
-    "pytest>=7.4.0",
-    "pytest-asyncio>=0.21.0",
-    "pytest-cov>=4.1.0",
 ]
 
 [project.optional-dependencies]
+# Install only what the PC's role needs. A full church production PC:
+#   pip install -e ".[vision,audio,embeddings,voice]"   (== requirements.txt)
+vision = ["opencv-python>=4.10.0", "easyocr>=1.7.0", "onvif-zeep>=0.2.12"]
+embeddings = ["voyageai>=0.3.0", "sentence-transformers>=3.3.0", "einops>=0.8.0"]
 voice = ["sounddevice>=0.5,<0.6", "piper-tts==1.8.0", "truststore>=0.10,<1"]
 # MGX16 USB MAIN per-channel perception: Silero VAD (bundled weights) + Whisper.
 audio = ["sounddevice>=0.5,<0.6", "faster-whisper>=1.2,<2", "silero-vad>=6.2,<7"]

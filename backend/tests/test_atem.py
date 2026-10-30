@@ -495,3 +495,25 @@ async def test_program_changed_emitted_on_reconnect_if_state_moved(bus_rig):
     await atem.connect()
     events = [e for e in drain(queue) if e["event"] == "PROGRAM_CHANGED"]
     assert len(events) == 1 and events[0]["payload"]["previous_input"] == 1
+
+
+async def test_undo_last_program_cuts_back(mock_atem):
+    await mock_atem.connect()
+    first = await mock_atem.get_state()
+    assert first.program_input == 1
+    await mock_atem.set_program(2)
+    await mock_atem.get_state()  # poll notices the change and records history
+    assert mock_atem.last_program_change()["previous"] == 1
+    state = await mock_atem.undo_last_program()
+    assert state.program_input == 1
+    # Undo is itself a change: a second undo redoes.
+    await mock_atem.get_state()
+    state = await mock_atem.undo_last_program()
+    assert state.program_input == 2
+
+
+async def test_undo_without_history_raises(mock_atem):
+    await mock_atem.connect()
+    await mock_atem.get_state()
+    with pytest.raises(LookupError):
+        await mock_atem.undo_last_program()

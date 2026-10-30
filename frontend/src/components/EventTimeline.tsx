@@ -12,16 +12,10 @@ import TimelineIcon from '@mui/icons-material/Timeline'
 
 import { useVisionLive } from '@/hooks/useVisionLive'
 
-const DEMO_EVENTS = [
-  { time: '10:31:22', type: 'LIKELY_SPEAKER', confidence: '91%' },
-  { time: '10:31:28', type: 'GOOD_COMPOSITION', confidence: '94%' },
-  { time: '10:32:14', type: 'CAMERA_QUALITY_CHANGE', confidence: '87%' },
-  { time: '10:35:01', type: 'CONGREGATION_ACTIVE', confidence: '90%' },
-]
-
 export function EventTimeline() {
   const { active, events } = useVisionLive()
 
+  // Never show fabricated events: when vision is off the table is simply empty.
   const rows = active
     ? events
         .slice(-10)
@@ -32,7 +26,7 @@ export function EventTimeline() {
           type: event.type,
           confidence: `${Math.round(event.confidence * 100)}%`,
         }))
-    : DEMO_EVENTS
+    : []
 
   return (
     <Card>
@@ -42,7 +36,7 @@ export function EventTimeline() {
         titleTypographyProps={{ variant: 'subtitle2' }}
         action={
           !active ? (
-            <Chip label="Demo data" size="small" color="warning" variant="outlined" sx={{ mt: 1, mr: 1 }} />
+            <Chip label="Vision off" size="small" variant="outlined" sx={{ mt: 1, mr: 1 }} />
           ) : undefined
         }
       />

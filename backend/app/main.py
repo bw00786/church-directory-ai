@@ -12,6 +12,7 @@ from app.api import register_routes
 from app.vision.manager import VisionManager
 from app.cameras.service import camera_service
 from app.config import settings as global_settings
+from app.api.versioning import ApiVersionMiddleware
 from app.security.auth import ApiKeyAuthMiddleware, startup_auth_check
 from app.security.secrets_check import placeholder_secret_problems
 
@@ -60,6 +61,19 @@ async def lifespan(app: FastAPI):
         vision_enabled=settings.vision_enabled,
     )
 
+    # Database schema: additive migrations, best effort. The app keeps running
+    # without Postgres (memory/history degrade); /health/ready reports it.
+    if settings.database_migrate_on_startup:
+        try:
+            from app.database.cli import migrate as migrate_schema
+
+            version = await asyncio.wait_for(
+                asyncio.to_thread(migrate_schema), timeout=settings.database_startup_timeout_seconds
+            )
+            logger.info("database schema ready", version=version)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("database unavailable or migration failed; continuing without persistence", error=str(exc))
+
     if settings.vision_enabled or vision_manager.has_real_camera_source():
         await vision_manager.start()
 
@@ -77,6 +91,14 @@ async def lifespan(app: FastAPI):
         await audio_observer.start()
     except Exception:
         logger.exception("Failed to start audio observer")
+
+    # Keep the AI's ServiceContext current from hard signals (ATEM, EasyWorship,
+    # VAD, cue engine) before the decision loop starts reading it.
+    try:
+        from app.director.context_sync import context_sync
+        await context_sync.start()
+    except Exception:
+        logger.exception("Failed to start context sync")
 
     try:
         from app.director.ai_director_runtime import ai_director_runtime
@@ -157,6 +179,13 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Failed to start ATEM auto-connect task")
 
+    # ATEM/EasyWorship came up after the context sync: seed program/item now.
+    try:
+        from app.director.context_sync import context_sync
+        await context_sync.initial_sync()
+    except Exception:
+        logger.exception("Context initial sync failed")
+
     # Automatic camera registration from config (camera_1)
     try:
         if global_settings.camera_1_host:
@@ -222,6 +251,11 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Failed to stop AI Director runtime")
     try:
+        from app.director.context_sync import context_sync
+        await context_sync.stop()
+    except Exception:
+        logger.exception("Failed to stop context sync")
+    try:
         from app.identity.audio_capture import audio_capture_service
         await audio_capture_service.stop()
     except Exception:
@@ -271,6 +305,9 @@ app = FastAPI(
 # API-key authentication on every non-public route and WebSocket (app.security.auth).
 # Added before CORS so CORS stays outermost and 401/503 responses carry CORS headers.
 app.add_middleware(ApiKeyAuthMiddleware)
+# Canonical /api/v1/... paths rewrite to the legacy router prefixes. Added after
+# auth so it runs first (Starlette middleware is outermost-last).
+app.add_middleware(ApiVersionMiddleware)
 
 # Add CORS middleware for development
 app.add_middleware(
@@ -302,22 +339,19 @@ async def health_live():
 
 @app.get("/health/ready")
 async def health_ready():
-    """Readiness probe - application can handle requests."""
-    from app.atem.service import AtemService
-    from app.config import settings
-    from app.dependencies import get_atem_service
-    
-    # Could add checks for:
-    # - Database connectivity
-    # - ATEM bridge availability
-    
-    # Liveness does not trigger local inference; /health/ollama does.
+    """Readiness: aggregated component health (app.health.registry).
+
+    ``status`` is ``ready`` when nothing is down, ``degraded`` when a component
+    is degraded, ``not_ready`` when one is down. Never triggers inference.
+    """
+    from app.health.registry import component_health_async, overall_status
+
+    components = await component_health_async()
     return {
-        "status": "ready",
-        "checks": {
-            "api": "ok",
-            "ollama": "configured" if settings.ollama_model else "not configured",
-        },
+        "status": overall_status(components),
+        "version": APP_VERSION,
+        "components": components,
+        "checks": {"api": "ok"},
     }
 
 
@@ -342,5 +376,21 @@ async def root():
 
 # Register all routes
 register_routes(app)
+
+# Serve the built operator UI at /app when frontend/dist exists (single origin:
+# no CORS, no dev proxy). `npm run build` in frontend/ produces it.
+try:
+    from pathlib import Path
+
+    from fastapi.staticfiles import StaticFiles
+
+    _dist = Path(settings.frontend_dist_dir) if settings.frontend_dist_dir else Path(__file__).resolve().parents[2] / "frontend" / "dist"
+    if (_dist / "index.html").exists():
+        app.mount("/app", StaticFiles(directory=str(_dist), html=True), name="operator-ui")
+        logger.info("Operator UI served", path="/app", dist=str(_dist))
+    else:
+        logger.info("Operator UI not built; /app not mounted", dist=str(_dist))
+except Exception:  # noqa: BLE001
+    logger.exception("Failed to mount the operator UI")
 
 logger.info("FastAPI app created and configured", routes_registered=True)

@@ -270,6 +270,7 @@ class MemoryRepository:
         source: str = "system",
         occurred_at: datetime | None = None,
         embedding_space: str | None = None,
+        metadata: dict | None = None,
     ) -> ServiceObservation:
         from .memory_vectors import validate_embedding
 
@@ -282,15 +283,29 @@ class MemoryRepository:
             embedding_space=embedding_space,
             source=source,
             occurred_at=occurred_at or datetime.utcnow(),
+            meta=metadata or None,
         )
         self.session.add(observation)
         self.session.flush()
         return observation
 
-    def search(self, query_embedding: list[float], limit: int = 10, *, embedding_space: str) -> list[tuple[ServiceObservation, float]]:
+    def search(self, query_embedding: list[float], limit: int = 10, *, embedding_space: str,
+               filters: dict | None = None) -> list[tuple[ServiceObservation, float]]:
         from .memory_vectors import search
 
+        if filters:
+            return search(self.session, query_embedding, embedding_space, limit, filters)
         return search(self.session, query_embedding, embedding_space, limit)
+
+    def recent_observations(self, categories: list[str] | tuple[str, ...], limit: int = 500) -> list[ServiceObservation]:
+        """Newest rows in the given categories (for cheap in-Python aggregation)."""
+        stmt = (
+            select(ServiceObservation)
+            .where(ServiceObservation.category.in_(list(categories)))
+            .order_by(ServiceObservation.occurred_at.desc())
+            .limit(max(1, min(int(limit), 5000)))
+        )
+        return list(self.session.scalars(stmt))
 
     def list_service_dates(self, limit: int = 50) -> list[dict]:
         # Grouped in Python rather than SQL -- observation volume per service

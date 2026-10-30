@@ -30,7 +30,7 @@ import { useAtem } from '@/hooks/useAtem'
 const CAMERA_SLOT_COUNT = 4
 
 export function AtemPanel() {
-  const { state, loading, error, setProgram, setPreview, performCut, performAuto, setStreaming, setRecording, setMicMuted } =
+  const { state, loading, error, setProgram, setPreview, performCut, performAuto, undoProgram, setStreaming, setRecording, setMicMuted } =
     useAtem()
 
   const inputs = state?.inputs ?? []
@@ -116,6 +116,17 @@ export function AtemPanel() {
                 sx={{ flex: 1 }}
               >
                 Auto
+              </Button>
+              <Button
+                variant="outlined"
+                color="warning"
+                size="small"
+                disabled={!state?.connected}
+                onClick={undoProgram}
+                title="Cut back to the input that was on program before the last change"
+                sx={{ flex: 1 }}
+              >
+                Undo
               </Button>
             </Stack>
 

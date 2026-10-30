@@ -183,8 +183,9 @@ def test_voice_dotenv_settings_do_not_break_production_startup(tmp_path):
     assert Settings(_env_file=dotenv).api_port == 8123
     assert VoiceSettings(_env_file=dotenv).enabled
     dotenv.write_text("API_PORT=8123\nUNKNOWN_PRODUCTION_SETTING=true\n")
-    with pytest.raises(ValidationError):
-        Settings(_env_file=dotenv)
+    loaded = Settings(_env_file=dotenv)
+    assert loaded.api_port == 8123
+    assert loaded.unknown_keys == ["UNKNOWN_PRODUCTION_SETTING"]
 
 
 @pytest.mark.parametrize("name,event_type", list(WARNINGS.items()) + list(CRITICALS.items()))

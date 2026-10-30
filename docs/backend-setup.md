@@ -208,8 +208,8 @@ app/
 │   └── ptz.py           # PTZ-specific logic
 │
 ├── agents/              # AI orchestration
-│   ├── state.py         # ProductionState definition
-│   ├── graph.py         # LangGraph construction
+│   ├── director_ai.py   # Observation -> CUE_ADVANCE proposal (mode-gated)
+│   ├── llm.py           # Ollama factories, director deadline + backoff
 │   ├── prompts.py       # System prompts for Ollama
 │   └── tools/           # Tool implementations
 │       ├── atem_tools.py

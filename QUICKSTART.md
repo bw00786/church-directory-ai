@@ -28,7 +28,11 @@ notepad .env
 That's it! The script handles:
 - Python virtual environment
 - Node dependencies
-- Configuration file
+- Configuration file **with generated secrets** (`API_KEY`, `API_ADMIN_KEY`,
+  `SECRET_KEY`, `POSTGRES_PASSWORD`, `EASYWORSHIP_AGENT_TOKEN`)
+
+On macOS/Linux use `make setup` instead (see `make help`). Installing at a
+church with real hardware? Follow [docs/install-windows.md](docs/install-windows.md).
 
 ## Start Development
 
@@ -51,10 +55,15 @@ That's it! The script handles:
 
 ## Access the System
 
-- **Frontend UI**: http://localhost:5173
-- **Backend API**: http://localhost:8000
+- **Frontend UI**: http://localhost:5173 (dev server) or http://localhost:8000/app after `npm run build`
+- **Backend API**: http://localhost:8000 (canonical paths under `/api/v1/...`; legacy prefixes still work)
 - **API Docs**: http://localhost:8000/docs
+- **Health**: http://localhost:8000/health/ready — every component with `ok` / `mock` / `off` / `degraded` / `down`
 - **ATEM Bridge**: http://127.0.0.1:8090
+
+The UI asks for the operator API key the first time (copy `API_KEY` from
+`.env`). The backend listens on `127.0.0.1` by default; set `API_HOST=0.0.0.0`
+to reach it from another PC on the LAN (keys are then mandatory).
 
 ## Run Tests
 
@@ -63,7 +72,13 @@ cd backend
 pytest
 pytest -v
 pytest --cov=app
+cd ..\frontend
+npm run test
+npm run lint
 ```
+
+CI runs the same (`.github/workflows/ci.yml`): backend pytest, frontend tsc +
+ESLint + vitest + build, and the EasyWorship agent tests on Windows.
 
 ## Database & Services (Optional)
 
@@ -172,6 +187,16 @@ pip install -r requirements.txt
 - The assistant chat timeout is 130 seconds; align it and any proxy timeout if
     increasing the backend budget. A timed-out chat is not automatically retried.
 - Keep manual controls available; do not enable autonomous mode to diagnose AI.
+
+### Backend refuses to start: "Refusing non-mock startup"
+- A secret is still a placeholder or the API keys are empty while a real
+  integration is enabled. Run `python scripts/generate_secrets.py .env`, set
+  a real camera password, and restart. `SECURITY_STRICT_STARTUP=false` only on
+  throwaway rigs.
+
+### UI shows "API key required"
+- Paste `API_KEY` from `.env`. If you rotated keys, clear the browser's
+  `cpd.apiKey` local-storage entry.
 
 ### Tests failing
 ```powershell

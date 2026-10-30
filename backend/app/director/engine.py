@@ -27,11 +27,15 @@ from app.logging_config import get_logger
 from app.mixer.service import mixer_service
 
 from .models import ActionType, AdvanceTrigger, Cue, CueAction, DirectorStatus, ServiceScript, Transition
-from .plan_builder import build_plan_from_script
+from .plan_builder import build_plan_from_script, plan_entry_for_cue
 from .script import build_default_service_script
 from .transcript_triggers import classify_transcript
 
 logger = get_logger(__name__)
+
+# Bus event published when the director enters a cue (payload: cue_id, index,
+# total, label, state, speaker_role, camera_role, easyworship_item, followable).
+EVENT_CUE_ENTERED = "DIRECTOR_CUE_ENTERED"
 
 
 # -- cue execution planning ---------------------------------------------------
@@ -310,6 +314,7 @@ class ServiceDirector:
         cue = self._script.cues[index]
         self._pending_suggestion = None
         logger.info("Entering cue", cue_id=cue.id, name=cue.name, index=index)
+        self._publish_cue_entered(cue, index)
 
         plan = plan_cue(
             cue.actions,
@@ -371,7 +376,7 @@ class ServiceDirector:
                 await self._execute_action(step.action)
             elif step.op == "program" and step.atem_input is not None:
                 await get_atem_service_instance().set_program(step.atem_input)
-                service_context.current_atem_program = step.atem_input
+                service_context.set_program(step.atem_input)
                 self._publish("atem_program", f"Program -> input {step.atem_input} ({step.reason})", action)
             elif step.op == "settle":
                 await self._settle(step.camera_id or settings.ptz_camera_id)
@@ -384,7 +389,7 @@ class ServiceDirector:
                     await atem.auto()
                 else:
                     await atem.cut()
-                service_context.current_atem_program = step.atem_input
+                service_context.set_program(step.atem_input)
                 self._publish("atem_program", f"Program -> input {step.atem_input} ({step.transition})", action)
             elif step.op == "skip":
                 self._publish("atem_program", f"Input {step.atem_input} already on program", action)
@@ -409,7 +414,7 @@ class ServiceDirector:
             if action.type == ActionType.ATEM_PROGRAM and action.atem_input is not None:
                 atem = get_atem_service_instance()
                 await atem.set_program(action.atem_input)
-                service_context.current_atem_program = action.atem_input
+                service_context.set_program(action.atem_input)
                 self._publish("atem_program", f"Program -> input {action.atem_input}", action)
 
             elif action.type == ActionType.PTZ_PRESET and (action.preset_id is not None or action.role):
@@ -428,6 +433,8 @@ class ServiceDirector:
                     )
                 else:
                     ok = await camera_service.move_to_preset(camera_id, preset_id)
+                    if ok and action.role:
+                        service_context.set_camera_role(action.role)
                     self._publish(
                         "ptz_preset",
                         f"Preset {preset_id} via {resolution} ({'ok' if ok else 'failed'})",
@@ -512,6 +519,28 @@ class ServiceDirector:
             current_cue=current,
             next_cue=nxt,
             pending_suggestion=self._pending_suggestion,
+        )
+
+    def _publish_cue_entered(self, cue: Cue, index: int) -> None:
+        """``DIRECTOR_CUE_ENTERED``: the cue engine's position as a hard signal
+        for the context sync / phase reconciler (see app.director.context_sync)."""
+        entry = plan_entry_for_cue(cue)
+        event_bus.publish(
+            {
+                "event": EVENT_CUE_ENTERED,
+                "payload": {
+                    "cue_id": cue.id,
+                    "index": index,
+                    "total": len(self._script.cues),
+                    "label": cue.name,
+                    "state": entry.state.value,
+                    "speaker_role": entry.speaker_role,
+                    "camera_role": entry.camera_role,
+                    "easyworship_item": entry.easyworship_item,
+                    "followable": entry.followable,
+                    "script": self._script.name,
+                },
+            }
         )
 
     def _publish(self, action: str, detail: str, cue_action: CueAction) -> None:

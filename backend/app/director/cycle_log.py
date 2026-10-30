@@ -66,6 +66,33 @@ def log_model_cycle(
     )
 
 
+def log_cycle(
+    cycle_id: str,
+    *,
+    latency_ms: Optional[int],
+    context_version: Optional[int],
+    current_version: Optional[int],
+    stale: bool,
+    mode: str,
+    decision: Optional[Dict[str, Any]] = None,
+    phase: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Runtime-side record of one decision cycle: timing, staleness, phase gate."""
+    _append(
+        {
+            "cycle_id": cycle_id,
+            "kind": "cycle",
+            "latency_ms": latency_ms,
+            "context_version": context_version,
+            "current_version": current_version,
+            "stale": stale,
+            "mode": mode,
+            "decision": decision,
+            "phase": phase,
+        }
+    )
+
+
 def log_action_outcome(
     cycle_id: str,
     action: Dict[str, Any],

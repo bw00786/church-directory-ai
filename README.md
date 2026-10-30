@@ -104,7 +104,7 @@ Director's expected service plan, so the AI anticipates that week's actual flow.
 | POST   | `/director/goto/{index}` | Jump to a cue                                |
 | GET/POST | `/director/schedule`   | View / set the auto-start schedule           |
 | POST   | `/director/suggest`      | Feed a raw advance suggestion                |
-| POST   | `/director/observe`      | Let the AI decide from an observation string |
+| POST   | `/director/observe`      | AI proposes a cue advance from an observation (mode-gated, queued) |
 | WS     | `/ws/director`           | Live cue/action stream for the panel         |
 
 > **Yamaha MGX16 note:** the desk has no published remote-control protocol, so
@@ -342,10 +342,10 @@ variables, and troubleshooting.
 - [Camera Control](docs/cameras.md) — PTZOptics VISCA/HTTP-CGI driver, joystick, calibration
 - [Service Director](docs/director.md) — Cue sheet, scheduler, AI advances, mixer wiring
 - [AI Service Director](docs/ai-director.md) — Audio VAD, Ollama decisions, action engine, modes, replay
-- [Database](docs/database.md) — PostgreSQL schema and migrations
-- [Network](docs/network.md) — Local network topology
-- [Deployment](docs/deployment-windows.md) — Production deployment
-- [Operations](docs/operations.md) — Running and troubleshooting
+- [Installing at a church (Windows)](docs/install-windows.md) — Hardware checklist, setup script, secrets, first run, health checks
+- [Backend setup](docs/backend-setup.md) — Development guide, authentication, environment variables, database migrations
+- [ATEM bridge](atem-bridge/README.md) — Building and running the native bridge
+- [Changelog](CHANGELOG.md) — Release notes
 
 ## Development Order
 

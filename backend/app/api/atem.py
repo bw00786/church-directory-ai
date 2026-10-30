@@ -84,6 +84,23 @@ async def set_program(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/program/undo")
+async def undo_program(atem: AtemService = Depends(get_atem_service)):
+    """Cut back to the input that was on program before the last change (operator safety net)."""
+    try:
+        if not await atem.is_connected():
+            raise HTTPException(status_code=503, detail="ATEM not connected")
+        state = await atem.undo_last_program()
+        return {"ok": True, "message": f"Program restored to input {state.program_input}", "state": state}
+    except LookupError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error undoing program change", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/preview")
 async def set_preview(
     request: TransitionRequestModel,

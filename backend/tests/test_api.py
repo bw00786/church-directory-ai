@@ -18,17 +18,24 @@ def test_health():
     assert response.json()["status"] == "healthy"
 
 
-@pytest.mark.parametrize("model,expected", [("qwen3.8:latest", "configured"), ("", "not configured")])
-def test_health_ready(monkeypatch, model, expected):
-    """Readiness reports configuration, without inference or legacy keys."""
-    monkeypatch.setattr(settings, "ollama_model", model)
+def test_health_ready(monkeypatch):
+    """Readiness aggregates component health without inference."""
+    from app.health import registry
+
     probe = AsyncMock(side_effect=AssertionError("readiness must not probe Ollama"))
     builder = Mock(side_effect=AssertionError("readiness must not build a model"))
     monkeypatch.setattr(llm_module, "check_ollama_connection", probe)
     monkeypatch.setattr(llm_module, "build_llm", builder)
+    # No Postgres in unit tests: make the database probe deterministic and fast.
+    monkeypatch.setitem(registry.PROBES, "database", lambda: registry._component("off", "not configured"))
     response = client.get("/health/ready")
     assert response.status_code == 200
-    assert response.json() == {"status": "ready", "checks": {"api": "ok", "ollama": expected}}
+    body = response.json()
+    assert body["status"] in {"ready", "degraded", "not_ready"}
+    assert body["checks"] == {"api": "ok"}
+    assert set(body["components"]) == set(registry.PROBES)
+    for component in body["components"].values():
+        assert component["status"] in {"ok", "degraded", "down", "off", "mock"}
     probe.assert_not_awaited()
     builder.assert_not_called()
 

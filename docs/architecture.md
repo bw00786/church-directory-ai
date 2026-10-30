@@ -299,18 +299,48 @@ JSON structured logs with:
 - AI decision confidence distribution
 - Error rates by component
 
-### Health Endpoint
+### Health Endpoints
+
+- `GET /health` — liveness (`{"status": "healthy", "version": "..."}`).
+- `GET /health/ready` — aggregated component health from
+  [app/health/registry.py](../backend/app/health/registry.py): database, ATEM,
+  cameras, EasyWorship, mixer meters, USB audio, Ollama, AI Director, slide
+  verification, voice. Each reports `ok` / `mock` / `off` / `degraded` / `down`
+  with a one-line detail; the top-level `status` is `ready`, `degraded` or
+  `not_ready`. Never triggers inference. The operator UI's status chip and the
+  System Status checklist poll this every 5 s.
+- `GET /health/ollama` — on-demand bounded inference against the configured model.
 
 ```http
-GET /health
+GET /health/ready
 {
-  "status": "healthy",
-  "atem": true,
-  "database": true,
-  "anthropic": false
+  "status": "degraded",
+  "version": "1.1.0",
+  "components": {
+    "atem":   {"status": "ok",       "detail": "connected", "mock": false},
+    "mixer":  {"status": "degraded", "detail": "meters stale > 1.0s"},
+    "voice":  {"status": "off",      "detail": "disabled"},
+    ...
+  }
 }
 ```
 
+### Event bus
+
+Perception and control publish typed events on the in-process bus
+(`PROGRAM_CHANGED`, `PREVIEW_CHANGED`, `TRANSCRIPT`, `AUDIO_STARTED/STOPPED`,
+`PERCEPTION_DEGRADED/RESTORED`, `SLIDE_VERIFY_UNKNOWN`, `OPERATOR_SLIDE_ADVANCE`,
+`AI_DECISION`, ...). The AI director's context sync, the operator learning
+recorders and the WebSocket feeds are all subscribers, so every decision input
+is also observable.
+
+## Security
+
+Every control route and WebSocket requires an API key (operator or admin
+role); secrets are generated per install and placeholders refuse non-mock
+startup. See [backend-setup.md#authentication](backend-setup.md#authentication).
+
 ## Deployment
 
-See [deployment-windows.md](deployment-windows.md) for Windows production setup.
+See [install-windows.md](install-windows.md) for a church installation and
+[backend-setup.md](backend-setup.md) for development.

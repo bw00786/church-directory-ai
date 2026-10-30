@@ -118,8 +118,12 @@ The LLM/vision layer turns an observation into an advance decision and feeds the
 same engine:
 
 - `POST /director/observe` with `{"text": "..."}` → [DirectorAI](../backend/app/agents/director_ai.py)
-  asks Ollama (or a keyword heuristic fallback) whether the current cue's
-  `exit_hint` is satisfied, then calls `request_advance`.
+  asks Ollama (or a keyword heuristic fallback, confidence 0.75) whether the
+  current cue's `exit_hint` is satisfied, then submits a `CUE_ADVANCE` proposal
+  to the AI runtime's proposal queue. It never advances directly: the proposal
+  honours the operating mode (queued for approval in `assisted`, paced and
+  deduplicated against cue-engine advances in `ai_directed`). The response is
+  `{accepted, decision, mode, proposals, dropped}`.
 - `POST /director/suggest` with `{source, reason, confidence, cue_id?}` feeds a
   raw suggestion directly.
 
@@ -498,7 +502,7 @@ for the matching rules and all `SONG_FOLLOWER_*` settings.
 | POST     | `/director/goto/{index}` | Jump to a cue                        |
 | GET/POST | `/director/schedule`     | View / set auto-start schedule       |
 | POST     | `/director/suggest`      | Raw advance suggestion               |
-| POST     | `/director/observe`      | AI decides from an observation       |
+| POST     | `/director/observe`      | AI proposes a cue advance from an observation (mode-gated, queued) |
 | GET      | `/director/slide-texts`  | Slide texts used by the follower, per EasyWorship item |
 | PUT      | `/director/slide-texts`  | Set an item's slide text (`{"label": ..., "text": ...}`, blank line between slides) |
 | DELETE   | `/director/slide-texts/{label}` | Remove an item's text (follower falls back to OCR) |

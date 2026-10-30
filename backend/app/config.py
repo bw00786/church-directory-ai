@@ -8,15 +8,51 @@ from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
+# Prefixes owned by other settings classes that read the same .env (voice,
+# identity/face, legacy vision manager, local audio capture, the Vite build).
+# Keys with these prefixes are not errors here.
+OTHER_SUBSYSTEM_PREFIXES = (
+    "voice_", "tts_", "anthropic_", "face_", "liveness_", "unknown_speaker_",
+    "min_role_preset_", "enable_audio_capture", "audio_capture_", "vite_",
+    "camera_1_rtsp", "camera_2_rtsp", "camera_3_rtsp", "vision_test_pattern",
+)
+
+
+def unknown_dotenv_keys(values: dict, known_fields: set[str]) -> list[str]:
+    """Dotenv keys that no settings class owns -- almost always a typo.
+
+    Returned (and logged at startup) rather than raised: several subsystems
+    read the same .env with their own prefixes, so a hard failure here would
+    reject legitimate keys of another class.
+    """
+    unknown = []
+    for key in values:
+        lowered = key.lower()
+        if lowered in known_fields or lowered.startswith(OTHER_SUBSYSTEM_PREFIXES):
+            continue
+        unknown.append(key.upper())
+    return unknown
+
+
 class Settings(BaseSettings):
-    """Application settings loaded from .env."""
+    """Application settings loaded from .env.
+
+    Unknown keys are ignored by pydantic (other subsystems own their own
+    prefixes) but collected in ``Settings.unknown_keys`` and logged once at
+    startup so a typo like ``OLLAMA_MODLE`` is visible, not silent.
+    """
+
+    unknown_keys: list[str] = Field(default_factory=list, exclude=True)
 
     @classmethod
     def settings_customise_sources(cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings):
         def production_dotenv():
+            values = dotenv_settings()
             # Voice validates its own settings without becoming a startup dependency.
-            return {key: value for key, value in dotenv_settings().items()
+            kept = {key: value for key, value in values.items()
                     if not key.lower().startswith(("voice_", "tts_", "anthropic_"))}
+            kept["unknown_keys"] = unknown_dotenv_keys(values, set(cls.model_fields))
+            return kept
         return init_settings, env_settings, production_dotenv, file_secret_settings
     
     # API. Loopback by default: the operator UI normally runs on the same PC.
@@ -38,6 +74,14 @@ class Settings(BaseSettings):
     postgres_password: str = "changeme"
     postgres_pool_size: int = 10
     postgres_max_overflow: int = 20
+    # Run the additive schema migrations (app.database.migrations) at startup.
+    # Failure is logged and reported by /health/ready, never fatal.
+    database_migrate_on_startup: bool = True
+    database_startup_timeout_seconds: float = 10.0
+
+    # Serve the built operator UI (frontend/dist) at /app when the directory
+    # exists. Empty = <repo>/frontend/dist.
+    frontend_dist_dir: str = ""
     
     # Ollama (Qwen) running on the EasyWorship PC; all inference goes through
     # app.agents.llm over Ollama's REST API. Empty OLLAMA_BASE_URL => found
@@ -319,7 +363,33 @@ class Settings(BaseSettings):
     # still gated by the policy engine).
     ai_director_mode: str = "assisted"
     ai_director_poll_seconds: float = 4.0
+    # Inference for the director loop (app/ai/service_director.py): the fast
+    # model with Ollama structured output and a hard per-cycle deadline. The
+    # long LLM_TIMEOUT_SECONDS only governs the assistant/chat path.
+    ai_director_model: str = ""                                   # empty => ollama_fast_model
+    ai_director_deadline_seconds: float = Field(default=3.0, gt=0, le=60)
+    ai_director_max_tokens: int = Field(default=320, ge=32, le=4096)  # capped by llm_max_tokens
+    ai_director_house_rules_file: str = "data/house-rules.md"     # operator-editable HOUSE RULES block
+    ai_director_transcript_min_confidence: float = Field(default=0.3, ge=0, le=1)  # hide lines below
+    # Proposal queue (app/director/proposals.py): one queue for every AI-runtime
+    # proposal with ids, TTL, per-category supersede and effect-level dedupe.
+    ai_director_pending_ttl_seconds: float = 90.0
+    ai_director_dedupe_seconds: float = 5.0        # same effect within this is dropped; also the recent-effects ledger window
+    # Hold AI camera/ATEM cuts while the on-air speaker is mid-utterance (0 = off);
+    # `urgent: true` on an action bypasses it. Holds retry every tick, never reject.
+    ai_cut_speech_boundary_seconds: float = 0.8
+    # Discard a decision whose context_version trails the live context by more than this.
+    ai_director_max_context_drift: int = 3
+    ai_director_adaptive_file: str = "data/adaptive-confidence.json"
+    ai_director_evidence_max_age_seconds: float = 3.0  # older vision observations are "no evidence"
     ai_director_min_confidence: float = 0.80
+    # Service-phase reconciliation (app/director/phase.py): LLM state proposals
+    # also need an agreeing hard signal (EW item, current/next plan element,
+    # speaking pattern); the cue engine's state is authoritative while it runs.
+    phase_llm_requires_hard_signal: bool = True
+    # vocalist/congregation/choir speaking this long = singing (song family);
+    # pastor this long with nobody singing = sermon family if the plan agrees.
+    phase_singing_seconds: float = 8.0
     confidence_camera_change: float = 0.85
     confidence_slide_change: float = 0.85
     confidence_atem_transition: float = 0.90
@@ -389,7 +459,7 @@ class Settings(BaseSettings):
     operator_learning_memory: bool = True                # also write advances to production memory (RAG)
 
     # Phase 2: event-driven decision ticks + predictive PTZ preview staging.
-    ai_director_event_driven: bool = False       # nudge a decision tick on key events
+    ai_director_event_driven: bool = True        # nudge a decision tick on key events
     ai_director_event_min_interval_seconds: float = 1.0  # debounce event nudges
     ptz_predictive_preview: bool = False         # pre-stage PTZ + ATEM preview, never cuts
 
@@ -488,3 +558,9 @@ try:
 except Exception as exc:  # pragma: no cover - exercised via subprocess in tests
     print(f"FATAL: invalid configuration -- {exc}", file=sys.stderr)
     raise
+
+if settings.unknown_keys:
+    print(
+        "WARNING: .env contains keys no setting recognises (typo?): " + ", ".join(sorted(settings.unknown_keys)),
+        file=sys.stderr,
+    )

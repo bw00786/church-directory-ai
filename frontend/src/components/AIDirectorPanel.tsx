@@ -5,7 +5,7 @@
  * operator switch modes and approve/reject pending (assisted-mode) actions.
  */
 
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import Card from '@mui/material/Card'
 import CardHeader from '@mui/material/CardHeader'
 import CardContent from '@mui/material/CardContent'
@@ -21,7 +21,7 @@ import SmartToyIcon from '@mui/icons-material/SmartToy'
 import CheckIcon from '@mui/icons-material/Check'
 import CloseIcon from '@mui/icons-material/Close'
 
-import { AiDirectorMode, useAIDirector } from '@/hooks/useAIDirector'
+import { AiDirectorMode, PendingAction, useAIDirector } from '@/hooks/useAIDirector'
 
 const MODES: { value: AiDirectorMode; label: string }[] = [
   { value: 'manual', label: 'Manual' },
@@ -36,11 +36,86 @@ function formatState(state: string): string {
     .join(' ')
 }
 
+/** Seconds left before a proposal expires, counted down locally between polls. */
+export function remainingSeconds(action: PendingAction, fetchedAt: number | null, now: number): number | null {
+  if (action.expires_in_seconds === undefined || action.expires_in_seconds === null) return null
+  const elapsed = fetchedAt ? Math.max(0, (now - fetchedAt) / 1000) : 0
+  return Math.max(0, Math.round(action.expires_in_seconds - elapsed))
+}
+
+interface PendingActionRowProps {
+  action: PendingAction
+  fetchedAt: number | null
+  now: number
+  onApprove: (id: string) => void
+  onReject: (id: string) => void
+}
+
+export function PendingActionRow({ action, fetchedAt, now, onApprove, onReject }: PendingActionRowProps) {
+  const ttl = remainingSeconds(action, fetchedAt, now)
+  const expiring = ttl !== null && ttl <= 10
+  return (
+    <Paper
+      role="listitem"
+      aria-label={`${action.type}${action.target ? ` ${action.target}` : ''}`}
+      variant="outlined"
+      sx={{
+        p: 1.5,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1,
+        borderColor: action.held_reason ? 'warning.main' : undefined,
+      }}
+    >
+      <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+        <Typography variant="body2">
+          {action.type} {action.target ? `→ ${action.target}` : ''}
+        </Typography>
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+          {action.reason} ({Math.round(action.confidence * 100)}%)
+        </Typography>
+        <Stack direction="row" spacing={0.5} useFlexGap sx={{ flexWrap: 'wrap', mt: 0.5 }}>
+          {action.source && <Chip size="small" variant="outlined" label={action.source} />}
+          {ttl !== null && (
+            <Chip
+              size="small"
+              variant="outlined"
+              color={expiring ? 'error' : 'default'}
+              label={`expires in ${ttl}s`}
+              aria-label={`expires in ${ttl} seconds`}
+            />
+          )}
+          {action.held_reason && (
+            <Chip size="small" color="warning" label={`held: ${action.held_reason}`} title={action.held_reason} />
+          )}
+        </Stack>
+      </Box>
+      <Button size="small" color="success" startIcon={<CheckIcon />} onClick={() => onApprove(action.id)}>
+        Approve
+      </Button>
+      <Button size="small" color="error" startIcon={<CloseIcon />} onClick={() => onReject(action.id)}>
+        Reject
+      </Button>
+    </Paper>
+  )
+}
+
 export function AIDirectorPanel() {
-  const { status, setMode, approve, reject } = useAIDirector()
+  const { status, fetchedAt, setMode, approve, reject } = useAIDirector()
+  const [now, setNow] = useState(() => Date.now())
+  const hasPending = (status?.pending_actions.length ?? 0) > 0
+
+  // Tick once a second while proposals are pending so TTL countdowns move between polls.
+  useEffect(() => {
+    if (!hasPending) return
+    setNow(Date.now())
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [hasPending, fetchedAt])
 
   const context = status?.context
   const decision = context?.last_decision
+  const lastCycle = status?.last_cycle
 
   return (
     <Card>
@@ -97,12 +172,17 @@ export function AIDirectorPanel() {
             {decision?.reason ? (
               <>
                 <Typography variant="body2">{decision.reason}</Typography>
-                <Chip
-                  sx={{ mt: 1 }}
-                  size="small"
-                  color={decision.decision === 'continue' ? 'default' : 'secondary'}
-                  label={`${decision.decision} · ${Math.round((decision.confidence ?? 0) * 100)}%`}
-                />
+                <Stack direction="row" spacing={0.5} useFlexGap sx={{ flexWrap: 'wrap', mt: 1 }}>
+                  <Chip
+                    size="small"
+                    color={decision.decision === 'continue' ? 'default' : 'secondary'}
+                    label={`${decision.decision} · ${Math.round((decision.confidence ?? 0) * 100)}%`}
+                  />
+                  {lastCycle?.latency_ms !== undefined && lastCycle?.latency_ms !== null && (
+                    <Chip size="small" variant="outlined" label={`${lastCycle.latency_ms} ms`} />
+                  )}
+                  {lastCycle?.stale && <Chip size="small" color="warning" label="stale context" />}
+                </Stack>
               </>
             ) : (
               <Typography variant="body2" color="text.disabled">
@@ -177,30 +257,22 @@ export function AIDirectorPanel() {
           </Paper>
         )}
 
-        {status && status.pending_actions.length > 0 && (
+        {status && hasPending && (
           <>
             <Divider sx={{ my: 2 }} />
             <Typography variant="overline" color="text.secondary">
-              Pending Actions (Assisted mode)
+              {status.mode === 'ai_directed' ? 'Held Actions (waiting for pacing)' : 'Pending Actions (Assisted mode)'}
             </Typography>
-            <Stack spacing={1} sx={{ mt: 1 }}>
-              {status.pending_actions.map((action, index) => (
-                <Paper key={index} variant="outlined" sx={{ p: 1.5, display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Box sx={{ flexGrow: 1 }}>
-                    <Typography variant="body2">
-                      {action.type} {action.target ? `→ ${action.target}` : ''}
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      {action.reason} ({Math.round(action.confidence * 100)}%)
-                    </Typography>
-                  </Box>
-                  <Button size="small" color="success" startIcon={<CheckIcon />} onClick={() => approve(index)}>
-                    Approve
-                  </Button>
-                  <Button size="small" color="error" startIcon={<CloseIcon />} onClick={() => reject(index)}>
-                    Reject
-                  </Button>
-                </Paper>
+            <Stack spacing={1} sx={{ mt: 1 }} role="list" aria-label="Pending AI proposals">
+              {status.pending_actions.map((action) => (
+                <PendingActionRow
+                  key={action.id}
+                  action={action}
+                  fetchedAt={fetchedAt}
+                  now={now}
+                  onApprove={approve}
+                  onReject={reject}
+                />
               ))}
             </Stack>
           </>

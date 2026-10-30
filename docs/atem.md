@@ -161,6 +161,11 @@ context sync and the operator shot recorder.
 capped at 3 s) and returns as soon as the switcher reports the transition
 finished, so slow and fast transition rates both verify correctly.
 
+**Undo last cut.** `POST /atem/program/undo` cuts program back to the input
+that was live before the most recent change (human or AI), using the polled
+program history; a second undo redoes. The operator panel exposes it as the
+**Undo** button next to Cut/Auto. Returns 409 when there is nothing to undo.
+
 **Mic mute.** The C++ bridge has no `/audio/*` endpoints yet. The service checks
 `/status.capabilities.audio_mute` (or remembers a 404) and raises
 `AtemFeatureUnsupported`, which the API maps to HTTP 501 with a clear message.

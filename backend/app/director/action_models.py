@@ -23,6 +23,9 @@ class DirectorActionType(str, Enum):
     EASYWORSHIP_SELECT = "EASYWORSHIP_SELECT"
     EASYWORSHIP_NEXT_SLIDE = "EASYWORSHIP_NEXT_SLIDE"
     SERVICE_STATE_CHANGE = "SERVICE_STATE_CHANGE"
+    # Advance the cue engine's current cue (the /director/observe path); the
+    # cue engine applies its own autonomy/confidence gate on top.
+    CUE_ADVANCE = "CUE_ADVANCE"
 
 
 # Action types gated by the "camera_change" confidence threshold.
@@ -58,3 +61,7 @@ class ActionResult(BaseModel):
     approved: bool
     executed: bool
     detail: str = ""
+    # held=True means "policy-approved but paced out (min hold, cooldown,
+    # speech boundary): try again next tick" -- not a rejection.
+    held: bool = False
+    held_reason: Optional[str] = None

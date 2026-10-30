@@ -208,8 +208,10 @@ def test_new_memory_manager_records_document_with_actual_metadata(manager_depend
     repository.add_observation.assert_called_once_with(
         service_date="2026-09-14", category="cue", text="Advance", embedding=[0.25, 0.75],
         embedding_space="actual-fallback:model:2", source="test", occurred_at=observation.occurred_at,
+        metadata=None,
     )
     assert result["embedding_space"] == "actual-fallback:model:2"
+    assert result["metadata"] == {}
     assert result["id"] == str(observation.id)
 
 

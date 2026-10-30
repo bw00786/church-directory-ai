@@ -64,6 +64,14 @@ class Cue(BaseModel):
     # ATEM input used to hide a PTZ move when the PTZ camera is already on
     # program when the cue starts (e.g. the slides input). None = just move.
     cover_with: Optional[int] = None
+    # AI-facing description overrides (see app.director.plan_builder). None =
+    # use the built-in default for this cue id. A per-church rig profile fills
+    # these in for cues the default table does not know.
+    state: Optional[str] = None          # ServiceState value, e.g. "sermon"
+    speaker_role: Optional[str] = None   # "pastor" | "liturgist" | "vocalist" | "congregation"
+    camera_role: Optional[str] = None    # framing role expected on the PTZ camera
+    easyworship_item: Optional[str] = None  # service-plan label of the EW item this cue puts live
+    followable: Optional[bool] = None    # slide text is read/sung aloud (line follower may advance)
 
 
 class ServiceScript(BaseModel):
