@@ -27,6 +27,22 @@ operator can always override.
 | Channel 4   | Vocalist mic (song-end detection, slide follower) | `MIXER_VOCALIST_CHANNEL` |
 | Channel 8   | Congregation mic (song-end detection, slide follower) | `MIXER_CONGREGATION_CHANNEL` |
 
+### Per-church rig profile
+
+Everything in the table above is configuration. A per-church **rig profile**
+(`rig.yaml`, see [rig-profile.md](rig-profile.md); copy `rig.example.yaml`)
+describes cameras and their ATEM inputs (`cameras[].atem_input`,
+`switcher.slides_input`), mixer channels per role (`mixer.roles`, any role
+names), PTZ role shots, cue-sheet overrides (`cues:` modifies built-in cues by
+id, removes them with `enabled: false`, or adds new ones) and order-of-service
+heading synonyms. Every section is optional: omitted sections come from `.env`,
+so with no file the director behaves exactly as the settings describe.
+`GET /api/rig` shows the active profile (passwords masked),
+`POST /api/rig/validate` dry-runs a candidate and `PUT /api/rig` (admin key)
+saves it, reporting which sections applied live and which (`cameras`, `mixer`)
+need a restart. The operator UI renders one joystick panel per registered
+camera plus a rig summary card.
+
 ## Cue sheet
 
 Each cue runs its actions (ATEM program switch, PTZOptics preset, or an advisory
@@ -36,26 +52,52 @@ note) on entry, then advances by its trigger.
 | - | -------------------------- | ------------------------------------------ | --------- |
 | 1 | `service_start`            | ATEM→cam 2 (slides); note: open Mic 1      | Timer (countdown) |
 | 2 | `first_song`              | ATEM→cam 2                                 | Song end (ch 5/8) |
-| 3 | `announcements`           | ATEM→cam 1; **preset 23**                  | Manual / AI |
-| 4 | `childrens_message`       | **preset 6** (wide)                        | Manual / AI |
-| 5 | `call_to_worship_liturgist` | **preset 4** (podium)                    | Manual / AI |
+| 3 | `announcements`           | ATEM→cam 1; **pastor** preset (role table)  | Manual / AI |
+| 4 | `childrens_message`       | **wide** preset (role table)               | Manual / AI |
+| 5 | `call_to_worship_liturgist` | **liturgist** preset (role table)        | Manual / AI |
 | 6 | `call_to_worship_slides`  | ATEM→cam 2                                  | Manual / AI |
 | 7 | `hymn_of_praise`          | ATEM→cam 2                                  | Song end (ch 5/8) |
 | 8 | `scripture_reading`       | ATEM→cam 2                                  | Manual / AI |
 | 9 | `bumper_video`            | ATEM→cam 2                                  | Manual / AI |
-| 10 | `sermon`                 | ATEM→cam 1; **preset 3**                    | Manual    |
-| 11 | `communion_pastor`       | ATEM→cam 1; **preset 2**                    | Manual / AI |
-| 12 | `communion_congregation` | ATEM→cam 1; **preset 6**                    | Manual / AI |
+| 10 | `sermon`                 | ATEM→cam 1; **pastor** preset (role table)                    | Manual    |
+| 11 | `communion_pastor`       | ATEM→cam 1; **preset 2** (explicit communion-table override) | Manual / AI |
+| 12 | `communion_congregation` | ATEM→cam 1; **congregation** preset (role table) | Manual / AI |
 | 13 | `lords_prayer`           | ATEM→cam 2                                  | Manual / AI |
-| 14 | `community_prayers`      | ATEM→cam 1; **preset 3**                    | Manual    |
-| 15 | `offertory_liturgist`    | ATEM→cam 1; **preset 4**                    | Manual / AI |
+| 14 | `community_prayers`      | ATEM→cam 1; **pastor** preset (role table)                    | Manual    |
+| 15 | `offertory_liturgist`    | ATEM→cam 1; **liturgist** preset (role table) | Manual / AI |
 | 16 | `doxology`               | ATEM→cam 2                                  | Song end (ch 5/8) |
 | 17 | `closing_praise`         | ATEM→cam 2                                  | Song end (ch 5/8) |
-| 18 | `benediction`            | ATEM→cam 1; **preset 3**                    | Manual / AI |
+| 18 | `benediction`            | ATEM→cam 1; **pastor** preset (role table)                    | Manual / AI |
 | 19 | `service_end`            | ATEM→cam 2; clear slides                    | Manual    |
 
 Presets and the ATEM input mapping come from config, so no numbers are
-hard-coded to specific hardware.
+hard-coded to specific hardware. Role shots (`pastor`, `liturgist`,
+`congregation`, `wide`, ...) resolve through **one role→preset table**
+(`CAMERA_ROLE_<ROLE>_CAMERA` / `_PRESET`, plus any learned per-role preset from
+the identity service), shared by the cue sheet, the AI director's
+`PTZ_SELECT_ROLE` and `camera_service.move_to_role`, so the AI and the sheet
+always frame a role the same way. The pastor default is preset 3.
+
+### Off-air PTZ staging
+
+A cue that both moves the PTZ camera and switches program to it never pans on
+air. The engine's pure planner (`plan_cue` in
+[engine.py](../backend/app/director/engine.py)) reorders the actions to
+**preset → settle → ATEM preview → cut/auto**, whatever order they are written
+in: the pan happens on preview and the congregation only sees the finished
+frame. Settle waits for the camera's move-completion when the driver offers it,
+else `PTZ_VERIFY_DELAY_MS`. Unknown program state is treated as off-air.
+
+- If the PTZ camera is **already on program** when the cue starts, the move
+  would be visible either way. With `cover_with: <ATEM input>` on the cue the
+  engine cuts to that input (e.g. slides) first, moves, then takes the camera
+  back; without it the preset is recalled and the redundant switch dropped.
+- `transition` on a cue (`cut`, default, or `auto`) decides how the take reaches
+  air; an individual ATEM action may override it. A plain program switch with
+  no PTZ move is a direct cut, or preview → `auto()` for a dissolve, and is
+  skipped when the input is already live.
+- If the operator or AI advances while a cue is still settling, the remaining
+  preview/take steps are abandoned so the superseded shot never reaches program.
 
 ## Advance triggers
 
@@ -92,8 +134,12 @@ The LLM/vision layer turns an observation into an advance decision and feeds the
 same engine:
 
 - `POST /director/observe` with `{"text": "..."}` → [DirectorAI](../backend/app/agents/director_ai.py)
-  asks Ollama (or a keyword heuristic fallback) whether the current cue's
-  `exit_hint` is satisfied, then calls `request_advance`.
+  asks Ollama (or a keyword heuristic fallback, confidence 0.75) whether the
+  current cue's `exit_hint` is satisfied, then submits a `CUE_ADVANCE` proposal
+  to the AI runtime's proposal queue. It never advances directly: the proposal
+  honours the operating mode (queued for approval in `assisted`, paced and
+  deduplicated against cue-engine advances in `ai_directed`). The response is
+  `{accepted, decision, mode, proposals, dropped}`.
 - `POST /director/suggest` with `{source, reason, confidence, cue_id?}` feeds a
   raw suggestion directly.
 
@@ -159,6 +205,18 @@ with `MGX_USB_ENABLED=true`. [`UsbMultichannelCapture`](../backend/app/audio/usb
 opens it, extracts the configured role channels, and feeds real Silero VAD +
 per-role Whisper (see [ai-director.md](ai-director.md)).
 
+Capture runs on one PortAudio callback plus one drain thread; frames are
+resampled off the event loop (anti-aliased polyphase FIR) and handed to
+subscribers on it. Status (`perception.capture`) exposes `clock_source` (`adc`
+when hardware timestamps are in use), `dropped_blocks` and `queue_depth` — a
+rising drop count means the host can't keep up (lower `WHISPER_MAX_CONCURRENCY`
+or the model size). Install the audio extras with `pip install -e ".[audio]"`
+(sounddevice, faster-whisper, silero-vad with bundled weights so it works
+offline). Because the congregation mic picks up the PA, per-frame bleed
+suppression (`AUDIO_BLEED_SUPPRESS_DB`) keeps the sermon from being
+double-transcribed as congregation speech; raise it if a genuinely quiet second
+talker is being muted.
+
 Run any **streaming / ATEM audio consumer on the USB SUB** (2x2) port instead of
 USB MAIN so the two consumers don't contend for the same interface. The console
 also records 16-track multitrack to microSD standalone — enable that every
@@ -174,6 +232,14 @@ service to accumulate the replay corpus (ingest with
   at ~12 Hz (it also sends `"analysis"`/`"dsp"` messages on the same socket,
   which `MixerService` ignores), and tracks per-channel RMS. This is the degraded
   fallback when USB capture is unavailable or a channel stalls.
+- **Stale meters read as silence.** Every meter sample carries a timestamp. If
+  the WebSocket drops, or a channel's newest sample is older than
+  `MIXER_METER_STALE_SECONDS` (default 1.0), that channel reads as −90 dBFS and
+  is omitted from `levels()`; a speaker who was active at the instant of the
+  drop does not stay "speaking" forever and song-end detection can still see
+  silence. One `PERCEPTION_DEGRADED` (`reason: mixer meter feed stale`) is
+  published per outage and `PERCEPTION_RESTORED` when samples resume;
+  `mixer_service.status()` exposes `stale` and per-channel age.
 
 Both apps run on the **same machine** (the one with the MGX16's USB-C MAIN
 port plugged in). `mgx-ai-mixer`'s own default is `--port 8000`, which collides
@@ -350,16 +416,29 @@ against what the congregation should be reading.
 Requires a separate hardware tap of the EasyWorship laptop's own video output
 (e.g. an HDMI splitter + USB capture card), independent of the ATEM program
 capture used for PTZ verification. After a slide action the OCR text is polled
-until it stabilizes and differs from the pre-action text; if it never does
-within the timeout (or, with semantic on, doesn't match the expected lyric),
-automation is halted for operator attention and the keystroke is never
-auto-retried. Configuration:
+until it stabilizes and differs from the pre-action text. The result is
+**tri-state**:
+
+- *verified* — the text changed;
+- *unchanged* — two or more real OCR reads still show the old text within the
+  timeout (or, with semantic on, it doesn't match the expected lyric) →
+  `EASYWORSHIP_SLIDE_STUCK` + `SLIDE_VERIFY_HALT`; automation is halted for
+  operator attention and the keystroke is never auto-retried;
+- *unknown* — no frame from the slides tap, easyocr missing or not loaded, a
+  read failed, or OCR saw no text while frames were flowing. **Unknown never
+  halts**: it publishes `SLIDE_VERIFY_UNKNOWN` with a reason and a
+  `consecutive_unknown` counter (also in `GET /easyworship/status`), so an OCR
+  outage is visible without taking automation down.
+
+Verifications are serialized and OCR runs on its own thread pool, off the event
+loop. `SLIDE_OCR_GPU=true` runs easyocr on CUDA. Configuration:
 
 ```
 SLIDE_VERIFY_ENABLED=false               # off by default
 SLIDE_VERIFY_DEVICE=                      # cv2 device index/name for the camera-2 tap
 SLIDE_VERIFY_POLL_MS=400                  # stabilization poll interval (ms)
 SLIDE_VERIFY_TIMEOUT_SECONDS=4.0          # give up -> alert + halt automation
+SLIDE_OCR_GPU=false                       # easyocr on CUDA
 SLIDE_VERIFY_SEMANTIC_ENABLED=false       # lyric-aware correctness check (WO-EWVERIFY-3)
 SLIDE_VERIFY_SEMANTIC_THRESHOLD=0.75      # fuzzy-match acceptance threshold
 ```
@@ -439,7 +518,7 @@ for the matching rules and all `SONG_FOLLOWER_*` settings.
 | POST     | `/director/goto/{index}` | Jump to a cue                        |
 | GET/POST | `/director/schedule`     | View / set auto-start schedule       |
 | POST     | `/director/suggest`      | Raw advance suggestion               |
-| POST     | `/director/observe`      | AI decides from an observation       |
+| POST     | `/director/observe`      | AI proposes a cue advance from an observation (mode-gated, queued) |
 | GET      | `/director/slide-texts`  | Slide texts used by the follower, per EasyWorship item |
 | PUT      | `/director/slide-texts`  | Set an item's slide text (`{"label": ..., "text": ...}`, blank line between slides) |
 | DELETE   | `/director/slide-texts/{label}` | Remove an item's text (follower falls back to OCR) |
@@ -483,6 +562,42 @@ with the same `cycle_id` and its outcome (`pending_approval`, `executed`,
 `executed_after_approval`, `rejected`, with detail). This is a local audit trail
 that works without PostgreSQL; it complements production memory, which stores
 summaries. The file is gitignored because it contains transcripts and decisions.
+
+### Pause and resume
+
+`POST /director/ai/pause` (operator key) drops the AI Director to `manual` and
+remembers the mode it was in; `POST /director/ai/resume` restores it.
+`GET /director/ai/status` reports `paused` and `paused_from`; the panel shows an
+"AI paused" banner with a Resume button. Choosing a mode explicitly while
+paused ends the pause. Events: `AI_DIRECTOR_PAUSED`, `AI_DIRECTOR_RESUMED`.
+
+### Rehearsal mode
+
+`POST /director/rehearsal/start {"sample": "default", "speed": 5}` replays a
+recorded service (a bundled sample, or a JSON file under
+`REHEARSAL_RECORDINGS_DIR`) through a **private copy** of the AI runtime.
+Decisions use the real model, policy and pacing rules, but every action is
+dispatched to a recorder, never to the ATEM, cameras or EasyWorship. Rehearsal
+refuses to start while a service is running, or when real hardware is
+configured unless `FORCE_MOCK_DURING_REHEARSAL=true`.
+`GET /director/rehearsal/status` shows progress, per-step decisions, queued
+proposals and mock-executed actions; `POST /director/rehearsal/stop` ends it.
+Recording format: a list of `AudioObservation`-shaped entries (`speaker_role`,
+`speaking`, `transcript`, optional `delay_seconds`) or
+`{"name", "description", "entries": [...]}`. The Rehearsal panel in the UI
+picks a sample and speed and lists the decisions as they happen.
+
+### Post-service review
+
+`GET /director/review?date=YYYY-MM-DD` (default today) aggregates the
+decision-cycle audit log and the review event log (`REVIEW_EVENTS_FILE`: ATEM
+program changes operator vs app, mode changes and pauses, perception
+degraded/restored, rehearsal windows) into totals — cycles, latency, stale
+cycles, proposals by outcome (executed / approved / rejected / expired / held),
+top hold reasons, program changes — plus a compact timeline (first and last 200
+entries), the operator's slide advances and learned shots. Records inside a
+rehearsal window are excluded. `GET /director/review/dates` lists days with
+data. The Service review panel selects the date and shows totals and timeline.
 
 ## Operating modes
 

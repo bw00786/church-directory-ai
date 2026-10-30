@@ -7,12 +7,19 @@ provider-tiered person detector (yolo -> opencv_hog -> health-only), and derives
 role's ROI centre, and ``frame_health`` (black via mean luma, frozen via an
 average hash). Results are published as ``VisionObservation``s into
 ``ServiceContext`` for the LLM and used by PTZ verification.
+
+The detector is CPU-heavy (hundreds of ms per frame on HOG/YOLO-n), so it runs
+on the dedicated ``detector`` thread pool (``app.vision.executors``) rather
+than inline on the event loop, and within one tick it runs **once per frame
+tag**: every role mapped to the same camera input shares that frame's
+detections instead of re-running the model per role.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 from typing import Callable, Dict, List, Optional, Tuple
 
 from app.config import settings
@@ -20,6 +27,7 @@ from app.domain.observations import VisionObservation
 from app.domain.service_context import service_context
 from app.events.bus import event_bus
 from app.logging_config import get_logger
+from app.vision.executors import run_in
 from app.vision.frame_capture import frame_capture
 
 logger = get_logger(__name__)
@@ -130,11 +138,16 @@ class PersonDetector:
         raise ValueError(f"unknown detector tier: {tier}")
 
     def detect(self, frame) -> List[Detection]:
+        """Blocking; call from a worker thread (see :meth:`detect_async`)."""
         try:
             return self._detect(frame)
         except Exception:
             logger.exception("Person detection failed")
             return []
+
+    async def detect_async(self, frame) -> List[Detection]:
+        """Run the detector on the shared ``detector`` pool off the event loop."""
+        return await run_in("detector", self.detect, frame)
 
 
 # -- pure analysis -----------------------------------------------------------
@@ -153,24 +166,36 @@ def frame_health(frame, prev_hash) -> Tuple[str, object]:
     return "ok", ahash
 
 
-def analyze(frame, roi, detector: PersonDetector, prev_hash) -> Tuple[VisionObservation, object]:
-    health, new_hash = frame_health(frame, prev_hash)
-    obs = VisionObservation(frame_health=health)
-    if health in ("no_frame", "black") or detector.provider == "none":
-        return obs, new_hash
+def needs_detection(health: str, detector: Optional[PersonDetector]) -> bool:
+    return health not in ("no_frame", "black") and detector is not None and detector.provider != "none"
 
-    detections = detector.detect(frame)
-    obs.person_present = len(detections) > 0
-    if detections:
-        # Largest detection by area.
-        cx, cy, w, h = max(detections, key=lambda d: d[2] * d[3])
-        rx, ry, rw, rh = roi
-        roi_cx, roi_cy = rx + rw / 2, ry + rh / 2
-        obs.subject_dx = round(cx - roi_cx, 4)
-        obs.subject_dy = round(cy - roi_cy, 4)
-        obs.person_in_roi = (rx <= cx <= rx + rw) and (ry <= cy <= ry + rh)
-        obs.confidence = 1.0
-    return obs, new_hash
+
+def observation_from(health: str, detections: List[Detection], roi) -> VisionObservation:
+    """Build the per-role observation from a frame's health and its (shared)
+    detections. Pure: the same detections can be projected onto several ROIs."""
+    obs = VisionObservation(frame_health=health)
+    if not detections:
+        return obs
+    obs.person_present = True
+    # Largest detection by area.
+    cx, cy, w, h = max(detections, key=lambda d: d[2] * d[3])
+    rx, ry, rw, rh = roi
+    roi_cx, roi_cy = rx + rw / 2, ry + rh / 2
+    obs.subject_dx = round(cx - roi_cx, 4)
+    obs.subject_dy = round(cy - roi_cy, 4)
+    obs.person_in_roi = (rx <= cx <= rx + rw) and (ry <= cy <= ry + rh)
+    obs.confidence = 1.0
+    return obs
+
+
+def analyze(frame, roi, detector: PersonDetector, prev_hash) -> Tuple[VisionObservation, object]:
+    """Blocking single-frame analysis (health + detection + ROI projection).
+    Used by PTZ verification from a worker thread and by tests; the perception
+    loop uses :meth:`PerceptionLoop.tick_once` which shares detections per tag."""
+    health, new_hash = frame_health(frame, prev_hash)
+    if not needs_detection(health, detector):
+        return VisionObservation(frame_health=health), new_hash
+    return observation_from(health, detector.detect(frame), roi), new_hash
 
 
 # -- loop --------------------------------------------------------------------
@@ -181,9 +206,11 @@ class PerceptionLoop:
         self.fps = fps
         self._task: Optional[asyncio.Task] = None
         self._running = False
-        self._hashes: Dict[str, object] = {}
+        self._hashes: Dict[str, object] = {}   # frame tag -> last average hash
         self.detector: Optional[PersonDetector] = None
         self._roles: List[Tuple[str, str, tuple]] = []
+        self.last_tick_detector_calls = 0      # detector runs in the latest tick
+        self.last_tick_seconds = 0.0
 
     def _build_roles(self) -> None:
         """role -> (input_tag, roi). Raises RoiError on misconfig (no guessing)."""
@@ -215,30 +242,54 @@ class PerceptionLoop:
     async def _run(self) -> None:
         interval = 1.0 / self.fps if self.fps > 0 else 1.0
         while self._running:
-            self.tick_once()
+            try:
+                await self.tick_once()
+            except Exception:
+                logger.exception("Perception tick failed")
             await asyncio.sleep(interval)
 
-    def tick_once(self) -> None:
+    async def _frame_result(self, tag: str, cache: Dict[str, Tuple[str, List[Detection]]]) -> Tuple[str, List[Detection]]:
+        """Health + detections for a frame tag, computed at most once per tick.
+        Detection runs on the ``detector`` pool, never on the event loop."""
+        hit = cache.get(tag)
+        if hit is not None:
+            return hit
+        frame, _ = frame_capture.get_frame(tag)
+        health, self._hashes[tag] = frame_health(frame, self._hashes.get(tag))
+        detections: List[Detection] = []
+        if needs_detection(health, self.detector):
+            detections = await run_in("detector", self.detector.detect, frame)
+            self.last_tick_detector_calls += 1
+        cache[tag] = (health, detections)
+        return cache[tag]
+
+    async def tick_once(self) -> None:
+        """One perception pass over the program input and every configured
+        role. Roles sharing a camera input share one detector run."""
+        started = time.monotonic()
+        self.last_tick_detector_calls = 0
+        cache: Dict[str, Tuple[str, List[Detection]]] = {}
+
         # Program-output health (no ROI; whole-frame occupancy).
-        frame, _ = frame_capture.get_frame("program")
-        obs, self._hashes["program"] = analyze(
-            frame, (0.0, 0.0, 1.0, 1.0), self.detector, self._hashes.get("program")
-        )
+        health, detections = await self._frame_result("program", cache)
+        obs = observation_from(health, detections, (0.0, 0.0, 1.0, 1.0))
         obs.input = "program"
         service_context.record_vision(obs)
 
         for role, tag, roi in self._roles:
-            frame, _ = frame_capture.get_frame(tag)
-            obs, self._hashes[role] = analyze(frame, roi, self.detector, self._hashes.get(role))
+            health, detections = await self._frame_result(tag, cache)
+            obs = observation_from(health, detections, roi)
             obs.input = tag
             obs.role = role
-            camera_id = getattr(settings, f"camera_role_{role}_camera", None)
-            obs.camera_id = camera_id
+            obs.camera_id = getattr(settings, f"camera_role_{role}_camera", None)
             service_context.record_vision(obs)
+        self.last_tick_seconds = round(time.monotonic() - started, 4)
 
     def status(self) -> dict:
         return {
             "detector": self.detector.provider if self.detector else None,
+            "last_tick_detector_calls": self.last_tick_detector_calls,
+            "last_tick_seconds": self.last_tick_seconds,
             "inputs": frame_capture.status(),
             "occupancy": {
                 key: {"person_in_roi": o.person_in_roi, "frame_health": o.frame_health}

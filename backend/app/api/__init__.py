@@ -1,7 +1,7 @@
 """API module initialization."""
 
 from fastapi import FastAPI
-from . import atem, cameras, production, streaming, agents, websocket, vision, director, easyworship, identity, memory, assistant
+from . import atem, cameras, production, streaming, agents, websocket, vision, director, easyworship, identity, memory, assistant, learning, rig, setup
 
 def register_routes(app: FastAPI):
     """Register all API routes."""
@@ -20,5 +20,8 @@ def register_routes(app: FastAPI):
     app.include_router(identity.router)
     app.include_router(memory.router)
     app.include_router(assistant.router)
+    app.include_router(learning.router)
+    app.include_router(rig.router)
+    app.include_router(setup.router)
 
 __all__ = ["register_routes"]

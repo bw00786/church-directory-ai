@@ -1,0 +1,204 @@
+# rig.example.yaml -- a per-church rig profile for the Church Production Director.
+#
+# Copy to rig.yaml (next to .env; or set RIG_PROFILE_FILE) and edit. Every
+# section is optional: anything you leave out comes from the .env settings
+# (CAMERA_1_*, ATEM_CAMERA1_INPUT/ATEM_CAMERA2_INPUT, MIXER_*_CHANNEL,
+# CAMERA_ROLE_*_CAMERA/_PRESET, SONG_FOLLOWER_CUES ...), so with no rig.yaml at
+# all the director behaves exactly as before. Validate without saving:
+#     curl -X POST -H 'Content-Type: text/yaml' --data-binary @rig.yaml http://127.0.0.1:8000/api/rig/validate
+# Full reference: docs/rig-profile.md
+#
+# This example is a two-PTZ church with a choir, no liturgist, slides on ATEM
+# input 4 and a different order of service from the built-in Vernon UMC sheet.
+
+version: 1
+
+church:
+  name: Grace Community Church      # used in script titles ("Grace Community Church -- Sunday Service")
+  timezone: America/Chicago         # IANA zone name (informational; the scheduler uses the PC clock)
+  service_time: "09:30"             # HH:MM, local
+  service_days: [sun]               # mon..sun
+
+# -- Cameras -------------------------------------------------------------------
+# One entry per PTZ camera. `id` is the CameraService id used by the API
+# (/cameras/{id}), the joystick panel and `roles` below. `atem_input` is the
+# ATEM input the camera's SDI/HDMI feeds; two cameras may not share one.
+# `password` may be a literal or an environment reference "${VAR}" that is
+# resolved when the camera connects and never echoed back by GET /api/rig.
+# Changing this section needs a backend restart (cameras connect at startup).
+cameras:
+  - id: 1
+    name: Front PTZ (pulpit)
+    driver: ptzoptics               # ptzoptics | mock
+    host: 192.168.30.31
+    port: 80                        # HTTP-CGI
+    username: admin
+    password: "${CAMERA_1_PASSWORD}"
+    visca_port: 1240                # VISCA-over-IP
+    visca_udp: false                # true = UDP with the Sony header; false = TCP
+    atem_input: 1
+    # snapshot_url: http://192.168.30.31/snapshot.jpg   # vision layer still frames (default shown)
+    # rtsp_url: rtsp://192.168.30.31:554/1              # informational
+  - id: 2
+    name: Rear PTZ (choir / worship team)
+    driver: ptzoptics
+    host: 192.168.30.32
+    username: admin
+    password: "${CAMERA_2_PASSWORD}"
+    atem_input: 3
+
+# -- Switcher --------------------------------------------------------------------
+# Names for ATEM inputs so cues can say `input: slides` or `input: lobby`
+# instead of a number. `slides_input` is the EasyWorship PC (the old
+# ATEM_CAMERA2_INPUT); the context sync reports "slides" on air when it is
+# on program and the slide follower OCRs this feed.
+switcher:
+  driver: atem                      # atem | mock
+  inputs:
+    front: 1
+    rear: 3
+    slides: 4
+    lobby: 5
+  slides_input: 4
+
+# -- Mixer -----------------------------------------------------------------------
+# Audio role -> 1-based desk channel (the MGX16 USB MAIN channel N == desk
+# channel N). Any role names; these are the roles the VAD/Whisper pipeline,
+# the song-end detector (`channels:` below) and the slide follower know.
+# Changing this section needs a backend restart (USB capture binds at start).
+mixer:
+  driver: mgx16_usb                 # mgx16_usb | meter_feed | mock
+  roles:
+    pastor: 1
+    worship_leader: 3
+    choir: 6
+    congregation: 8
+
+# -- Presentation ----------------------------------------------------------------
+presentation:
+  driver: easyworship               # easyworship | mock
+  host: 192.168.30.40               # EasyWorship PC (remote-control protocol); omit to discover via mDNS
+  schedule_offset: 1                # schedule items before the first service item (e.g. a countdown)
+
+# -- PTZ framing roles -------------------------------------------------------------
+# role -> camera id + preset number. Any role names: the cue sheet, the AI
+# Director's PTZ_SELECT_ROLE and `camera_service.move_to_role` all resolve
+# through this one table (identity recognition may learn a better preset per
+# role at run time). Roles you omit fall back to CAMERA_ROLE_<ROLE>_* in .env.
+roles:
+  pastor:          { camera: 1, preset: 1 }   # pulpit
+  lectern:         { camera: 1, preset: 2 }   # reader at the lectern
+  worship_leader:  { camera: 2, preset: 1 }
+  choir:           { camera: 2, preset: 2 }
+  congregation:    { camera: 1, preset: 5 }
+  wide:            { camera: 1, preset: 6 }
+
+# -- Cue sheet overrides -----------------------------------------------------------
+# Applied on top of the built-in cue sheet (docs/director.md "Cue sheet"), by id:
+#   * a built-in id changes only the fields you give;
+#   * `enabled: false` removes a built-in cue;
+#   * an unknown id adds a new cue (needs `label` and `actions`; place it with
+#     `after:`/`before:` another cue id, else it goes at the end).
+# Fields: label, description, state (AI service state), speaker_role,
+# camera_role, easyworship_item, followable, transition (cut|auto),
+# cover_with (ATEM input id or name), advance (manual|timer|song_end|ai),
+# timer_seconds, channels (numbers or mixer role names, for song_end),
+# ai_enabled, exit_hint, actions.
+# Actions: {type: atem_program, input: <id|name|slides|camera:N>, transition?}
+#          {type: ptz_preset, role: <role>, preset?: N, camera?: N}  or  {type: ptz_preset, camera: N, preset: N}
+#          {type: slide, op: next_item|next_slide|live|clear|logo|black}
+#          {type: note, note: "..."}
+cues:
+  - id: service_start
+    timer_seconds: 180                      # 3-minute countdown instead of 5
+    actions:
+      - { type: atem_program, input: slides }
+      - { type: slide, op: live, description: "EasyWorship: go live on the countdown" }
+
+  - id: welcome                             # new cue: pastor welcomes from the pulpit
+    after: service_start
+    label: Welcome
+    state: welcome
+    speaker_role: pastor
+    camera_role: pastor
+    advance: manual
+    ai_enabled: true
+    exit_hint: Advance when the pastor invites everyone to stand and sing.
+    actions:
+      - { type: atem_program, input: front }
+      - { type: ptz_preset, role: pastor }
+
+  - id: first_song
+    label: Opening Song
+    easyworship_item: Opening Song
+    channels: [worship_leader, congregation, choir]   # song-end detection listens to these mics
+
+  - id: anthem                              # new cue: the choir sings, rear camera on the choir
+    after: announcements
+    label: Choir Anthem
+    state: special_music
+    speaker_role: choir
+    camera_role: choir
+    followable: false                       # the congregation does not sing along; the follower stays off
+    advance: song_end
+    channels: [choir]
+    cover_with: slides                      # hide the rear camera's move behind the slides if it is on air
+    actions:
+      - { type: ptz_preset, role: choir }
+      - { type: atem_program, input: rear, transition: auto }
+
+  - id: scripture_reading
+    label: Scripture Reading -- Lectern
+    speaker_role: lectern
+    camera_role: lectern
+    actions:
+      - { type: atem_program, input: front }
+      - { type: ptz_preset, role: lectern }
+      - { type: note, note: "Reader's lapel mic is on channel 3 for this reading." }
+
+  - id: sermon
+    label: Message
+    description: Pastor preaches from the pulpit.
+
+  # This church has no liturgist, children's message, communion or bumper video.
+  - { id: childrens_message, enabled: false }
+  - { id: call_to_worship_liturgist, enabled: false }
+  - { id: call_to_worship_slides, enabled: false }
+  - { id: hymn_of_praise, enabled: false }
+  - { id: bumper_video, enabled: false }
+  - { id: communion_pastor, enabled: false }
+  - { id: communion_congregation, enabled: false }
+  - { id: lords_prayer, enabled: false }
+  - { id: community_prayers, enabled: false }
+
+  - id: offertory_liturgist
+    label: Offering -- Worship Leader
+    speaker_role: worship_leader
+    camera_role: worship_leader
+    actions:
+      - { type: atem_program, input: rear }
+      - { type: ptz_preset, role: worship_leader }
+
+# -- Order-of-service heading synonyms -----------------------------------------------
+# cue id -> regexes (case-insensitive, anchored at the start of a heading line;
+# first match wins). Tried BEFORE the built-in table, so your bulletin's wording
+# maps to your cues -- and a broad pattern here shadows a more specific built-in
+# one ("offering" would hide the built-in "Offering with Doxology" rule). A key
+# may list several cue ids ("benediction,service_end") for a heading that
+# expands to more than one cue.
+heading_synonyms:
+  welcome: ["welcome( and announcements)?", "greeting"]
+  first_song: ["opening song", "gathering song", "songs? of praise"]
+  anthem: ["anthem", "choir( anthem)?", "special music"]
+  scripture_reading: ["(first|second|gospel) (reading|lesson)", "reading"]
+  sermon: ["message", "homily"]
+  offertory_liturgist: ["tithes and offerings"]
+  closing_praise: ["sending song", "closing song"]
+  "benediction,service_end": ["blessing", "sending"]
+
+# -- Slide follower ----------------------------------------------------------------
+# Cues during which the line-by-line slide follower may advance EasyWorship,
+# and the transcript roles it listens to (must be mixer roles above).
+follower:
+  cues: [first_song, scripture_reading, doxology, closing_praise]
+  roles: [worship_leader, congregation, choir]

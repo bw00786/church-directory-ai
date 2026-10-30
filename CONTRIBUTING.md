@@ -179,14 +179,16 @@ git commit -m "fix bugs"
 ### 5. Test Before Submitting
 
 ```bash
+# Everything CI runs (.github/workflows/ci.yml)
+make test lint
+
 # Backend
-pytest
+cd backend && pytest
 pytest -v --cov=app
 mypy app
 
 # Frontend
-npm run lint
-npm run build
+cd frontend && npm run lint && npx tsc --noEmit && npm run test && npm run build
 
 # Manual testing
 .\scripts\start-all.ps1
@@ -328,7 +330,10 @@ Before submitting PR:
 - [ ] Type hints on all functions
 - [ ] Unit tests added
 - [ ] Tests pass locally
-- [ ] No hardcoded secrets
+- [ ] No hardcoded secrets; new secrets go through `scripts/generate_secrets.py` and `app/security/secrets_check.py`
+- [ ] New control routes are covered by the auth middleware (not added to `PUBLIC_PATHS`)
+- [ ] New subsystems report into `app/health/registry.py`
+- [ ] New settings are added to `app/config.py`, `.env.example` and the relevant doc
 - [ ] LLM doesn't access hardware directly
 - [ ] State is verified after changes
 - [ ] Manual control still works

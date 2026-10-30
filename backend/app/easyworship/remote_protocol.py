@@ -319,7 +319,10 @@ class RemoteProtocolDriver(EasyWorshipDriver):
             return False
         try:
             self._reader, self._writer = await asyncio.wait_for(
-                asyncio.open_connection(self.host, self.port), self._connect_timeout
+                # EasyWorship status lines carry full schedules; the default 64 KiB
+                # StreamReader limit would raise LimitOverrunError and drop the link.
+                asyncio.open_connection(self.host, self.port, limit=MAX_LINE_BYTES),
+                self._connect_timeout,
             )
         except Exception as e:
             logger.warning("EasyWorship remote connect failed", host=self.host, port=self.port, error=str(e))

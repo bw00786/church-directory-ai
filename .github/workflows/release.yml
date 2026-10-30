@@ -1,0 +1,78 @@
+name: Release
+
+# Tag a release (git tag v1.2.0 && git push --tags) to build and publish:
+#   - frontend bundle (dist.zip)
+#   - backend wheel
+#   - atem-bridge.exe (needs the proprietary Blackmagic ATEM Switchers SDK, so it
+#     builds on a self-hosted Windows runner labelled `atem-sdk` with the SDK
+#     installed; the job is skipped when no such runner is registered)
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          VERSION=$(python3 scripts/check_version.py)
+          test "v$VERSION" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} != v$VERSION"; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  frontend:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - working-directory: frontend
+        run: npm ci && npm run build && cd dist && zip -r ../../frontend-dist-${{ needs.check.outputs.version }}.zip .
+      - uses: actions/upload-artifact@v4
+        with: { name: frontend-dist, path: frontend-dist-*.zip }
+
+  backend:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - working-directory: backend
+        run: pip install build && python -m build --wheel
+      - uses: actions/upload-artifact@v4
+        with: { name: backend-wheel, path: backend/dist/*.whl }
+
+  atem-bridge:
+    needs: check
+    if: ${{ vars.ATEM_SDK_RUNNER == 'true' }}
+    runs-on: [self-hosted, windows, atem-sdk]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure and build
+        shell: pwsh
+        working-directory: atem-bridge
+        run: |
+          cmake -B build -G "Visual Studio 17 2022" -A x64 -DATEM_SDK_DIR="$env:ATEM_SDK_DIR"
+          cmake --build build --config Release
+      - uses: actions/upload-artifact@v4
+        with: { name: atem-bridge, path: atem-bridge/build/Release/atem-bridge.exe }
+
+  publish:
+    needs: [check, frontend, backend]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts }
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true

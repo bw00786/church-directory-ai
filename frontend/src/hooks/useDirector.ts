@@ -6,11 +6,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { directorAPI } from '@/api/atem'
-
-const WS_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(
-  'http',
-  'ws',
-)
+import { wsUrl } from '@/api/client'
 
 export interface CueAction {
   type: string
@@ -56,7 +52,7 @@ export function useDirector() {
   const ws = useRef<WebSocket | null>(null)
 
   useEffect(() => {
-    const socket = new WebSocket(`${WS_BASE}/ws/director`)
+    const socket = new WebSocket(wsUrl('/ws/director'))
     ws.current = socket
 
     socket.onopen = () => setConnected(true)

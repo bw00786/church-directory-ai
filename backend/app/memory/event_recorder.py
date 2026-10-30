@@ -52,7 +52,9 @@ class MemoryEventRecorder:
         while True:
             message = await self._queue.get()
             try:
-                self._handle(message)
+                # record_observation embeds + writes synchronously; keep that
+                # off the event loop the live director runs on.
+                await asyncio.to_thread(self._handle, message)
             except Exception:
                 logger.exception("Failed to record memory observation", message=message)
 
@@ -80,7 +82,11 @@ class MemoryEventRecorder:
             reason = payload.get("reason", "")
             confidence = payload.get("confidence", 0.0)
             text = f"AI decision: {decision} (confidence={confidence:.2f}) — {reason}" if reason else f"AI decision: {decision}"
-            memory_manager.record_observation(category="ai_decision", text=text, source="ai_director")
+            memory_manager.record_observation(
+                category="ai_decision", text=text, source="ai_director",
+                service_state=payload.get("service_state") or payload.get("from_state"),
+                outcome=decision,
+            )
         elif event in ("AI_ACTION_APPROVED", "AI_ACTION_REJECTED"):
             payload = message.get("payload") or {}
             action_type = payload.get("type", "action")
@@ -94,7 +100,16 @@ class MemoryEventRecorder:
             text += f" (confidence={confidence:.2f})"
             if reason:
                 text += f" — {reason}"
-            memory_manager.record_observation(category="ai_action", text=text, source="ai_director")
+            memory_manager.record_observation(
+                category="ai_action", text=text, source="ai_director",
+                service_state=payload.get("service_state"),
+                speaker_role=payload.get("speaker_role"),
+                camera_role=target if str(action_type).startswith("PTZ") else payload.get("camera_role"),
+                atem_input=payload.get("atem_input") if str(action_type).startswith("ATEM") else None,
+                easyworship_item=target if str(action_type).startswith("EASYWORSHIP") else None,
+                outcome=status,
+                metadata={"action_type": action_type},
+            )
 
 
 memory_event_recorder = MemoryEventRecorder()

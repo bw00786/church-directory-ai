@@ -45,6 +45,10 @@ int main() {
     LOG_INFO("ATEM Bridge starting...");
 
     AtemController controller;
+    // State is cached inside the controller and served by GET /status; the
+    // backend polls it and emits PROGRAM_CHANGED / PREVIEW_CHANGED events.
+    // `last_change` in /status is stamped by this callback path, so the
+    // backend can detect a bridge whose SDK callbacks have gone quiet.
     controller.SetStateChangeCallback([]() { LOG_DEBUG("ATEM state changed"); });
 
     const int port = GetPortFromEnv();

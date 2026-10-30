@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.atem.models import MicMuteRequestModel, TransitionRequestModel
-from app.atem.service import AtemService
+from app.atem.service import AtemFeatureUnsupported, AtemService
 from app.dependencies import get_atem_service
 from app.logging_config import get_logger
 
@@ -81,6 +81,23 @@ async def set_program(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error("Error setting program", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/program/undo")
+async def undo_program(atem: AtemService = Depends(get_atem_service)):
+    """Cut back to the input that was on program before the last change (operator safety net)."""
+    try:
+        if not await atem.is_connected():
+            raise HTTPException(status_code=503, detail="ATEM not connected")
+        state = await atem.undo_last_program()
+        return {"ok": True, "message": f"Program restored to input {state.program_input}", "state": state}
+    except LookupError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error undoing program change", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -204,6 +221,8 @@ async def set_mic_muted(
             raise HTTPException(status_code=503, detail="ATEM not connected")
         state = await atem.set_mic_muted(mic_id, request.muted)
         return {"ok": True, "state": state}
+    except AtemFeatureUnsupported as e:
+        raise HTTPException(status_code=501, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

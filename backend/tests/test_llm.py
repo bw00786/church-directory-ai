@@ -15,6 +15,7 @@ from pydantic import ValidationError
 
 from app.agents import llm as llm_module
 from app.config import Settings, settings
+from app.events.bus import event_bus
 
 
 FACTORIES = (
@@ -89,11 +90,13 @@ def test_legacy_anthropic_dotenv_is_ignored(tmp_path, clean_settings_env, monkey
     assert "obsolete" not in config.model_dump_json()
 
 
-def test_unrelated_unknown_dotenv_keys_still_rejected(tmp_path, clean_settings_env):
+def test_unrelated_unknown_dotenv_keys_are_reported(tmp_path, clean_settings_env):
+    """Unknown keys can't be rejected outright (other subsystems share the .env with
+    their own prefixes), so they are collected and warned about at startup."""
     dotenv = tmp_path / "typo.env"
-    dotenv.write_text("OLLAMA_MODLE=typo\n")
-    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
-        Settings(_env_file=dotenv)
+    dotenv.write_text("OLLAMA_MODLE=typo\nFACE_MATCH_THRESHOLD=0.5\n")
+    loaded = Settings(_env_file=dotenv)
+    assert loaded.unknown_keys == ["OLLAMA_MODLE"]
 
 
 @pytest.mark.parametrize("field,value", [
@@ -202,10 +205,15 @@ def test_role_factories_select_json_models_and_cache_independently(monkeypatch):
     monkeypatch.setattr(llm_module, "build_llm", builder)
     clients = [factory() for factory in FACTORIES]
     assert len({id(client) for client in clients}) == 4
-    assert [call.kwargs for call in builder.call_args_list] == [
-        {}, {"json_mode": True}, {"model": "fast:test", "json_mode": True},
-        {"model": "vision:test", "json_mode": True},
-    ]
+    calls = [call.kwargs for call in builder.call_args_list]
+    assert calls[0] == {}
+    # The director runs on the fast model with a schema-constrained, small reply.
+    director = calls[1]
+    assert director["model"] == "fast:test"
+    assert director["json_mode"] is True
+    assert director["json_schema"]["properties"]["decision"]["enum"] == ["continue", "transition", "deviate"]
+    assert director["max_tokens"] == llm_module.DIRECTOR_MAX_TOKENS_DEFAULT
+    assert calls[2:] == [{"model": "fast:test", "json_mode": True}, {"model": "vision:test", "json_mode": True}]
     for factory, client in zip(FACTORIES, clients):
         assert factory() is client
     assert builder.call_count == 4
@@ -482,10 +490,90 @@ async def test_real_json_adapters_send_json_format(monkeypatch, factory):
         assert len(requests) == 1
         assert requests[0].url.path == "/api/chat"
         payload = json.loads(requests[0].content)
-        assert payload["format"] == "json"
+        if factory is llm_module.get_director_llm:
+            assert payload["format"]["type"] == "object"  # Ollama structured output (JSON schema)
+            assert payload["options"]["num_predict"] == llm_module.DIRECTOR_MAX_TOKENS_DEFAULT
+        else:
+            assert payload["format"] == "json"
         assert payload["model"] == "qwen3.8:latest"
         assert payload["think"] is False
         assert payload["stream"] is True
     finally:
         adapter._client._client.close()
         await adapter._async_client._client.aclose()
+
+
+# -- director path: deadline override and backoff -------------------------------
+
+
+async def test_invoke_llm_timeout_override_beats_long_setting(monkeypatch):
+    monkeypatch.setattr(settings, "llm_timeout_seconds", 120)
+    monkeypatch.setattr(llm_module.ollama_locator, "request_resolve", lambda: None)
+
+    async def slow(messages):
+        await asyncio.sleep(5)
+
+    with pytest.raises(TimeoutError):
+        await llm_module.invoke_llm(SimpleNamespace(ainvoke=slow), [], timeout=0.01)
+
+
+def test_director_model_defaults_to_fast_model(monkeypatch):
+    monkeypatch.setattr(settings, "ollama_fast_model", "fast:test")
+    monkeypatch.setitem(settings.__dict__, "ai_director_model", "")
+    assert llm_module.director_model() == "fast:test"
+    monkeypatch.setitem(settings.__dict__, "ai_director_model", "director:tag")
+    assert llm_module.director_model() == "director:tag"
+
+
+def test_director_deadline_default_and_override(monkeypatch):
+    settings.__dict__.pop("ai_director_deadline_seconds", None)
+    if "ai_director_deadline_seconds" not in type(settings).model_fields:
+        assert llm_module.director_deadline_seconds() == 3.0
+    monkeypatch.setitem(settings.__dict__, "ai_director_deadline_seconds", 1.5)
+    assert llm_module.director_deadline_seconds() == 1.5
+
+
+async def test_backoff_grows_exponentially_with_cap_and_jitter():
+    clock = {"now": 0.0}
+    rng = {"value": 0.0}
+    backoff = llm_module.InferenceBackoff(prefix="TEST", clock=lambda: clock["now"], rng=lambda: rng["value"])
+    delays = [backoff.record_failure("boom") for _ in range(7)]
+    assert delays == [1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 30.0]
+    assert backoff.seconds_until_retry() == 30.0
+    clock["now"] += 30.0
+    assert backoff.seconds_until_retry() == 0.0
+    rng["value"] = 1.0  # maximum jitter adds 25% but never exceeds the cap
+    backoff.record_success()
+    assert backoff.record_failure("boom") == pytest.approx(1.25)
+    for _ in range(6):
+        delay = backoff.record_failure("boom")
+    assert delay == 30.0
+
+
+async def test_backoff_publishes_degraded_once_and_restored_on_recovery():
+    queue = await event_bus.subscribe()
+    try:
+        backoff = llm_module.InferenceBackoff(prefix="AI_DIRECTOR", rng=lambda: 0.0)
+        backoff.record_failure("inference failed: TimeoutError")
+        backoff.record_failure("inference failed: ConnectError")
+        backoff.record_success()
+        backoff.record_success()  # idempotent: no second RESTORED
+        await asyncio.sleep(0)
+        events = []
+        while not queue.empty():
+            events.append(queue.get_nowait())
+    finally:
+        await event_bus.unsubscribe(queue)
+    assert [e["event"] for e in events] == ["AI_DIRECTOR_DEGRADED", "AI_DIRECTOR_RESTORED"]
+    assert events[0]["payload"] == {"reason": "inference failed: TimeoutError", "consecutive_failures": 1,
+                                    "next_retry_seconds": 1.0}
+    assert events[1]["payload"] == {"failures_during_outage": 2}
+    assert backoff.status() == {"degraded": False, "consecutive_failures": 0, "last_error": None,
+                                "seconds_until_retry": 0.0}
+
+
+def test_module_level_director_backoff_is_isolated_from_health_check(probe):
+    # /health/ollama keeps its own semantics: it never consults or mutates the director backoff.
+    before = llm_module.director_backoff.status()
+    asyncio.run(llm_module.check_ollama_connection())
+    assert llm_module.director_backoff.status() == before

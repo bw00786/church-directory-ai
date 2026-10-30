@@ -3,13 +3,7 @@
  * Communicates with FastAPI backend
  */
 
-import axios from 'axios'
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
-
-const client = axios.create({
-  baseURL: API_BASE,
-})
+import client from './client'
 
 export const atemAPI = {
   async getStatus() {
@@ -38,6 +32,11 @@ export const atemAPI = {
 
   async auto() {
     return client.post('/atem/auto')
+  },
+
+  /** Cut back to the input that was on program before the last change (undo a wrong cut). */
+  async undoProgram() {
+    return client.post('/atem/program/undo')
   },
 
   async startStream() {

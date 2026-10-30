@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 
 from app.director.ai_director_runtime import ai_director_runtime
 from app.director.engine import service_director
+from app.director.rehearsal import rehearsal_service
+from app.director.review import available_dates, review_for, review_recorder
 from app.director.order_document import (
     MAX_UPLOAD_BYTES,
     DocumentError,
@@ -67,6 +69,15 @@ class AiModeRequest(BaseModel):
 class SlideTextRequest(BaseModel):
     label: str = Field(..., min_length=1, max_length=MAX_LABEL_CHARS)
     text: str = Field(..., min_length=1, max_length=MAX_TEXT_CHARS)
+
+
+class RehearsalStartRequest(BaseModel):
+    """Replay a bundled sample (``sample``) or a file under the recordings directory (``file``)."""
+
+    sample: Optional[str] = None
+    file: Optional[str] = None
+    speed: float = Field(1.0, gt=0.0, le=50.0)
+    mode: str = "ai_directed"  # manual | assisted | ai_directed (private runtime; mock dispatch)
 
 
 @router.get("/status")
@@ -227,7 +238,8 @@ async def suggest(request: SuggestRequest):
 
 @router.post("/observe")
 async def observe(request: ObserveRequest):
-    """Let the AI evaluate an observation and decide whether to advance."""
+    """Let the AI evaluate an observation; any advance becomes a CUE_ADVANCE
+    proposal in the AI Director's queue and honours the operating mode."""
     from app.agents.director_ai import director_ai
 
     return await director_ai.observe(request.text)
@@ -238,17 +250,23 @@ async def observe(request: ObserveRequest):
 
 @router.get("/ai/status")
 async def ai_status():
-    """Current AI Director mode, service context snapshot, and pending actions."""
+    """Current AI Director mode, service context snapshot, pending proposals
+    (with ids, TTL and hold reasons), last cycle timing and adaptive thresholds."""
     from app.audio.audio_observer import audio_observer
     from app.vision.perception import perception_loop
 
     return {
-        "mode": ai_director_runtime.mode,
+        **ai_director_runtime.status(),
         "context": service_context.snapshot(),
-        "pending_actions": [a.model_dump(mode="json") for a in ai_director_runtime.pending_actions],
         "perception": audio_observer.perception_status(),
         "vision": perception_loop.status(),
     }
+
+
+@router.get("/ai/pending")
+async def list_pending_actions():
+    """Pending AI proposals awaiting operator approval (or a pacing retry)."""
+    return {"pending_actions": ai_director_runtime.pending_proposals()}
 
 
 @router.get("/ai/mode")
@@ -267,6 +285,18 @@ async def set_ai_mode(request: AiModeRequest):
     return {"mode": ai_director_runtime.mode}
 
 
+@router.post("/ai/pause")
+async def pause_ai():
+    """Pause the AI Director (operator role): drop to manual, remembering the mode to resume."""
+    return ai_director_runtime.pause()
+
+
+@router.post("/ai/resume")
+async def resume_ai():
+    """Resume the mode that was active before the pause (no-op when not paused)."""
+    return ai_director_runtime.resume()
+
+
 @router.post("/ai/tick")
 async def ai_tick():
     """Manually trigger one AI Director decision cycle (mainly for testing)."""
@@ -274,20 +304,29 @@ async def ai_tick():
     return decision.model_dump(mode="json")
 
 
-@router.post("/ai/pending/{index}/approve")
-async def approve_pending_action(index: int):
-    """Approve and execute a pending (assisted-mode) AI-proposed action."""
+@router.post("/ai/pending/{ref}/approve")
+async def approve_pending_action(ref: str):
+    """Approve and execute a pending (assisted-mode) AI proposal by **id**.
+
+    A purely numeric ``ref`` is treated as the legacy queue index (kept for one
+    release; index routes resolve index -> id before acting)."""
     try:
-        return await ai_director_runtime.approve_pending(index)
+        return await ai_director_runtime.approve_pending(ref)
     except IndexError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"No pending proposal {ref}")
 
 
-@router.post("/ai/pending/{index}/reject")
-async def reject_pending_action(index: int):
-    """Reject (discard) a pending AI-proposed action."""
-    ai_director_runtime.reject_pending(index)
-    return {"ok": True}
+@router.post("/ai/pending/{ref}/reject")
+async def reject_pending_action(ref: str):
+    """Reject (discard) a pending AI proposal by id (or legacy index)."""
+    try:
+        return ai_director_runtime.reject_pending(ref)
+    except IndexError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"No pending proposal {ref}")
 
 
 # -- Song / reading follower ---------------------------------------------------
@@ -337,3 +376,68 @@ async def operator_advances(limit: int = 50):
         **operator_advance_recorder.status(),
         "history": operator_advance_history.summary(limit=max(1, min(limit, 500))),
     }
+
+
+# -- Rehearsal (replay a recorded service against mock clients) ------------------
+
+
+@router.get("/rehearsal/samples")
+async def rehearsal_samples():
+    """Bundled sample recordings plus files in the recordings directory."""
+    from app.director.rehearsal import list_samples, rehearsal_allowed
+
+    allowed, reason = rehearsal_allowed()
+    return {"samples": list_samples(), "allowed": allowed, "reason": reason}
+
+
+@router.get("/rehearsal/status")
+async def rehearsal_status():
+    """Progress, per-step decisions, queued proposals and mock-executed actions."""
+    return rehearsal_service.status()
+
+
+@router.post("/rehearsal/start")
+async def rehearsal_start(request: RehearsalStartRequest):
+    """Start replaying a recording through a private AI runtime. Never moves hardware."""
+    review_recorder.ensure_started()
+    try:
+        return await rehearsal_service.start(
+            sample=request.sample, file=request.file, speed=request.speed, mode=request.mode
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.post("/rehearsal/stop")
+async def rehearsal_stop():
+    """Stop the running rehearsal (keeps its decisions for review)."""
+    return await rehearsal_service.stop()
+
+
+# -- Post-service review -----------------------------------------------------------
+
+
+@router.get("/review/dates")
+async def review_dates():
+    """Local dates that have cycle-log or review-event data, newest first."""
+    review_recorder.ensure_started()
+    return {"dates": available_dates()}
+
+
+@router.get("/review")
+async def review(date: Optional[str] = None):
+    """One day's AI Director activity: totals plus a compact timeline (default today)."""
+    from datetime import date as _date
+
+    review_recorder.ensure_started()
+    try:
+        day = _date.fromisoformat(date) if date else _date.today()
+    except ValueError:
+        raise HTTPException(status_code=422, detail="date must be YYYY-MM-DD")
+    return review_for(day)

@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 
+import { apiFetch } from '@/api/client'
+
 export interface VisionStatus {
   enabled: boolean
   active: boolean
@@ -16,7 +18,7 @@ export function useVision() {
   const refresh = async () => {
     try {
       setLoading(true)
-      const res = await fetch('http://localhost:8000/api/vision/status')
+      const res = await apiFetch('/api/vision/status')
       if (!res.ok) {
         throw new Error('Failed to fetch vision status')
       }

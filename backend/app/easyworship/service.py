@@ -41,6 +41,9 @@ class EasyWorshipService:
         self._current_item_index = 0
         self._current_item_label: Optional[str] = None
         self._last_command_at = float("-inf")
+        # Fire-and-forget verification tasks: hold strong references so the
+        # event loop cannot garbage-collect them mid-flight.
+        self._tasks: set[asyncio.Task] = set()
         if self._driver.supports_confirmation:
             self._driver.on_state = self._on_remote_state  # type: ignore[attr-defined]
 
@@ -51,6 +54,12 @@ class EasyWorshipService:
             connected=self._connected,
             driver=type(self._driver).__name__,
         )
+
+    def _spawn(self, coro) -> asyncio.Task:
+        task = asyncio.create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return task
 
     async def stop(self) -> None:
         disconnect = getattr(self._driver, "disconnect", None)
@@ -98,7 +107,14 @@ class EasyWorshipService:
 
     def _on_remote_state(self, state) -> None:
         self._connected = state.paired
-        event_bus.publish({"event": "EASYWORSHIP_STATE", "payload": state.as_dict()})
+        payload = state.as_dict()
+        # Service-plan label of the live schedule item, so subscribers (the
+        # context sync, the operator UI) need not repeat the pres_no lookup.
+        try:
+            payload["item_label"] = self.item_label_for(getattr(state, "pres_no", None))
+        except Exception:
+            payload["item_label"] = None
+        event_bus.publish({"event": "EASYWORSHIP_STATE", "payload": payload})
 
     async def _confirm(self, predicate: Callable, description: str) -> bool:
         """Wait for EasyWorship to report the expected position."""
@@ -164,7 +180,7 @@ class EasyWorshipService:
                 self._current_item_index = target_index
                 self._current_item_label = label
                 if settings.slide_verify_enabled:
-                    asyncio.create_task(slide_verifier.verify_after_action("next_item"))
+                    self._spawn(slide_verifier.verify_after_action("next_item"))
             return ok
 
         delta = target_index - self._current_item_index
@@ -201,7 +217,7 @@ class EasyWorshipService:
             elif name == "prev_item":
                 self._current_item_index = max(0, self._current_item_index - 1)
             if name in SLIDE_CHANGE_ACTIONS and settings.slide_verify_enabled:
-                asyncio.create_task(slide_verifier.verify_after_action(name))
+                self._spawn(slide_verifier.verify_after_action(name))
         return ok
 
     @staticmethod
@@ -284,7 +300,7 @@ class EasyWorshipService:
         if ok:
             self._last_action = "goto_slide"
             if settings.slide_verify_enabled:
-                asyncio.create_task(slide_verifier.verify_after_action("next_slide"))
+                self._spawn(slide_verifier.verify_after_action("next_slide"))
         return ok
 
     def status(self) -> dict:

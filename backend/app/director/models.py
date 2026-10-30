@@ -1,9 +1,13 @@
 """Data models for the scripted Sunday service."""
 
 from enum import Enum
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel
+
+# How an ATEM program change reaches air: a hard cut or the ATEM's AUTO
+# (timed) transition. Defaulted per cue, overridable per ATEM action.
+Transition = Literal["cut", "auto"]
 
 
 class ActionType(str, Enum):
@@ -38,6 +42,8 @@ class CueAction(BaseModel):
     role: Optional[str] = None
     slide_op: Optional[str] = None  # EasyWorship action name (e.g. "next_item")
     note: Optional[str] = None
+    # Per-action override of the cue's ``transition`` (ATEM_PROGRAM only).
+    transition: Optional[Transition] = None
     description: str = ""
 
 
@@ -53,6 +59,19 @@ class Cue(BaseModel):
     channels: List[int] = []  # mixer channels watched for SONG_END
     ai_enabled: bool = False  # LLM/vision layer may auto-advance this cue
     exit_hint: Optional[str] = None  # natural-language advance condition for the AI
+    # How this cue's ATEM program changes are taken (see engine.plan_cue).
+    transition: Transition = "cut"
+    # ATEM input used to hide a PTZ move when the PTZ camera is already on
+    # program when the cue starts (e.g. the slides input). None = just move.
+    cover_with: Optional[int] = None
+    # AI-facing description overrides (see app.director.plan_builder). None =
+    # use the built-in default for this cue id. A per-church rig profile fills
+    # these in for cues the default table does not know.
+    state: Optional[str] = None          # ServiceState value, e.g. "sermon"
+    speaker_role: Optional[str] = None   # "pastor" | "liturgist" | "vocalist" | "congregation"
+    camera_role: Optional[str] = None    # framing role expected on the PTZ camera
+    easyworship_item: Optional[str] = None  # service-plan label of the EW item this cue puts live
+    followable: Optional[bool] = None    # slide text is read/sung aloud (line follower may advance)
 
 
 class ServiceScript(BaseModel):

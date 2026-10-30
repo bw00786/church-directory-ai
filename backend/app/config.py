@@ -8,19 +8,56 @@ from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
+# Prefixes owned by other settings classes that read the same .env (voice,
+# identity/face, legacy vision manager, local audio capture, the Vite build).
+# Keys with these prefixes are not errors here.
+OTHER_SUBSYSTEM_PREFIXES = (
+    "voice_", "tts_", "anthropic_", "face_", "liveness_", "unknown_speaker_",
+    "min_role_preset_", "enable_audio_capture", "audio_capture_", "vite_",
+    "camera_1_rtsp", "camera_2_rtsp", "camera_3_rtsp", "vision_test_pattern",
+)
+
+
+def unknown_dotenv_keys(values: dict, known_fields: set[str]) -> list[str]:
+    """Dotenv keys that no settings class owns -- almost always a typo.
+
+    Returned (and logged at startup) rather than raised: several subsystems
+    read the same .env with their own prefixes, so a hard failure here would
+    reject legitimate keys of another class.
+    """
+    unknown = []
+    for key in values:
+        lowered = key.lower()
+        if lowered in known_fields or lowered.startswith(OTHER_SUBSYSTEM_PREFIXES):
+            continue
+        unknown.append(key.upper())
+    return unknown
+
+
 class Settings(BaseSettings):
-    """Application settings loaded from .env."""
+    """Application settings loaded from .env.
+
+    Unknown keys are ignored by pydantic (other subsystems own their own
+    prefixes) but collected in ``Settings.unknown_keys`` and logged once at
+    startup so a typo like ``OLLAMA_MODLE`` is visible, not silent.
+    """
+
+    unknown_keys: list[str] = Field(default_factory=list, exclude=True)
 
     @classmethod
     def settings_customise_sources(cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings):
         def production_dotenv():
+            values = dotenv_settings()
             # Voice validates its own settings without becoming a startup dependency.
-            return {key: value for key, value in dotenv_settings().items()
+            kept = {key: value for key, value in values.items()
                     if not key.lower().startswith(("voice_", "tts_", "anthropic_"))}
+            kept["unknown_keys"] = unknown_dotenv_keys(values, set(cls.model_fields))
+            return kept
         return init_settings, env_settings, production_dotenv, file_secret_settings
     
-    # API
-    api_host: str = "0.0.0.0"
+    # API. Loopback by default: the operator UI normally runs on the same PC.
+    # Set API_HOST=0.0.0.0 to serve the LAN -- the auth gate then requires API keys.
+    api_host: str = "127.0.0.1"
     api_port: int = 8000
     api_workers: int = 1
     
@@ -37,6 +74,35 @@ class Settings(BaseSettings):
     postgres_password: str = "changeme"
     postgres_pool_size: int = 10
     postgres_max_overflow: int = 20
+    # Run the additive schema migrations (app.database.migrations) at startup.
+    # Failure is logged and reported by /health/ready, never fatal.
+    database_migrate_on_startup: bool = True
+    database_startup_timeout_seconds: float = 10.0
+
+    # Per-church rig profile (docs/rig-profile.md): cameras, ATEM inputs, mixer
+    # channels, PTZ role shots, cue overrides, heading synonyms. Relative paths
+    # resolve from the repo root; a missing file means "derive from .env".
+    rig_profile_file: str = "rig.yaml"
+
+    # First-run setup wizard (app/api/setup.py): discovery + connectivity tests,
+    # writes allow-listed keys to .env (admin key). needs_setup is false on a
+    # fully mocked loopback dev box.
+    setup_wizard_enabled: bool = True
+    setup_probe_timeout_seconds: float = 8.0
+    setup_env_file: str = ""                     # empty => the repo .env
+
+    # Rehearsal mode (app/director/rehearsal.py): replay a recording through a
+    # private copy of the AI runtime; actions are recorded, never sent to hardware.
+    force_mock_during_rehearsal: bool = False    # allow rehearsal while real hardware is configured
+    rehearsal_default_gap_seconds: float = 2.0
+    rehearsal_recordings_dir: str = "data/recordings"
+
+    # Post-service review (app/director/review.py): bus events kept for GET /director/review.
+    review_events_file: str = "data/review_events.jsonl"
+
+    # Serve the built operator UI (frontend/dist) at /app when the directory
+    # exists. Empty = <repo>/frontend/dist.
+    frontend_dist_dir: str = ""
     
     # Ollama (Qwen) running on the EasyWorship PC; all inference goes through
     # app.agents.llm over Ollama's REST API. Empty OLLAMA_BASE_URL => found
@@ -99,6 +165,20 @@ class Settings(BaseSettings):
     secret_key: str = "your-secret-key-here-change-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expiration_hours: int = 24
+
+    # --- Control-plane authentication (app.security.auth) ---
+    # Enforce API keys on every non-public HTTP route and WebSocket.
+    api_auth_enabled: bool = True
+    # Operator key: X-API-Key / Authorization: Bearer / WebSocket ?token=. Role "operator".
+    api_key: str = ""
+    # Admin key: role "admin"; required for mutating calls under ADMIN_ONLY_PREFIXES
+    # (POST /director/ai/mode, /api/settings).
+    api_admin_key: str = ""
+    # Let GET/HEAD and read-only WebSockets (/ws/director, /ws/vision, /ws/voice) through without a key.
+    api_allow_unauthenticated_reads: bool = False
+    # Refuse to start with placeholder secrets / missing keys unless every hardware
+    # integration is mocked (dev). Set false only for throwaway test rigs.
+    security_strict_startup: bool = True
     
     # Features
     enable_mock_atem: bool = True
@@ -106,6 +186,8 @@ class Settings(BaseSettings):
     # falling back to the mock client automatically otherwise (overrides enable_mock_atem).
     atem_auto_detect: bool = True
     atem_probe_timeout_seconds: float = 1.5
+    # Bridge /status poll interval; drives PROGRAM_CHANGED / PREVIEW_CHANGED latency.
+    atem_poll_seconds: float = 1.0
     # ATEM IP resolver: the switcher takes a new DHCP address when power-cycled,
     # so discover it by MAC on the configured subnets instead of pinning ATEM_IP.
     atem_resolve_enabled: bool = True
@@ -125,6 +207,13 @@ class Settings(BaseSettings):
     camera_1_password: str | None = None
     camera_1_visca_port: int = 1240  # VISCA-over-IP TCP port
     camera_1_visca_udp: bool = False  # use UDP (Sony header) instead of TCP
+    # VISCA-over-IP transport (app.cameras.visca). Two ACK timeouts in a row mark
+    # the link dead: commands fall back to HTTP-CGI and a backoff reconnect runs.
+    visca_ack_timeout_seconds: float = 0.5
+    # PTZOptics sends the completion for preset/absolute moves at end of motion.
+    visca_completion_timeout_seconds: float = 8.0
+    # 0 = leave the camera's own setting; 1..24 sends the recall-speed command once.
+    visca_preset_recall_speed: int = 0
 
     # Continuous joystick control: auto-stop if no command arrives within this window
     camera_joystick_hold_timeout: float = 1.0
@@ -154,6 +243,10 @@ class Settings(BaseSettings):
     song_end_hold_seconds: float = 3.0   # sustained silence that ends a song
     song_max_wait_seconds: float = 900.0  # give up auto-advance after this
     mock_song_seconds: float = 8.0       # simulated song length in mock mode
+    # Meter sample older than this (seconds) -- or any sample while the
+    # mgx-ai-mixer WebSocket is down -- reads as silence (-90 dBFS) instead of
+    # freezing at its last value. One PERCEPTION_DEGRADED per outage.
+    mixer_meter_stale_seconds: float = 1.0
 
     # MGX16 channel -> role mapping (configuration, not hard-coded). These are
     # 1-based channel indices. They serve two consumers: the meter feed
@@ -193,6 +286,31 @@ class Settings(BaseSettings):
     # active and the energy detector otherwise; "silero"/"energy" force one.
     vad_provider: str = "auto"             # auto | silero | energy
     vad_silero_threshold: float = 0.5
+    # Silero VAD is stateful; clear its LSTM/context state after a channel has
+    # been silent this long so the previous utterance doesn't bias the next one.
+    vad_silero_reset_silence_seconds: float = 3.0
+
+    # Whisper decode: greedy (beam 1) is fastest on CPU; 3-5 trades latency for accuracy.
+    whisper_beam_size: int = 1
+    # Utterances are flushed to Whisper on a VAD pause (SPEECH_SILENCE_HOLD_SECONDS)
+    # or once they reach this length, carrying the last overlap seconds forward.
+    whisper_max_utterance_seconds: float = 6.0
+    whisper_utterance_overlap_seconds: float = 0.5
+    # Max simultaneous Whisper decodes (worker threads) across all roles.
+    whisper_max_concurrency: int = 2
+    # Drop transcript lines whose confidence (exp(avg_logprob) * (1 - no_speech_prob),
+    # duration-weighted over segments) is below this.
+    whisper_min_confidence: float = 0.25
+    # Roles (comma-separated) whose utterances skip Whisper when classified as
+    # singing. Empty = off so the song follower still gets lyrics; TRANSCRIPT
+    # payloads always carry is_singing.
+    whisper_skip_singing_roles: str = ""
+
+    # Cross-channel bleed suppression: a USB channel more than this many dB below
+    # the loudest other active channel in the same ~200 ms window is treated as
+    # silence for VAD/ASR (the congregation mic hearing the pastor through the PA).
+    audio_bleed_suppress_enabled: bool = True
+    audio_bleed_suppress_db: float = 12.0
 
     # Which role channels get per-channel Whisper ASR (comma-separated). The
     # song follower's roles (incl. congregation) are added while it is enabled.
@@ -231,6 +349,9 @@ class Settings(BaseSettings):
     # When set, control EasyWorship via a remote agent on the EW machine
     # instead of local keystroke injection (e.g. "http://192.168.30.40:8091").
     easyworship_agent_url: str | None = None
+    # Shared secret for the EasyWorship keystroke agent (EW_AGENT_TOKEN on the EW PC);
+    # sent as X-Agent-Token by HttpAgentDriver.
+    easyworship_agent_token: str = ""
     # Key specs per action, matching EasyWorship 7.3+ default hotkeys
     # (Hotkeys2.ini). Comma-separated specs are sent in sequence -- selecting a
     # schedule item (arrow) does not go live by itself, so chain Page Down.
@@ -245,7 +366,7 @@ class Settings(BaseSettings):
 
     # PTZ camera roles (config, not hard-coded): role -> camera id + preset id.
     camera_role_pastor_camera: int = 1
-    camera_role_pastor_preset: int = 1
+    camera_role_pastor_preset: int = 3  # pastor at the altar rails (the cue sheet uses the same table)
     camera_role_liturgist_camera: int = 1
     camera_role_liturgist_preset: int = 4
     camera_role_vocalist_camera: int = 1
@@ -263,7 +384,33 @@ class Settings(BaseSettings):
     # still gated by the policy engine).
     ai_director_mode: str = "assisted"
     ai_director_poll_seconds: float = 4.0
+    # Inference for the director loop (app/ai/service_director.py): the fast
+    # model with Ollama structured output and a hard per-cycle deadline. The
+    # long LLM_TIMEOUT_SECONDS only governs the assistant/chat path.
+    ai_director_model: str = ""                                   # empty => ollama_fast_model
+    ai_director_deadline_seconds: float = Field(default=3.0, gt=0, le=60)
+    ai_director_max_tokens: int = Field(default=320, ge=32, le=4096)  # capped by llm_max_tokens
+    ai_director_house_rules_file: str = "data/house-rules.md"     # operator-editable HOUSE RULES block
+    ai_director_transcript_min_confidence: float = Field(default=0.3, ge=0, le=1)  # hide lines below
+    # Proposal queue (app/director/proposals.py): one queue for every AI-runtime
+    # proposal with ids, TTL, per-category supersede and effect-level dedupe.
+    ai_director_pending_ttl_seconds: float = 90.0
+    ai_director_dedupe_seconds: float = 5.0        # same effect within this is dropped; also the recent-effects ledger window
+    # Hold AI camera/ATEM cuts while the on-air speaker is mid-utterance (0 = off);
+    # `urgent: true` on an action bypasses it. Holds retry every tick, never reject.
+    ai_cut_speech_boundary_seconds: float = 0.8
+    # Discard a decision whose context_version trails the live context by more than this.
+    ai_director_max_context_drift: int = 3
+    ai_director_adaptive_file: str = "data/adaptive-confidence.json"
+    ai_director_evidence_max_age_seconds: float = 3.0  # older vision observations are "no evidence"
     ai_director_min_confidence: float = 0.80
+    # Service-phase reconciliation (app/director/phase.py): LLM state proposals
+    # also need an agreeing hard signal (EW item, current/next plan element,
+    # speaking pattern); the cue engine's state is authoritative while it runs.
+    phase_llm_requires_hard_signal: bool = True
+    # vocalist/congregation/choir speaking this long = singing (song family);
+    # pastor this long with nobody singing = sermon family if the plan agrees.
+    phase_singing_seconds: float = 8.0
     confidence_camera_change: float = 0.85
     confidence_slide_change: float = 0.85
     confidence_atem_transition: float = 0.90
@@ -332,8 +479,27 @@ class Settings(BaseSettings):
     operator_learning_min_dwell_fraction: float = 0.35   # no advance before this share of the usual slide time (0 = off)
     operator_learning_memory: bool = True                # also write advances to production memory (RAG)
 
+    # Learn from the operator's camera work (app.director.operator_shots): ATEM
+    # program changes and preset recalls the app didn't command are recorded
+    # per (service_state, speaker_role) and reused as preferred shots, pacing
+    # medians and house-style prompt bullets.
+    operator_shots_enabled: bool = True
+    operator_shots_file: str = "data/operator-shots.json"
+    operator_shots_max_samples: int = 12          # newest samples kept per (state, speaker_role)
+    operator_shots_min_samples: int = 3           # before preferred_shot / medians are trusted
+    operator_shots_min_share: float = 0.6         # majority share needed for preferred_shot
+    operator_shots_command_window_seconds: float = 3.0   # app recalls / program changes within this aren't the operator's
+    operator_shots_poll_seconds: float = 1.0      # preset poll for reframe detection
+    operator_shots_context_seconds: float = 20.0  # transcript window before a cut
+    operator_shots_tail_words: int = 12
+    operator_shots_speaker_window_seconds: float = 15.0  # a speaker change older than this isn't "reacted to"
+    operator_shots_memory: bool = True            # also write samples to production memory (RAG)
+    # Raise the AI's minimum hold toward this share of the operator's median hold
+    # for the current service part (0 = policy hold only).
+    operator_shots_hold_fraction: float = 0.5
+
     # Phase 2: event-driven decision ticks + predictive PTZ preview staging.
-    ai_director_event_driven: bool = False       # nudge a decision tick on key events
+    ai_director_event_driven: bool = True        # nudge a decision tick on key events
     ai_director_event_min_interval_seconds: float = 1.0  # debounce event nudges
     ptz_predictive_preview: bool = False         # pre-stage PTZ + ATEM preview, never cuts
 
@@ -395,6 +561,9 @@ class Settings(BaseSettings):
     slide_verify_device: str = ""          # cv2 device index/name for the slides feed
     slide_verify_poll_ms: int = 400        # stabilization poll interval
     slide_verify_timeout_seconds: float = 4.0  # give up -> alert + halt automation
+    # Run easyocr on the GPU (CUDA) instead of CPU. Off by default: the
+    # EasyWorship tap machine is usually a laptop without CUDA.
+    slide_ocr_gpu: bool = False
     # Lyric-aware semantic verification (WO-EWVERIFY-3). Independent toggle on
     # top of SLIDE_VERIFY_ENABLED; enabling it without change-detection is a
     # startup error. Compares stable post-action OCR text to the expected
@@ -429,3 +598,9 @@ try:
 except Exception as exc:  # pragma: no cover - exercised via subprocess in tests
     print(f"FATAL: invalid configuration -- {exc}", file=sys.stderr)
     raise
+
+if settings.unknown_keys:
+    print(
+        "WARNING: .env contains keys no setting recognises (typo?): " + ", ".join(sorted(settings.unknown_keys)),
+        file=sys.stderr,
+    )

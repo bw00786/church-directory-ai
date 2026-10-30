@@ -16,6 +16,8 @@ WARNINGS = {
     "ATEM_CUT_BLOCKED": "state_mismatch",
     "PTZ_VERIFY_FAILED": "state_mismatch",
     "TOOL_EXECUTION_FAILED": "execution_failure",
+    "AI_DIRECTOR_DEGRADED": "perception_degraded",
+    "SLIDE_VERIFY_UNKNOWN": "slide_unconfirmed",
 }
 CRITICALS = {"STREAM_FAILURE": "stream_failure", "RECORDING_FAILURE": "recording_failure",
              "POLICY_VIOLATION": "policy_violation", "CRITICAL_STATE_LOST": "state_mismatch"}
@@ -24,7 +26,12 @@ ROUTINE = {"AI_DECISION", "AUDIO_STARTED", "AUDIO_STOPPED", "TRANSCRIPT", "PTZ_P
            "SERVICE_ENDING", "SERVICE_SHUTDOWN_BUNDLE", "AI_DIRECTOR_MODE_CHANGED",
            "VISION_OBSERVATION", "VISION_SEMANTIC", "VISION_RECOMMENDATION", "VISION_POLICY_DECISION",
            "VISION_EVENT", "VISION_STARTED", "VISION_STOPPED", "IDENTITY_MATCHED",
-           "PTZ_VERIFY_PENDING", "PTZ_VERIFIED"}
+           "PTZ_VERIFY_PENDING", "PTZ_VERIFIED",
+           # AI core (Phase 2): routine bookkeeping, not operator-attention events.
+           "AI_PHASE_PROPOSAL", "AI_DECISION_STALE", "AI_ACTION_HELD", "AI_PROPOSAL_DROPPED",
+           "PTZ_PRESTAGE_SKIPPED", "AI_DIRECTOR_RESTORED", "PROGRAM_CHANGED", "PREVIEW_CHANGED",
+           "ATEM_CONNECTION_CHANGED", "DIRECTOR_CUE_ENTERED", "PERCEPTION_RESTORED",
+           "OPERATOR_SLIDE_ADVANCE", "SLIDE_FOLLOWER_RESYNCED", "VISION_NOT_STARTED"}
 
 
 def from_bus(message: dict) -> AttentionInput | None:

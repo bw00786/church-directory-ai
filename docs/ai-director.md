@@ -80,6 +80,37 @@ publishes role-attributed `AudioObservation`s into the shared
 meter feed (energy [`ChannelVAD`](../backend/app/audio/vad.py), no ASR) and emits
 `PERCEPTION_DEGRADED`; on recovery it emits `PERCEPTION_RESTORED`.
 
+**Signal conditioning.** Each role channel is decimated 48 k→16 k by a stateful
+polyphase FIR (anti-aliased, continuous across capture blocks, pure numpy) and
+stamped with the PortAudio ADC time mapped into the monotonic clock, so
+`t_start`/`t_end` on `TRANSCRIPT` events line up with mixer and vision
+timestamps. Dropped capture blocks are counted in
+`usb_capture.status()["dropped_blocks"]`.
+
+**Per-channel Silero.** Silero VAD is stateful, so every channel owns its own
+model instance (weights from the pip `silero-vad` package, so it works offline;
+`torch.hub` only as a fallback) and resets its state after
+`VAD_SILERO_RESET_SILENCE_SECONDS` of silence. If Silero cannot load, the energy
+VAD takes over with one `PERCEPTION_DEGRADED`.
+
+**Whisper.** Utterances flush on a VAD pause (`SPEECH_SILENCE_HOLD_SECONDS`) or
+every `WHISPER_MAX_UTTERANCE_SECONDS` (default 6) with
+`WHISPER_UTTERANCE_OVERLAP_SECONDS` carried over, so transcript-driven cues lag
+seconds, not 15–20 s. Decoding uses `vad_filter`, `WHISPER_BEAM_SIZE` (1 =
+fastest) and no cross-utterance conditioning; concurrency is capped by
+`WHISPER_MAX_CONCURRENCY`. Confidence = `exp(avg_logprob) × (1 − no_speech_prob)`
+(duration-weighted over segments); lines under `WHISPER_MIN_CONFIDENCE` are
+dropped and `is_singing` is published on every line.
+`WHISPER_SKIP_SINGING_ROLES` (default empty, so the song follower still gets
+lyrics) skips Whisper for sung utterances on the listed roles.
+
+**Bleed suppression.** The congregation mic hears the pastor through the PA. A
+channel whose RMS is more than `AUDIO_BLEED_SUPPRESS_DB` (12) below the loudest
+co-active channel in the same ~200 ms window is treated as silence for VAD/ASR
+(`AUDIO_BLEED_SUPPRESS_ENABLED`). `perception_status()` reports per-role
+`rms_db`, `bleed_suppressed` and a `speaking_roles` map (`speaking`, `since`,
+`last_spoke_at`) that the AI director's context mirrors.
+
 **Transcription (corrected):** the MGX16 USB MAIN interface *does* deliver raw
 per-channel PCM, so Whisper transcribes the role channels directly
 ([`WHISPER_ROLES`](../backend/app/audio/whisper_service.py), default
@@ -132,6 +163,48 @@ is the **advisory** Sunday-service outline the AI is given as context — not a
 rigid script. The AI is expected to *deviate* from it (e.g. an unplanned
 announcement) rather than blindly following it.
 
+### Context sync (what the AI actually sees)
+
+The `ServiceContext` is kept current by
+[`ContextSync`](../backend/app/director/context_sync.py), not by the AI's own
+actions. ATEM `PROGRAM_CHANGED`/`PREVIEW_CHANGED` set program, preview,
+`last_cut_at` and the framing role on air (`slides`, or the PTZ role whose
+preset matches the camera's current preset); EasyWorship read-back sets the
+live item label and slide; VAD `AUDIO_STARTED`/`AUDIO_STOPPED` maintain a
+per-role `speaking_roles` map; the cue engine's `DIRECTOR_CUE_ENTERED` sets the
+plan cursor. Every mutation bumps `version`. `snapshot()` therefore includes
+`active_speakers`, `speaking_roles` (with `is_singing`), `atem_preview`,
+`seconds_in_state`, `seconds_since_last_cut`, `plan_cursor` (previous / current
+/ next plan element with expected camera role and slide item) and
+`transcript_recent` (last 8 lines with age, confidence, singing flag). Transcript
+lines carry `confidence`, `t_start`, `t_end` and `is_singing` from Whisper.
+
+### Phase reconciliation (the LLM proposes, hard signals decide)
+
+The LLM only *proposes* `service_state`;
+[`PhaseReconciler`](../backend/app/director/phase.py) decides. While the cue
+engine runs, the current cue's state is authoritative and proposals cannot
+override it. Otherwise a proposal is accepted only if
+`confidence >= AI_DIRECTOR_MIN_CONFIDENCE` **and** a hard signal agrees
+(`PHASE_LLM_REQUIRES_HARD_SIGNAL`): the live EasyWorship item maps to that
+state, it is the current or next plan element, or the speaking pattern implies
+it (`PHASE_SINGING_SECONDS` of vocalist/congregation = song family; the pastor
+speaking that long with nobody singing = sermon family when the plan expects
+one). Cue entry and EasyWorship item changes move the state on their own
+(source `cue` / `easyworship`); audio alone never does. Every proposal is
+published as `AI_PHASE_PROPOSAL` with the verdict and reason, and
+`phase_reconciler.status()` exposes the last decision, the signals it saw and a
+short history.
+
+New states: `special_music`, `childrens_message`, `prayers`, `offertory`,
+`video`. The cue → plan mapping is a data table
+(`CUE_PLAN_DEFAULTS` in [`plan_builder.py`](../backend/app/director/plan_builder.py));
+any cue can override `state`, `speaker_role`, `camera_role`,
+`easyworship_item` and `followable` through fields on the `Cue` model, which is
+how a per-church profile adapts the liturgy without code. The follower's
+followable states are the canonical `FOLLOWABLE_STATES` set (songs, hymns,
+call to worship, scripture, prayers such as the Lord's Prayer).
+
 [`ServiceContext`](../backend/app/domain/service_context.py) is the
 **application-owned** short-term memory: current state, last ~30 transcript
 lines, current camera role/ATEM program/EasyWorship item, and the last AI
@@ -159,10 +232,107 @@ strict-JSON `DirectorDecision`:
 }
 ```
 
+Each action carries its own `confidence` and `reason` (filled from the decision
+level when the model omits them); `decision` is validated against
+`continue | transition | deviate`, confidence against 0–1 and action types
+against `DirectorActionType`. Every decision also records `cycle_id`,
+`context_version` (the `ServiceContext.version` it was computed from) and
+`latency_ms`.
+
 If Ollama is unavailable, times out, or the response can't be parsed, it falls back to
 `{"decision": "continue", "confidence": 0.0}` — never a fabricated action.
 
+**Prompt structure.** Each cycle renders the `ServiceContext` snapshot into
+delimited sections — TIMING, WHO IS SPEAKING, PLAN CURSOR, ON AIR, VISION,
+RECENT TRANSCRIPT (lines under `AI_DIRECTOR_TRANSCRIPT_MIN_CONFIDENCE` hidden),
+RECENT ACTIONS + PREVIOUS DECISION, HOUSE RULES, MEMORY — while the system
+prompt ([`prompts/service_director.txt`](../backend/app/ai/prompts/service_director.txt))
+carries the shot grammar, pacing rules, speaker-change handling and five worked
+examples. HOUSE RULES is the operator's `AI_DIRECTOR_HOUSE_RULES_FILE`
+(`data/house-rules.md`, seeded from
+[`prompts/house_rules_default.md`](../backend/app/ai/prompts/house_rules_default.md))
+plus 3–6 learned bullets from the operator's own slide advances and shots in the
+same service state. The prompt is kept inside `OLLAMA_NUM_CTX` by trimming
+memory, then transcript, then house rules; the token estimate is written to the
+cycle log.
+
+**Deadline and model.** The director runs on `AI_DIRECTOR_MODEL` (empty =
+`OLLAMA_FAST_MODEL`) with Ollama structured output (a JSON-schema `format`) and
+a hard `AI_DIRECTOR_DEADLINE_SECONDS` (3 s) around the call; `LLM_TIMEOUT_SECONDS`
+still governs the assistant. A slow answer becomes `continue` with a reason such
+as `inference failed: deadline of 3s exceeded`, never a late cut.
+
+**Degraded inference.** Consecutive Ollama failures back off exponentially (1 s
+doubling to 30 s, jittered); cycles during the wait are skipped. The bus gets one
+`AI_DIRECTOR_DEGRADED {reason, consecutive_failures, next_retry_seconds}` per
+outage and `AI_DIRECTOR_RESTORED` on recovery. Invalid model output is not an
+outage and does not back off. `/health/ollama` is unchanged.
+
+## Pacing, proposal queue and phase gating
+
+**Pacing rules.** On-air AI actions (`PTZ_*`, `ATEM_CUT/AUTO/SET_PROGRAM`) are
+paced inside [`ActionEngine`](../backend/app/director/action_engine.py): no cut
+within `MIN_CAMERA_HOLD_SECONDS` of the last program change
+(`service_context.last_cut_at`, including operator cuts seen via
+`PROGRAM_CHANGED`), `CAMERA_SWITCH_COOLDOWN_SECONDS` between actions of one
+category, and at most `MAX_CONSECUTIVE_SWITCHES` AI switches in a row (an
+operator cut resets the streak). These rules used to apply only to the vision
+path; the AI path now cannot cut every poll.
+
+**Speech boundary.** A camera/ATEM cut is *held* while the on-air speaker role
+has been speaking continuously for more than `AI_CUT_SPEECH_BOUNDARY_SECONDS`
+(0.8 s; 0 disables) unless the action carries `urgent: true`. A hold is not a
+rejection: the proposal stays queued with `held_reason` (`AI_ACTION_HELD`) and
+is retried every tick until it runs or its TTL expires. `ATEM_SET_PREVIEW` and
+operator approvals are never paced.
+
+**Proposal queue.** Every AI-runtime proposal (LLM director, song follower,
+service-end, `/director/observe` cue advances) enters one
+[`ProposalQueue`](../backend/app/director/proposals.py): each gets a uuid `id`,
+expires after `AI_DIRECTOR_PENDING_TTL_SECONDS` (90 s), a newer proposal in the
+same category supersedes an older pending one unless the pending one came from
+a higher-priority source (operator > cue_engine > song_follower > ai_director >
+vision), and the same effect within `AI_DIRECTOR_DEDUPE_SECONDS` (5 s) is
+dropped (`AI_PROPOSAL_DROPPED`). A recent-effects ledger also drops
+`EASYWORSHIP_NEXT/PREVIOUS/SELECT` when EasyWorship was commanded in that window
+and `ATEM_CUT/AUTO/SET_PROGRAM` when the program bus changed in that window, so
+a cue-engine cut 2 s ago blocks a duplicate AI cut. Approve and reject by id:
+`POST /director/ai/pending/{id}/approve|reject` (a numeric index is still
+accepted for one release); `GET /director/ai/pending` lists the queue with
+`held_reason`, `age_seconds` and `expires_in_seconds`, which the operator panel
+shows as a countdown.
+
+**Stale decisions.** Decisions whose `context_version` trails the live context
+by more than `AI_DIRECTOR_MAX_CONTEXT_DRIFT` mutations are discarded
+(`AI_DECISION_STALE`); every cycle logs `latency_ms` and a `cycle_id`, including
+failed ones (`kind: cycle` records in the cycle log).
+
+**Adaptive confidence.** Only explicit operator feedback (approve/reject) moves
+thresholds, per `(category, service_state)`; auto-executions are not feedback.
+The policy base is a hard floor, tightening is capped at
+`AI_DIRECTOR_ADAPTIVE_MAX`, and deltas persist in `AI_DIRECTOR_ADAPTIVE_FILE`
+(`data/adaptive-confidence.json`), visible under `adaptive_confidence` in
+`GET /director/ai/status`. Vision observations older than
+`AI_DIRECTOR_EVIDENCE_MAX_AGE_SECONDS` (3 s) never veto; predictive preview
+never moves a camera that is currently on program (`PTZ_PRESTAGE_SKIPPED`) and
+never runs in manual mode.
+
+**One decision path.** The older keyword `DirectorAI` (`POST /director/observe`)
+no longer advances anything itself: it submits a `CUE_ADVANCE` proposal to the
+same queue and honours the operating mode. The unused LangGraph scaffolding
+(`agents/graph.py`, `agents/state.py`, `agents/prompts.py`) was removed.
+
 ## Retrieval-augmented context (production memory)
+
+**Structured memory.** Observations carry JSONB `metadata` (`service_state`,
+`speaker_role`, `camera_role`, `atem_input`, `easyworship_item`, `outcome`, ...).
+The director uses `retrieve_similar_moments(state, speaker_role, category, limit)`
+— filter by state and category first, then rank by pgvector similarity — and
+skips retrieval entirely when only the hashed embedding tier is available
+(near-random hits are worse than none). `summarize_house_style()` turns the
+operator's recorded advances and shots for the current state into the learned
+bullets appended to HOUSE RULES. The additive migration
+`20261030_memory_structured_metadata_v1` adds the column and runs at startup.
 
 Each decision cycle, [`AIServiceDirector._retrieve_history()`](../backend/app/ai/service_director.py)
 searches production memory ([`app/memory/production_memory.py`](../backend/app/memory/production_memory.py),
@@ -430,6 +600,36 @@ recorder state and the learned history. Config: `OPERATOR_LEARNING_ENABLED`,
 `OPERATOR_LEARNING_FILE`, `OPERATOR_LEARNING_MAX_SAMPLES`,
 `OPERATOR_LEARNING_MIN_SAMPLES`, `OPERATOR_LEARNING_MIN_DWELL_FRACTION`,
 `OPERATOR_LEARNING_MEMORY`.
+
+### Learning from the operator's camera work
+
+[`operator_shots.py`](../backend/app/director/operator_shots.py) runs in every
+mode and watches the ATEM bus. A `PROGRAM_CHANGED` this app did not command
+(`commanded: false`, and no app preset recall or program change within
+`OPERATOR_SHOTS_COMMAND_WINDOW_SECONDS`) is the operator's cut and is recorded
+with the service state and plan element, who was speaking (and whether
+singing), the shot taken (ATEM input, framing role via the camera's current
+preset, preset id), how long the previous shot was up, cut vs auto transition,
+the last `OPERATOR_SHOTS_TAIL_WORDS` heard, and how long after a speaker change
+the cut came. A preset the operator recalls while the PTZ camera is on program
+or preview is recorded as a `reframe` sample. Samples go to
+`OPERATOR_SHOTS_FILE`, keyed by `(service_state, speaker_role)` (newest
+`OPERATOR_SHOTS_MAX_SAMPLES` per key), and to production memory as
+`operator_shot` observations with structured metadata.
+
+Once a key has `OPERATOR_SHOTS_MIN_SAMPLES` samples: `preferred_shot()`
+(majority with share ≥ `OPERATOR_SHOTS_MIN_SHARE`) overrides the configured
+role shot in `resolve_role_shot` (source `operator`), `typical_hold()` raises
+the AI's minimum hold for that part of the service toward what the operator
+actually does (`OPERATOR_SHOTS_HOLD_FRACTION` of the median), and
+`summarize_house_style` turns the memory rows into prompt bullets such as
+*"During sermon you stay on the pastor shot (preset 3) 92% of the time and cut
+to wide roughly every 4 min"*, *"Speaker change → cut within ~2.5 s"*,
+*"Typical hold during announcement ~14 s"*. Cuts and preset recalls the app
+made (cue engine, AI action engine, predictive preview, service end) are never
+learned as operator behaviour. `GET /api/learning/operator-shots`,
+`/api/learning/operator-advances` and `/api/learning/house-style?state=` expose
+the learned state.
 
 ### Phase 2 — event-driven ticks + predictive PTZ preview
 

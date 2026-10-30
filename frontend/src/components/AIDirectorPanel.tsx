@@ -2,10 +2,11 @@
  * AI Service Director panel
  * Shows mode (Manual/Assisted/AI Directed), current service state, speaker,
  * transcript, camera/ATEM/EasyWorship, and the latest AI decision. Lets the
- * operator switch modes and approve/reject pending (assisted-mode) actions.
+ * operator switch modes, pause/resume the AI, and approve/reject pending
+ * (assisted-mode) actions.
  */
 
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import Card from '@mui/material/Card'
 import CardHeader from '@mui/material/CardHeader'
 import CardContent from '@mui/material/CardContent'
@@ -20,8 +21,10 @@ import Divider from '@mui/material/Divider'
 import SmartToyIcon from '@mui/icons-material/SmartToy'
 import CheckIcon from '@mui/icons-material/Check'
 import CloseIcon from '@mui/icons-material/Close'
+import PauseIcon from '@mui/icons-material/Pause'
+import PlayArrowIcon from '@mui/icons-material/PlayArrow'
 
-import { AiDirectorMode, useAIDirector } from '@/hooks/useAIDirector'
+import { AiDirectorMode, PendingAction, useAIDirector } from '@/hooks/useAIDirector'
 
 const MODES: { value: AiDirectorMode; label: string }[] = [
   { value: 'manual', label: 'Manual' },
@@ -36,11 +39,87 @@ function formatState(state: string): string {
     .join(' ')
 }
 
+/** Seconds left before a proposal expires, counted down locally between polls. */
+export function remainingSeconds(action: PendingAction, fetchedAt: number | null, now: number): number | null {
+  if (action.expires_in_seconds === undefined || action.expires_in_seconds === null) return null
+  const elapsed = fetchedAt ? Math.max(0, (now - fetchedAt) / 1000) : 0
+  return Math.max(0, Math.round(action.expires_in_seconds - elapsed))
+}
+
+interface PendingActionRowProps {
+  action: PendingAction
+  fetchedAt: number | null
+  now: number
+  onApprove: (id: string) => void
+  onReject: (id: string) => void
+}
+
+export function PendingActionRow({ action, fetchedAt, now, onApprove, onReject }: PendingActionRowProps) {
+  const ttl = remainingSeconds(action, fetchedAt, now)
+  const expiring = ttl !== null && ttl <= 10
+  return (
+    <Paper
+      role="listitem"
+      aria-label={`${action.type}${action.target ? ` ${action.target}` : ''}`}
+      variant="outlined"
+      sx={{
+        p: 1.5,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1,
+        borderColor: action.held_reason ? 'warning.main' : undefined,
+      }}
+    >
+      <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+        <Typography variant="body2">
+          {action.type} {action.target ? `→ ${action.target}` : ''}
+        </Typography>
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+          {action.reason} ({Math.round(action.confidence * 100)}%)
+        </Typography>
+        <Stack direction="row" spacing={0.5} useFlexGap sx={{ flexWrap: 'wrap', mt: 0.5 }}>
+          {action.source && <Chip size="small" variant="outlined" label={action.source} />}
+          {ttl !== null && (
+            <Chip
+              size="small"
+              variant="outlined"
+              color={expiring ? 'error' : 'default'}
+              label={`expires in ${ttl}s`}
+              aria-label={`expires in ${ttl} seconds`}
+            />
+          )}
+          {action.held_reason && (
+            <Chip size="small" color="warning" label={`held: ${action.held_reason}`} title={action.held_reason} />
+          )}
+        </Stack>
+      </Box>
+      <Button size="small" color="success" startIcon={<CheckIcon />} onClick={() => onApprove(action.id)}>
+        Approve
+      </Button>
+      <Button size="small" color="error" startIcon={<CloseIcon />} onClick={() => onReject(action.id)}>
+        Reject
+      </Button>
+    </Paper>
+  )
+}
+
 export function AIDirectorPanel() {
-  const { status, setMode, approve, reject } = useAIDirector()
+  const { status, fetchedAt, setMode, pause, resume, approve, reject } = useAIDirector()
+  const [now, setNow] = useState(() => Date.now())
+  const hasPending = (status?.pending_actions.length ?? 0) > 0
+
+  // Tick once a second while proposals are pending so TTL countdowns move between polls.
+  useEffect(() => {
+    if (!hasPending) return
+    setNow(Date.now())
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [hasPending, fetchedAt])
 
   const context = status?.context
   const decision = context?.last_decision
+  const lastCycle = status?.last_cycle
+  const paused = Boolean(status?.paused)
 
   return (
     <Card>
@@ -50,20 +129,57 @@ export function AIDirectorPanel() {
         subheader={context ? formatState(context.service_state) : 'Loading…'}
         titleTypographyProps={{ variant: 'subtitle2' }}
         action={
-          <ButtonGroup size="small" sx={{ mt: 1, mr: 1 }}>
-            {MODES.map((m) => (
+          <Stack direction="row" spacing={1} sx={{ mt: 1, mr: 1, alignItems: 'center' }}>
+            {paused ? (
               <Button
-                key={m.value}
-                variant={status?.mode === m.value ? 'contained' : 'outlined'}
-                onClick={() => setMode(m.value)}
+                size="small"
+                color="warning"
+                variant="contained"
+                startIcon={<PlayArrowIcon />}
+                onClick={() => resume()}
+                aria-label={`Resume AI Director (back to ${status?.paused_from ?? 'previous mode'})`}
               >
-                {m.label}
+                Resume
               </Button>
-            ))}
-          </ButtonGroup>
+            ) : (
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<PauseIcon />}
+                disabled={!status}
+                onClick={() => pause()}
+                aria-label="Pause AI Director"
+              >
+                Pause
+              </Button>
+            )}
+            <ButtonGroup size="small">
+              {MODES.map((m) => (
+                <Button
+                  key={m.value}
+                  variant={status?.mode === m.value ? 'contained' : 'outlined'}
+                  onClick={() => setMode(m.value)}
+                >
+                  {m.label}
+                </Button>
+              ))}
+            </ButtonGroup>
+          </Stack>
         }
       />
       <CardContent>
+        {paused && (
+          <Paper
+            role="status"
+            variant="outlined"
+            sx={{ p: 1, mb: 2, borderColor: 'warning.main', display: 'flex', alignItems: 'center', gap: 1 }}
+          >
+            <Chip size="small" color="warning" label="AI paused" />
+            <Typography variant="body2">
+              Observing only. Resume returns to {MODES.find((m) => m.value === status?.paused_from)?.label ?? 'the previous mode'}.
+            </Typography>
+          </Paper>
+        )}
         <Box
           sx={{
             display: 'grid',
@@ -97,12 +213,17 @@ export function AIDirectorPanel() {
             {decision?.reason ? (
               <>
                 <Typography variant="body2">{decision.reason}</Typography>
-                <Chip
-                  sx={{ mt: 1 }}
-                  size="small"
-                  color={decision.decision === 'continue' ? 'default' : 'secondary'}
-                  label={`${decision.decision} · ${Math.round((decision.confidence ?? 0) * 100)}%`}
-                />
+                <Stack direction="row" spacing={0.5} useFlexGap sx={{ flexWrap: 'wrap', mt: 1 }}>
+                  <Chip
+                    size="small"
+                    color={decision.decision === 'continue' ? 'default' : 'secondary'}
+                    label={`${decision.decision} · ${Math.round((decision.confidence ?? 0) * 100)}%`}
+                  />
+                  {lastCycle?.latency_ms !== undefined && lastCycle?.latency_ms !== null && (
+                    <Chip size="small" variant="outlined" label={`${lastCycle.latency_ms} ms`} />
+                  )}
+                  {lastCycle?.stale && <Chip size="small" color="warning" label="stale context" />}
+                </Stack>
               </>
             ) : (
               <Typography variant="body2" color="text.disabled">
@@ -177,30 +298,22 @@ export function AIDirectorPanel() {
           </Paper>
         )}
 
-        {status && status.pending_actions.length > 0 && (
+        {status && hasPending && (
           <>
             <Divider sx={{ my: 2 }} />
             <Typography variant="overline" color="text.secondary">
-              Pending Actions (Assisted mode)
+              {status.mode === 'ai_directed' ? 'Held Actions (waiting for pacing)' : 'Pending Actions (Assisted mode)'}
             </Typography>
-            <Stack spacing={1} sx={{ mt: 1 }}>
-              {status.pending_actions.map((action, index) => (
-                <Paper key={index} variant="outlined" sx={{ p: 1.5, display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Box sx={{ flexGrow: 1 }}>
-                    <Typography variant="body2">
-                      {action.type} {action.target ? `→ ${action.target}` : ''}
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      {action.reason} ({Math.round(action.confidence * 100)}%)
-                    </Typography>
-                  </Box>
-                  <Button size="small" color="success" startIcon={<CheckIcon />} onClick={() => approve(index)}>
-                    Approve
-                  </Button>
-                  <Button size="small" color="error" startIcon={<CloseIcon />} onClick={() => reject(index)}>
-                    Reject
-                  </Button>
-                </Paper>
+            <Stack spacing={1} sx={{ mt: 1 }} role="list" aria-label="Pending AI proposals">
+              {status.pending_actions.map((action) => (
+                <PendingActionRow
+                  key={action.id}
+                  action={action}
+                  fetchedAt={fetchedAt}
+                  now={now}
+                  onApprove={approve}
+                  onReject={reject}
+                />
               ))}
             </Stack>
           </>

@@ -78,3 +78,24 @@ async def test_unknown_role_is_noop(monkeypatch, wiring):
     pp = PredictivePreview()
     assert await pp.stage_role("ghost") is False
     assert cameras.preset_calls == []
+
+
+async def test_stage_role_skips_camera_that_is_on_program(monkeypatch, wiring):
+    from app.domain.service_context import service_context
+
+    cameras, atem = wiring
+    monkeypatch.setattr(settings, "ptz_predictive_preview", True)
+    monkeypatch.setattr(settings, "atem_camera1_input", 1)
+    monkeypatch.setattr(service_context, "current_atem_program", 1)
+    events = []
+    monkeypatch.setattr("app.director.predictive_ptz.event_bus.publish", events.append)
+    pp = PredictivePreview()
+    assert pp.is_on_program("pastor") is True
+    assert await pp.stage_role("pastor") is False
+    assert cameras.preset_calls == [] and atem.preview_calls == []
+    assert pp.staged_role is None
+    assert [e["event"] for e in events] == ["PTZ_PRESTAGE_SKIPPED"]
+
+    monkeypatch.setattr(service_context, "current_atem_program", 2)
+    assert pp.is_on_program("pastor") is False
+    assert await pp.stage_role("pastor") is True

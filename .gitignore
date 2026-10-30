@@ -11,6 +11,10 @@
 **/data/ai_director_cycles.jsonl
 **/data/slide-texts-learned.json
 **/data/operator-slide-advances.json
+**/data/adaptive-confidence.json
+**/data/operator-shots.json
+**/data/review_events.jsonl
+**/data/recordings/
 env/
 venv/
 ENV/

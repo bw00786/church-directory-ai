@@ -5,7 +5,7 @@ from sqlalchemy import text
 from .connection import Base
 from .memory_vectors import INDEXED_DIMENSIONS
 
-VERSION = "20260914_memory_pgvector_v1"
+VERSION = "20261030_memory_structured_metadata_v1"
 
 
 def migrate(engine):
@@ -21,6 +21,7 @@ def migrate(engine):
             raise RuntimeError("Memory retrieval requires pgvector 0.8.0 or later")
         Base.metadata.create_all(connection)
         connection.execute(text("ALTER TABLE memory_service_observations ADD COLUMN IF NOT EXISTS embedding_space text"))
+        connection.execute(text("ALTER TABLE memory_service_observations ADD COLUMN IF NOT EXISTS metadata jsonb"))
         connection.execute(text("CREATE TABLE IF NOT EXISTS app_schema_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())"))
         for dimension in INDEXED_DIMENSIONS:
             connection.execute(text(f"""
@@ -29,5 +30,6 @@ def migrate(engine):
                 WHERE embedding_space IS NOT NULL AND cardinality(embedding) = {dimension}
             """))
         connection.execute(text("CREATE INDEX IF NOT EXISTS memory_embedding_space_idx ON memory_service_observations (embedding_space)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS memory_metadata_state_idx ON memory_service_observations ((metadata->>'service_state'), category)"))
         connection.execute(text("INSERT INTO app_schema_migrations (version) VALUES (:version) ON CONFLICT DO NOTHING"), {"version": VERSION})
     return VERSION

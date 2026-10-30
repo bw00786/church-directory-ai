@@ -35,7 +35,7 @@ from typing import Callable, Dict, List, Optional
 
 from app.config import settings
 from app.director.text_follower import LiveSlides
-from app.domain.service_state import ServiceState
+from app.domain.service_state import FOLLOWABLE_STATES, ServiceState
 from app.easyworship.slide_verification import (
     SLIDE_TAG,
     fuzzy_ratio,
@@ -52,14 +52,9 @@ MAX_TEXT_CHARS = 50_000
 MAX_SLIDES = 300
 MAX_LEARNED_SLIDE_CHARS = 2_000
 
-_FOLLOW_STATES = {
-    ServiceState.CALL_TO_WORSHIP,
-    ServiceState.OPENING_PRAYER,
-    ServiceState.SCRIPTURE,
-    ServiceState.HYMN,
-    ServiceState.CONGREGATIONAL_SONG,
-    ServiceState.CLOSING_HYMN,
-}
+# Parts of the service whose slides are read or sung aloud (canonical set lives
+# with the state machine so the phase reconciler and follower agree).
+_FOLLOW_STATES = FOLLOWABLE_STATES
 
 # Footer text EasyWorship puts on song slides; it isn't read aloud.
 _OCR_JUNK = re.compile(
@@ -323,7 +318,11 @@ class OcrSlideReader:
 
 
 def follow_cue_ids() -> set:
-    return {c.strip() for c in settings.song_follower_cues.split(",") if c.strip()}
+    """Cue ids the follower may advance during: the rig profile's follower.cues,
+    else SONG_FOLLOWER_CUES."""
+    from app.rig import rig
+
+    return set(rig().follower_cue_ids())
 
 
 def _current_cue():

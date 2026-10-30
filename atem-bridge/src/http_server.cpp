@@ -22,8 +22,18 @@ json StateToJson(const AtemState& state) {
             {"short_name", input.short_name},
             {"type", input.type},
             {"connected", input.connected},
+            {"program_tally", input.program_tally},
+            {"preview_tally", input.preview_tally},
         });
     }
+
+    // Feature flags the backend uses to degrade gracefully instead of
+    // guessing from HTTP 404s. Audio (Fairlight) control is not implemented.
+    json capabilities = json{
+        {"audio_mute", false},
+        {"tally", true},
+        {"last_change", true},
+    };
 
     return json{
         {"connected", state.connected},
@@ -34,6 +44,8 @@ json StateToJson(const AtemState& state) {
         {"transition_in_progress", state.transition_in_progress},
         {"inputs", inputs},
         {"timestamp", static_cast<long long>(state.timestamp)},
+        {"last_change", static_cast<long long>(state.last_change)},
+        {"capabilities", capabilities},
     };
 }
 
@@ -114,6 +126,8 @@ void HttpServer::RegisterRoutes() {
                 {"short_name", input.short_name},
                 {"type", input.type},
                 {"connected", input.connected},
+                {"program_tally", input.program_tally},
+                {"preview_tally", input.preview_tally},
             });
         }
         SendJson(res, json{{"inputs", inputs}});

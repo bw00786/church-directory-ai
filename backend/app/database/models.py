@@ -117,6 +117,11 @@ class ServiceObservation(Base):
     text: Mapped[str] = mapped_column(Text)
     embedding: Mapped[list[float]] = mapped_column(ARRAY(Float))
     embedding_space: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Structured context for filtered retrieval (service_state, speaker_role,
+    # camera_role, atem_input, easyworship_item, outcome, ...). Column is named
+    # "metadata" in SQL; the attribute is "meta" because SQLAlchemy reserves
+    # Base.metadata.
+    meta: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
 
 
 class ServiceOrder(Base):

@@ -15,9 +15,14 @@ This is a production-grade system designed for churches to automate and assist i
 - **Scheduled Auto-Start** — Optionally starts the service automatically at a configured time on selected weekdays
 - **Yamaha MGX16 Mixer** — Captures per-channel PCM from the MGX16 USB MAIN interface for real Silero VAD + per-role Whisper, and controls the companion `mgx-ai-mixer` software-DSP layer on the USB return path (per-channel HPF/EQ/comp/trim, feedback guard, mix keeper). The desk's own faders/preamps/mutes have no remote protocol and stay advisory
 - **Cue-Advance AI** — Ollama (Qwen, on the EasyWorship PC) decides cue advances from observations (transcript/vision), gated by the policy engine. With `OLLAMA_BASE_URL` empty the backend auto-discovers Ollama on the EasyWorship PC, so DHCP address changes need no `.env` edit
-- **AI Service Director** — A reasoning layer above the cue engine: the Ollama model observes a live `ServiceContext` (state, speaker, transcript, camera/ATEM/EasyWorship) and proposes typed actions, executed only after per-category confidence checks in `manual`/`assisted`/`ai_directed` mode
+- **AI Service Director** — A reasoning layer above the cue engine: the Ollama model observes a live `ServiceContext` kept current from ATEM, EasyWorship, per-role VAD and cue-engine events (who is speaking, what is on air, where the plan is, time since the last cut) and proposes typed actions with per-action confidence. Proposals pass one queue with ids, TTL and dedupe against cue-engine actions, hold/cooldown/speech-boundary pacing, and per-category confidence checks in `manual`/`assisted`/`ai_directed` mode. The LLM only *proposes* a service phase; hard signals decide. Inference runs on the fast model under a 3 s deadline and backs off when Ollama is down
+- **Learns the operator** — Every slide the operator advances by hand and every cut or preset they take on the panel is recorded with context (what was heard, who was speaking, hold time) and reused: learned advance cues and dwell guards for the slide follower, preferred shots and pacing per part of the service, and house-style rules in the AI prompt (`GET /api/learning/*`)
+- **Off-air PTZ staging** — Cues move the camera on preview and take it only after it settles; the congregation never sees a pan. One role→preset table serves the cue sheet, the AI and the assistant
+- **Per-church rig profile** — `rig.yaml` describes cameras and ATEM inputs, mixer channels per role, role shots, cue overrides and order-of-service heading synonyms, so another church runs the director without editing Python ([docs/rig-profile.md](docs/rig-profile.md))
 - **AI Assistant** — Chat with the Ollama-backed assistant to query production history and control every subsystem by name ("frame the pastor", "go to the Sermon slides", "put a 120 Hz high-pass on the vocalist"); high-risk actions (stream, record, mic mute, preset overwrite, mixer DSP engage) require operator confirmation
-- **Production Control Panel** — React/Vite web interface with real-time WebSocket updates (cue sheet with order-of-service upload, camera joystick, AI Director panel, System Status)
+- **Production Control Panel** — React/Vite web interface with real-time WebSocket updates: cue sheet with order-of-service upload, one joystick per camera, AI Director panel with approve/reject, countdowns, held reasons and Pause/Resume, ATEM Undo, a component health checklist, a first-run setup wizard, rehearsal mode (replay a recording with no hardware access) and a post-service review page
+- **Secure by default** — API-key authentication (operator/admin) on every control route and WebSocket, loopback bind, per-install generated secrets, placeholder secrets refuse startup, shared-secret EasyWorship agent
+- **Reliable perception** — Anti-aliased per-channel audio with hardware timestamps and bleed suppression, per-channel Silero VAD, Whisper confidence, tri-state slide OCR that never halts on an outage, stale-meter protection, fresh frame grabbing, VISCA reconnect with CGI fallback, ATEM program/preview change events
 - **Event Audit Trail** — Complete logging of all production actions and AI decisions
 - **Production Memory** — PostgreSQL + pgvector for semantic retrieval of past services, including how the operator advanced slides by hand
 - **Indexed RAG** — Server-side cosine search with HNSW indexes and explicit
@@ -104,7 +109,7 @@ Director's expected service plan, so the AI anticipates that week's actual flow.
 | POST   | `/director/goto/{index}` | Jump to a cue                                |
 | GET/POST | `/director/schedule`   | View / set the auto-start schedule           |
 | POST   | `/director/suggest`      | Feed a raw advance suggestion                |
-| POST   | `/director/observe`      | Let the AI decide from an observation string |
+| POST   | `/director/observe`      | AI proposes a cue advance from an observation (mode-gated, queued) |
 | WS     | `/ws/director`           | Live cue/action stream for the panel         |
 
 > **Yamaha MGX16 note:** the desk has no published remote-control protocol, so
@@ -342,10 +347,11 @@ variables, and troubleshooting.
 - [Camera Control](docs/cameras.md) — PTZOptics VISCA/HTTP-CGI driver, joystick, calibration
 - [Service Director](docs/director.md) — Cue sheet, scheduler, AI advances, mixer wiring
 - [AI Service Director](docs/ai-director.md) — Audio VAD, Ollama decisions, action engine, modes, replay
-- [Database](docs/database.md) — PostgreSQL schema and migrations
-- [Network](docs/network.md) — Local network topology
-- [Deployment](docs/deployment-windows.md) — Production deployment
-- [Operations](docs/operations.md) — Running and troubleshooting
+- [Installing at a church (Windows)](docs/install-windows.md) — Hardware checklist, setup script, secrets, first run, health checks
+- [Rig profile](docs/rig-profile.md) — `rig.yaml`: cameras, ATEM inputs, mixer channels, role shots, cue overrides, heading synonyms
+- [Backend setup](docs/backend-setup.md) — Development guide, authentication, environment variables, database migrations
+- [ATEM bridge](atem-bridge/README.md) — Building and running the native bridge
+- [Changelog](CHANGELOG.md) — Release notes
 
 ## Development Order
 
@@ -437,10 +443,35 @@ The AI Service Director mode is set via `AI_DIRECTOR_MODE` or `POST /director/ai
 ✅ All AI actions validated by policy engine
 ✅ Complete audit trail of every production action
 ✅ Manual control works without AI services
-✅ No secrets in source code
+✅ No secrets in source code; per-install secrets generated at setup
 ✅ Rate limiting and action cooldowns on AI
 ✅ Input validation on all endpoints
 ✅ Localhost-only ATEM bridge (no Internet exposure)
+✅ API-key authentication on every control route and WebSocket
+
+### Authentication
+
+Every control-plane route and WebSocket requires an API key
+([backend/app/security/auth.py](backend/app/security/auth.py)); only `/`,
+`/health*`, `/docs`, `/redoc`, `/openapi.json` and the SPA assets are public.
+Set `API_KEY` (operator) and `API_ADMIN_KEY` (admin) in `.env` —
+`scripts/setup-windows.ps1` generates them on a fresh install, or run
+`python -c "import secrets; print(secrets.token_urlsafe(32))"`. Send the key as
+`X-API-Key: <key>` or `Authorization: Bearer <key>`; WebSockets pass it as
+`?token=<key>`. The operator key runs the service (cues, cameras, slides,
+approving AI suggestions); only the admin key may change the AI Director mode.
+The backend binds to `127.0.0.1` by default; set `API_HOST=0.0.0.0` to serve the
+LAN, and it then refuses to serve (503) until keys exist. With no keys on
+loopback it runs in dev mode and logs a warning once.
+`API_ALLOW_UNAUTHENTICATED_READS=true` lets wall displays read status without a
+key. The web UI stores the key in the browser and prompts for it on the first 401.
+
+The backend also refuses non-mock startup while any secret is a placeholder
+(`POSTGRES_PASSWORD`, `SECRET_KEY`, a PTZOptics factory camera password, missing
+API keys off loopback) — see `SECURITY_STRICT_STARTUP`. The EasyWorship
+keystroke agent is guarded by its own shared secret: set `EW_AGENT_TOKEN` on the
+EasyWorship PC and the same value as `EASYWORSHIP_AGENT_TOKEN` here; without a
+token the agent only accepts loopback or `EW_AGENT_ALLOWED_IPS` clients.
 
 
 
@@ -450,5 +481,5 @@ For issues, questions, or contributions, please open a GitHub issue or discussio
 
 ---
 
-**Version 1.0** — Production-ready church worship automation system
+**Version 1.1** — Production-ready church worship automation system
 ** Copyright 2026 - Bruce Wilkins AI Systems

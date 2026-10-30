@@ -9,20 +9,25 @@ from pydantic import BaseModel
 class AtemInputModel(BaseModel):
     """Model for an ATEM input/camera."""
     
-    id: int
+    id: int  # SDK input id (ATEM Mini: HDMI 1..4 -> 1..4; 0 is Black)
     name: str
     short_name: str
     type: str  # "HDMI", "Component", "Composite", etc.
     connected: bool
+    # Tally as reported by the bridge (SDK IsProgramTallied / IsPreviewTallied).
+    program_tally: bool = False
+    preview_tally: bool = False
     
     class Config:
         json_schema_extra = {
             "example": {
-                "id": 0,
-                "name": "Pastor",
-                "short_name": "Pas",
+                "id": 1,
+                "name": "PTZOptics Camera",
+                "short_name": "PTZ",
                 "type": "HDMI",
                 "connected": True,
+                "program_tally": True,
+                "preview_tally": False,
             }
         }
 
@@ -55,15 +60,15 @@ class AtemStateModel(BaseModel):
         json_schema_extra = {
             "example": {
                 "connected": True,
-                "program_input": 0,
-                "preview_input": 1,
+                "program_input": 1,
+                "preview_input": 2,
                 "streaming": False,
                 "recording": False,
                 "inputs": [
                     {
-                        "id": 0,
-                        "name": "Pastor",
-                        "short_name": "Pas",
+                        "id": 1,
+                        "name": "PTZOptics Camera",
+                        "short_name": "PTZ",
                         "type": "HDMI",
                         "connected": True,
                     }

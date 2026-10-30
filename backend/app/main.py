@@ -12,6 +12,11 @@ from app.api import register_routes
 from app.vision.manager import VisionManager
 from app.cameras.service import camera_service
 from app.config import settings as global_settings
+from app.api.versioning import ApiVersionMiddleware
+from app.security.auth import ApiKeyAuthMiddleware, startup_auth_check
+from app.security.secrets_check import placeholder_secret_problems
+
+from app.version import APP_VERSION
 
 # Setup logging
 setup_logging(log_format=settings.log_format, log_level=settings.log_level)
@@ -24,7 +29,16 @@ vision_manager = VisionManager()
 async def lifespan(app: FastAPI):
     """Application lifespan - startup and shutdown."""
     # Startup
-    logger.info("Church Production Director starting...", version="1.0.0")
+    logger.info("Church Production Director starting...", version=APP_VERSION)
+
+    # Security gate: placeholder secrets or missing API keys are tolerated only
+    # when every hardware integration is mocked (a developer laptop).
+    problems = startup_auth_check() + placeholder_secret_problems(settings)
+    for problem in problems:
+        logger.error("startup security check failed", problem=problem)
+    all_mocked = settings.enable_mock_atem and settings.enable_mock_mixer and settings.enable_mock_easyworship
+    if problems and settings.security_strict_startup and not all_mocked:
+        raise RuntimeError("Refusing non-mock startup: " + "; ".join(problems))
     voice = None
     try:
         from app.voice.service import get_voice_service
@@ -47,6 +61,19 @@ async def lifespan(app: FastAPI):
         vision_enabled=settings.vision_enabled,
     )
 
+    # Database schema: additive migrations, best effort. The app keeps running
+    # without Postgres (memory/history degrade); /health/ready reports it.
+    if settings.database_migrate_on_startup:
+        try:
+            from app.database.cli import migrate as migrate_schema
+
+            version = await asyncio.wait_for(
+                asyncio.to_thread(migrate_schema), timeout=settings.database_startup_timeout_seconds
+            )
+            logger.info("database schema ready", version=version)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("database unavailable or migration failed; continuing without persistence", error=str(exc))
+
     if settings.vision_enabled or vision_manager.has_real_camera_source():
         await vision_manager.start()
 
@@ -64,6 +91,14 @@ async def lifespan(app: FastAPI):
         await audio_observer.start()
     except Exception:
         logger.exception("Failed to start audio observer")
+
+    # Keep the AI's ServiceContext current from hard signals (ATEM, EasyWorship,
+    # VAD, cue engine) before the decision loop starts reading it.
+    try:
+        from app.director.context_sync import context_sync
+        await context_sync.start()
+    except Exception:
+        logger.exception("Failed to start context sync")
 
     try:
         from app.director.ai_director_runtime import ai_director_runtime
@@ -135,6 +170,21 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Failed to start operator slide-advance learning")
 
+    # Keep the post-service review event log (program changes, mode changes,
+    # pauses, degraded/restored, rehearsal windows).
+    try:
+        from app.director.review import review_recorder
+        await review_recorder.start()
+    except Exception:
+        logger.exception("Failed to start review event recorder")
+
+    # Learn from the operator's camera work (ATEM cuts + preset recalls).
+    try:
+        from app.director.operator_shots import operator_shot_recorder
+        await operator_shot_recorder.start()
+    except Exception:
+        logger.exception("Failed to start operator shot learning")
+
     # Auto-detect ATEM: connect the shared service at startup so the real
     # bridge is used automatically when reachable, mock otherwise.
     try:
@@ -144,27 +194,26 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Failed to start ATEM auto-connect task")
 
-    # Automatic camera registration from config (camera_1)
+    # ATEM/EasyWorship came up after the context sync: seed program/item now.
     try:
-        if global_settings.camera_1_host:
-            camera_service.register_camera(
-                1,
-                global_settings.camera_1_host,
-                port=global_settings.camera_1_port,
-                username=global_settings.camera_1_username,
-                password=global_settings.camera_1_password,
-                name=global_settings.camera_1_name,
-                visca_port=global_settings.camera_1_visca_port,
-                visca_udp=global_settings.camera_1_visca_udp,
-            )
-            # attempt connect in background
-            try:
-                asyncio.create_task(camera_service.connect_camera(1))
-            except Exception:
-                logger.exception("Failed to start camera connect task")
+        from app.director.context_sync import context_sync
+        await context_sync.initial_sync()
     except Exception:
-        logger.exception("Failed to auto-register camera from config")
-    
+        logger.exception("Context initial sync failed")
+
+    # Register every camera in the rig profile (rig.yaml; defaults = camera_1_*
+    # settings). An invalid rig.yaml is a startup error: fail loud, not silent.
+    from app.rig import rig as _rig
+
+    _rig()  # raises RigProfileError naming the offending field
+    try:
+        from app.cameras.service import register_from_profile
+
+        registered = register_from_profile(camera_service)  # registers + starts connect tasks
+        logger.info("Cameras registered from rig profile", cameras=registered)
+    except Exception:
+        logger.exception("Failed to register cameras from the rig profile")
+
     yield
     
     try:
@@ -209,6 +258,11 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Failed to stop AI Director runtime")
     try:
+        from app.director.context_sync import context_sync
+        await context_sync.stop()
+    except Exception:
+        logger.exception("Failed to stop context sync")
+    try:
         from app.identity.audio_capture import audio_capture_service
         await audio_capture_service.stop()
     except Exception:
@@ -238,6 +292,22 @@ async def lifespan(app: FastAPI):
         await operator_advance_recorder.stop()
     except Exception:
         logger.exception("Failed to stop operator slide-advance learning")
+    try:
+        from app.director.operator_shots import operator_shot_recorder
+        await operator_shot_recorder.stop()
+    except Exception:
+        logger.exception("Failed to stop operator shot learning")
+    try:
+        from app.director.review import review_recorder
+        await review_recorder.stop()
+    except Exception:
+        logger.exception("Failed to stop review event recorder")
+    try:
+        from app.vision.executors import shutdown_all
+
+        shutdown_all()
+    except Exception:
+        logger.exception("Failed to stop perception thread pools")
     logger.info("Church Production Director shutting down...")
 
 
@@ -245,9 +315,16 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Church Production Director API",
     description="AI-assisted church worship production control",
-    version="1.0.0",
+    version=APP_VERSION,
     lifespan=lifespan,
 )
+
+# API-key authentication on every non-public route and WebSocket (app.security.auth).
+# Added before CORS so CORS stays outermost and 401/503 responses carry CORS headers.
+app.add_middleware(ApiKeyAuthMiddleware)
+# Canonical /api/v1/... paths rewrite to the legacy router prefixes. Added after
+# auth so it runs first (Starlette middleware is outermost-last).
+app.add_middleware(ApiVersionMiddleware)
 
 # Add CORS middleware for development
 app.add_middleware(
@@ -268,7 +345,7 @@ app.add_middleware(
 @app.get("/health")
 async def health_check():
     """Basic health check."""
-    return {"status": "healthy", "version": "1.0.0"}
+    return {"status": "healthy", "version": APP_VERSION}
 
 
 @app.get("/health/live")
@@ -279,22 +356,19 @@ async def health_live():
 
 @app.get("/health/ready")
 async def health_ready():
-    """Readiness probe - application can handle requests."""
-    from app.atem.service import AtemService
-    from app.config import settings
-    from app.dependencies import get_atem_service
-    
-    # Could add checks for:
-    # - Database connectivity
-    # - ATEM bridge availability
-    
-    # Liveness does not trigger local inference; /health/ollama does.
+    """Readiness: aggregated component health (app.health.registry).
+
+    ``status`` is ``ready`` when nothing is down, ``degraded`` when a component
+    is degraded, ``not_ready`` when one is down. Never triggers inference.
+    """
+    from app.health.registry import component_health_async, overall_status
+
+    components = await component_health_async()
     return {
-        "status": "ready",
-        "checks": {
-            "api": "ok",
-            "ollama": "configured" if settings.ollama_model else "not configured",
-        },
+        "status": overall_status(components),
+        "version": APP_VERSION,
+        "components": components,
+        "checks": {"api": "ok"},
     }
 
 
@@ -312,12 +386,28 @@ async def root():
     """API root endpoint."""
     return {
         "name": "Church Production Director",
-        "version": "1.0.0",
+        "version": APP_VERSION,
         "docs": "/docs",
     }
 
 
 # Register all routes
 register_routes(app)
+
+# Serve the built operator UI at /app when frontend/dist exists (single origin:
+# no CORS, no dev proxy). `npm run build` in frontend/ produces it.
+try:
+    from pathlib import Path
+
+    from fastapi.staticfiles import StaticFiles
+
+    _dist = Path(settings.frontend_dist_dir) if settings.frontend_dist_dir else Path(__file__).resolve().parents[2] / "frontend" / "dist"
+    if (_dist / "index.html").exists():
+        app.mount("/app", StaticFiles(directory=str(_dist), html=True), name="operator-ui")
+        logger.info("Operator UI served", path="/app", dist=str(_dist))
+    else:
+        logger.info("Operator UI not built; /app not mounted", dist=str(_dist))
+except Exception:  # noqa: BLE001
+    logger.exception("Failed to mount the operator UI")
 
 logger.info("FastAPI app created and configured", routes_registered=True)

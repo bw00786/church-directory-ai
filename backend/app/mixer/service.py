@@ -9,13 +9,21 @@ compressor / trim / reverb / delay plus an autonomous feedback guard and a
 mix-quality keeper. This service consumes that app's WebSocket (``meters`` for
 per-channel RMS, ``analysis`` for spectral/masking/loudness snapshots, ``dsp``
 for the takeover state) and drives its REST API.
+
+Meter staleness: every meter sample is stored with a monotonic timestamp. A
+channel whose last sample is older than ``MIXER_METER_STALE_SECONDS`` -- or
+any channel while the WebSocket is down -- reads as silence (-90 dBFS) rather
+than freezing at its last value, so a speaker who was "active" the instant the
+feed dropped does not stay active forever and ``wait_for_song_end`` can still
+see silence. One ``PERCEPTION_DEGRADED`` (``reason: "mixer meter feed stale"``)
+is published per outage and ``PERCEPTION_RESTORED`` when samples flow again.
 """
 
 import asyncio
 import contextlib
 import json
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
 
 from app.config import settings
@@ -26,6 +34,9 @@ logger = get_logger(__name__)
 
 # Move actions accepted by mgx-ai-mixer's POST /api/moves/apply.
 MOVE_ACTIONS = ("fader", "eq_cut", "eq_boost", "hpf", "pan", "comp", "gain")
+
+SILENCE_DB = -90.0
+STALE_REASON = "mixer meter feed stale"
 
 
 def api_url_from_ws(ws_url: str) -> str:
@@ -43,7 +54,9 @@ class MixerService:
         self.mock = settings.enable_mock_mixer if mock is None else mock
         self.ws_url = ws_url or settings.mixer_ws_url
         self.api_url = (settings.mixer_api_url or api_url_from_ws(self.ws_url)).rstrip("/")
-        self._levels: Dict[int, float] = {}
+        # channel -> (rms_db, monotonic timestamp of the sample)
+        self._levels: Dict[int, Tuple[float, float]] = {}
+        self._stale_reported = False  # one PERCEPTION_DEGRADED per outage
         self._analysis: Optional[dict] = None
         self._analysis_at: Optional[float] = None
         self._dsp: Optional[dict] = None
@@ -76,16 +89,124 @@ class MixerService:
                 await self._task
             self._task = None
         self._connected = False
+        self._levels.clear()
 
     @property
     def connected(self) -> bool:
         return self._connected
 
+    # -- meter freshness ------------------------------------------------------
+    @property
+    def stale_seconds(self) -> float:
+        return float(settings.mixer_meter_stale_seconds)
+
+    def _sample(self, channel: int) -> Optional[Tuple[float, Optional[float]]]:
+        """``(rms_db, monotonic_ts)`` for a channel. A bare float (legacy
+        callers/tests poking ``_levels`` directly) is treated as untimestamped
+        and therefore never ages out."""
+        raw = self._levels.get(channel)
+        if raw is None:
+            return None
+        if isinstance(raw, tuple):
+            return raw
+        return float(raw), None
+
+    def meter_age(self, channel: int) -> Optional[float]:
+        """Seconds since the last meter sample for ``channel`` (None if never)."""
+        sample = self._sample(channel)
+        if sample is None:
+            return None
+        rms, ts = sample
+        return 0.0 if ts is None else max(0.0, time.monotonic() - ts)
+
+    def _fresh(self, channel: int, now: Optional[float] = None) -> bool:
+        sample = self._sample(channel)
+        if sample is None:
+            return False
+        if self.mock:
+            return True
+        if not self._connected:
+            return False
+        ts = sample[1]
+        if ts is None:
+            return True
+        now = time.monotonic() if now is None else now
+        return (now - ts) <= self.stale_seconds
+
+    @property
+    def stale(self) -> bool:
+        """True when the meter feed cannot be trusted: disconnected, or we have
+        samples but the newest one is older than ``mixer_meter_stale_seconds``.
+        A connected feed that has not sent any meters yet is *not* stale (no
+        data is distinct from old data). Mock mode is never stale."""
+        if self.mock:
+            return False
+        if not self._connected:
+            return True
+        stamps = [s[1] for s in (self._sample(ch) for ch in list(self._levels)) if s and s[1] is not None]
+        if not stamps:
+            return False
+        return (time.monotonic() - max(stamps)) > self.stale_seconds
+
+    def _check_stale(self) -> None:
+        """Lazy outage detection on read paths (the reader loop is parked on
+        the socket and cannot notice a silent-but-open feed)."""
+        if self.mock or self._stale_reported:
+            return
+        if self.stale:
+            self._mark_degraded()
+
+    def _mark_degraded(self) -> None:
+        if self._stale_reported:
+            return
+        self._stale_reported = True
+        logger.warning("Mixer meter feed stale; channels read as silence", stale_seconds=self.stale_seconds)
+        event_bus.publish({"event": "PERCEPTION_DEGRADED", "payload": {"reason": STALE_REASON, "channel": None}})
+
+    def _mark_restored(self) -> None:
+        if not self._stale_reported:
+            return
+        self._stale_reported = False
+        logger.info("Mixer meter feed restored")
+        event_bus.publish({"event": "PERCEPTION_RESTORED", "payload": {"source": "mixer_meters", "channel": None}})
+
     def levels(self) -> Dict[int, float]:
-        return dict(self._levels)
+        """Fresh per-channel RMS only; stale/disconnected channels are omitted."""
+        self._check_stale()
+        now = time.monotonic()
+        out: Dict[int, float] = {}
+        for ch in list(self._levels):
+            sample = self._sample(ch)
+            if sample is not None and self._fresh(ch, now):
+                out[ch] = sample[0]
+        return out
 
     def channel_rms(self, channel: int) -> float:
-        return self._levels.get(channel, -90.0)
+        """Latest RMS for ``channel``; -90.0 (silence) when the sample is older
+        than ``mixer_meter_stale_seconds`` or the feed is disconnected."""
+        self._check_stale()
+        sample = self._sample(channel)
+        if sample is None or not self._fresh(channel):
+            return SILENCE_DB
+        return sample[0]
+
+    def status(self) -> dict:
+        now = time.monotonic()
+        return {
+            "mock": self.mock,
+            "connected": self._connected,
+            "stale": self.stale,
+            "stale_seconds": self.stale_seconds,
+            "channels": {
+                ch: {
+                    "rms_db": sample[0],
+                    "age": None if sample[1] is None else round(now - sample[1], 3),
+                    "fresh": self._fresh(ch, now),
+                }
+                for ch, sample in ((ch, self._sample(ch)) for ch in sorted(self._levels))
+                if sample is not None
+            },
+        }
 
     def channel_active(self, channel: int, threshold_db: Optional[float] = None) -> bool:
         threshold = settings.song_end_silence_db if threshold_db is None else threshold_db
@@ -124,7 +245,11 @@ class MixerService:
             except Exception as e:
                 logger.warning("Mixer feed reconnecting", error=str(e))
             self._connected = False
+            # Never serve the last value as live: a channel "speaking" at the
+            # instant of the drop must not stay speaking forever.
+            self._levels.clear()
             event_bus.publish({"event": "MIXER_CONNECTION_FAILED", "payload": {}})
+            self._mark_degraded()
             await asyncio.sleep(2.0)
 
     def _ingest(self, raw: str) -> None:
@@ -135,10 +260,15 @@ class MixerService:
         kind = message.get("type")
         data = message.get("data")
         if kind == "meters":
+            now = time.monotonic()
+            got_any = False
             for meter in data or []:
                 channel = meter.get("channel")
                 if channel is not None:
-                    self._levels[int(channel)] = float(meter.get("rms_db", -90.0))
+                    self._levels[int(channel)] = (float(meter.get("rms_db", SILENCE_DB)), now)
+                    got_any = True
+            if got_any and (self._connected or self.mock):
+                self._mark_restored()
         elif kind == "analysis" and isinstance(data, dict):
             self._analysis = data
             self._analysis_at = time.monotonic()

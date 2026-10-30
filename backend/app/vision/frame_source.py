@@ -1,4 +1,8 @@
-"""Frame source abstractions for vision input."""
+"""Frame source abstractions for vision input.
+
+cv2 ``VideoCapture`` open/read calls block (RTSP connects for seconds, reads for
+a frame interval), so they run on the ``capture`` thread pool.
+"""
 
 from __future__ import annotations
 
@@ -12,6 +16,7 @@ try:
 except ImportError:  # pragma: no cover
     cv2 = None  # type: ignore
 
+from .executors import run_in
 from .models import FrameMetadata, VideoSourceType
 
 
@@ -49,7 +54,7 @@ class RTSPSource(VideoSource):
     async def connect(self) -> None:
         if cv2 is None:
             raise RuntimeError("opencv-python is required for RTSP sources")
-        self.capture = cv2.VideoCapture(self.rtsp_url)
+        self.capture = await run_in("capture", cv2.VideoCapture, self.rtsp_url)
         if not self.capture.isOpened():
             raise ConnectionError(f"Unable to open RTSP stream: {self.rtsp_url}")
 
@@ -61,7 +66,7 @@ class RTSPSource(VideoSource):
     async def get_frame(self) -> tuple[Any | None, FrameMetadata | None]:
         if self.capture is None:
             return None, None
-        ret, frame = self.capture.read()
+        ret, frame = await run_in("capture", self.capture.read)
         if not ret:
             return None, None
         height, width = frame.shape[:2]
@@ -84,7 +89,7 @@ class USBSource(VideoSource):
     async def connect(self) -> None:
         if cv2 is None:
             raise RuntimeError("opencv-python is required for USB sources")
-        self.capture = cv2.VideoCapture(self.device_index)
+        self.capture = await run_in("capture", cv2.VideoCapture, self.device_index)
         if not self.capture.isOpened():
             raise ConnectionError(f"Unable to open USB video source {self.device_index}")
 
@@ -96,7 +101,7 @@ class USBSource(VideoSource):
     async def get_frame(self) -> tuple[Any | None, FrameMetadata | None]:
         if self.capture is None:
             return None, None
-        ret, frame = self.capture.read()
+        ret, frame = await run_in("capture", self.capture.read)
         if not ret:
             return None, None
         height, width = frame.shape[:2]
@@ -119,7 +124,7 @@ class FileSource(VideoSource):
     async def connect(self) -> None:
         if cv2 is None:
             raise RuntimeError("opencv-python is required for file sources")
-        self.capture = cv2.VideoCapture(self.file_path)
+        self.capture = await run_in("capture", cv2.VideoCapture, self.file_path)
         if not self.capture.isOpened():
             raise FileNotFoundError(f"Unable to open video file: {self.file_path}")
 
@@ -131,7 +136,7 @@ class FileSource(VideoSource):
     async def get_frame(self) -> tuple[Any | None, FrameMetadata | None]:
         if self.capture is None:
             return None, None
-        ret, frame = self.capture.read()
+        ret, frame = await run_in("capture", self.capture.read)
         if not ret:
             self.capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
             return None, None

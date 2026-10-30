@@ -25,7 +25,7 @@ FastAPI Backend (backend/app/)
     ├─ Production memory (app/memory) ── PostgreSQL+pgvector, semantic-ish recall
     ├─ Policy engine (app/policy) ── permission + confidence + cooldown checks
     ├─ Service director (app/director) ── scripted cue-sheet engine (this doc's subject)
-    └─ Director AI (app/agents/director_ai.py) ── Claude/heuristic advance decisions
+    └─ Director AI (app/agents/director_ai.py) ── Ollama/heuristic advance proposals
 ```
 
 ## Service director (cue engine)
@@ -46,11 +46,13 @@ FastAPI Backend (backend/app/)
 
 **This is a cue-driven system**: "when cue X happens (or a timer/song-end
 fires), perform action Y." The only "AI" input is
-[`director_ai.py`](../backend/app/agents/director_ai.py), which asks Claude
+[`director_ai.py`](../backend/app/agents/director_ai.py), which asks Ollama
 (or falls back to a keyword regex) *only* "should the **current** cue
 advance?" — it has no broader understanding of what the service is doing, no
 persistent state, and cannot originate actions beyond advancing the existing
-cue's exit hint.
+cue's exit hint. (Since the AI-core phase it submits that advance as a proposal
+to the AI runtime's queue instead of acting directly; see
+[ai-director.md](ai-director.md#pacing-proposal-queue-and-phase-gating).)
 
 ## Audio (Yamaha MGX16, listen-only)
 

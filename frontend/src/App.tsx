@@ -13,20 +13,27 @@ import { AiObservation } from './components/AiObservation'
 import { AIDirectorPanel } from './components/AIDirectorPanel'
 import { AssistantChat } from './components/AssistantChat'
 import { AtemPanel } from './components/AtemPanel'
-import { CameraJoystick } from './components/CameraJoystick'
+import { CameraPanels, RigSummary } from './components/CameraPanels'
 import { CameraObservation } from './components/CameraObservation'
 import { CueSheet } from './components/CueSheet'
 import { DetectionOverlay } from './components/DetectionOverlay'
 import { EventTimeline } from './components/EventTimeline'
 import { RosterPanel } from './components/RosterPanel'
 import { SlidesPanel } from './components/SlidesPanel'
+import { ApiKeyGate } from './components/ApiKeyGate'
+import { SetupWizard, SetupWizardButton } from './components/SetupWizard'
+import { RehearsalPanel } from './components/RehearsalPanel'
+import { ServiceReview } from './components/ServiceReview'
 import { SystemStatus } from './components/SystemStatus'
 import { VisionPanel } from './components/VisionPanel'
 import { VoiceAttentionPanel } from './components/VoiceAttentionPanel'
+import { useHealth } from './hooks/useHealth'
 
 export function App() {
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
+      <ApiKeyGate />
+      <SetupWizard />
       <AppBar position="static" color="transparent" elevation={0} sx={{ borderBottom: 1, borderColor: 'divider' }}>
         <Toolbar sx={{ py: 1.5, gap: 2 }}>
           <ChurchIcon color="primary" fontSize="large" />
@@ -38,13 +45,8 @@ export function App() {
               AI-assisted worship production control
             </Typography>
           </Box>
-          <Chip
-            icon={<FiberManualRecordIcon sx={{ fontSize: 12 }} />}
-            label="System Online"
-            color="success"
-            variant="outlined"
-            size="small"
-          />
+          <SetupWizardButton />
+          <SystemChip />
         </Toolbar>
       </AppBar>
 
@@ -81,7 +83,7 @@ export function App() {
           >
             <CueSheet />
             <AtemPanel />
-            <CameraJoystick cameraId={1} />
+            <CameraPanels />
             <SlidesPanel />
           </Box>
 
@@ -94,11 +96,28 @@ export function App() {
             }}
           >
             <VoiceAttentionPanel />
-            <SystemStatus />
+            <Stack spacing={3}>
+              <Box id="system-status" sx={{ scrollMarginTop: 24 }}>
+                <SystemStatus />
+              </Box>
+              <RigSummary />
+            </Stack>
           </Box>
 
           <Box id="ai-director-panel" tabIndex={-1} sx={{ scrollMarginTop: 24 }}>
             <AIDirectorPanel />
+          </Box>
+
+          <Box
+            sx={{
+              display: 'grid',
+              gap: 3,
+              alignItems: 'start',
+              gridTemplateColumns: { xs: '1fr', lg: '1fr 2fr' },
+            }}
+          >
+            <RehearsalPanel />
+            <ServiceReview />
           </Box>
 
           <RosterPanel />
@@ -111,6 +130,28 @@ export function App() {
         </Stack>
       </Container>
     </Box>
+  )
+}
+
+/** Live readiness chip: ready / degraded / not ready / offline from GET /health/ready. */
+function SystemChip() {
+  const { ready, backendDown } = useHealth()
+  const status = backendDown ? 'offline' : ready?.status ?? 'checking'
+  const color = status === 'ready' ? 'success' : status === 'degraded' ? 'warning' : status === 'checking' ? 'default' : 'error'
+  const label = status === 'ready' ? 'System Ready' : status === 'degraded' ? 'Degraded' : status === 'not_ready' ? 'Not Ready' : status === 'offline' ? 'Backend Offline' : 'Checking…'
+  const down = ready ? Object.entries(ready.components).filter(([, c]) => c.status === 'down' || c.status === 'degraded').map(([k, c]) => `${k}: ${c.detail}`) : []
+  return (
+    <Chip
+      icon={<FiberManualRecordIcon sx={{ fontSize: 12 }} />}
+      label={label}
+      color={color}
+      variant="outlined"
+      size="small"
+      title={down.join('\n') || undefined}
+      component="a"
+      href="#system-status"
+      clickable
+    />
   )
 }
 

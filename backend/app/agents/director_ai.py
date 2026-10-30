@@ -1,15 +1,19 @@
-"""LLM/vision advance decisions for the service director.
+"""LLM/heuristic cue-advance decisions from free-form observations.
 
-Turns free-form observations (a transcript snippet, a vision scene description,
-an operator note) into an advance decision for the *current* cue, then feeds it
-back into the director via ``request_advance``. Uses Ollama with a lightweight
-keyword heuristic as a fallback when inference is unavailable.
+Turns an observation (a transcript snippet, a vision scene description, an
+operator note) into an advance decision for the *current* cue. The decision is
+**not** applied here: it becomes a ``CUE_ADVANCE`` proposal submitted to the AI
+Director runtime, so it honours the operating mode (manual = observe only,
+assisted = operator approves, ai_directed = policy-gated execution) and the
+shared proposal queue exactly like every other AI proposal. The cue engine's
+own autonomy/confidence gate still applies when the action finally executes.
 """
 
 import json
 import re
 from typing import Optional
 
+from app.director.action_models import DirectorAction, DirectorActionType
 from app.director.engine import service_director
 from app.logging_config import get_logger
 
@@ -29,40 +33,59 @@ _ADVANCE_KEYWORDS = re.compile(
     r"the word of the lord)\b",
     re.IGNORECASE,
 )
+# A keyword match is a weak signal; it must not look as sure as the model.
+_HEURISTIC_CONFIDENCE = 0.75
+
+SOURCE = "ai_director"
 
 
 class DirectorAI:
-    """Decides cue advances from observations and drives the director."""
+    """Decides cue advances from observations and proposes them to the runtime."""
 
     async def decide(self, observation: str, *, exit_hint: str, cue_name: str) -> dict:
         """Return {advance, confidence, reason} for the current observation."""
         decision = await self._decide_with_llm(observation, exit_hint=exit_hint, cue_name=cue_name)
         if decision is not None:
-            return decision
+            return {**decision, "heuristic": False}
         return self._decide_heuristic(observation)
 
     async def observe(self, observation: str) -> dict:
-        """Evaluate an observation against the current cue and act on it."""
+        """Evaluate an observation against the current cue; propose (never apply) an advance."""
+        from app.director.ai_director_runtime import ai_director_runtime
+
         cue = service_director.current_cue()
         if cue is None:
-            return {"accepted": False, "reason": "no active cue"}
+            return {"accepted": False, "reason": "no active cue", "mode": ai_director_runtime.mode}
 
         decision = await self.decide(
             observation,
             exit_hint=cue.exit_hint or "Advance when this segment is clearly finished.",
             cue_name=cue.name,
         )
-
         if not decision.get("advance"):
-            return {"accepted": False, "decision": decision}
+            return {"accepted": False, "decision": decision, "mode": ai_director_runtime.mode}
 
-        result = await service_director.request_advance(
-            source="director_ai",
-            reason=decision.get("reason", "AI decision"),
+        action = DirectorAction(
+            type=DirectorActionType.CUE_ADVANCE,
+            target=cue.id,
+            parameters={
+                "source": SOURCE,
+                "cue_id": cue.id,
+                "cue_name": cue.name,
+                "heuristic": bool(decision.get("heuristic")),
+                "observation": observation[:200],
+            },
             confidence=float(decision.get("confidence", 0.0)),
-            cue_id=cue.id,
+            reason=str(decision.get("reason", "AI decision")),
         )
-        return {"decision": decision, "result": result}
+        outcome = await ai_director_runtime.propose([action], source=SOURCE)
+        return {
+            "accepted": bool(outcome.get("accepted")),
+            "decision": decision,
+            "mode": ai_director_runtime.mode,
+            "proposals": outcome.get("proposals", []),
+            "dropped": outcome.get("dropped", []),
+        }
 
     async def _decide_with_llm(
         self, observation: str, *, exit_hint: str, cue_name: str
@@ -72,7 +95,7 @@ class DirectorAI:
 
             llm = get_fast_llm()
         except Exception:
-            return None  # Missing local client; retain the cue engine's heuristic fallback.
+            return None  # Missing local client; retain the heuristic fallback.
 
         user = (
             f"Current cue: {cue_name}\n"
@@ -98,8 +121,13 @@ class DirectorAI:
 
     def _decide_heuristic(self, observation: str) -> dict:
         if _ADVANCE_KEYWORDS.search(observation or ""):
-            return {"advance": True, "confidence": 0.9, "reason": "matched end-of-segment phrase"}
-        return {"advance": False, "confidence": 0.0, "reason": "no advance signal"}
+            return {
+                "advance": True,
+                "confidence": _HEURISTIC_CONFIDENCE,
+                "reason": "matched end-of-segment phrase",
+                "heuristic": True,
+            }
+        return {"advance": False, "confidence": 0.0, "reason": "no advance signal", "heuristic": True}
 
 
 # Module-level singleton

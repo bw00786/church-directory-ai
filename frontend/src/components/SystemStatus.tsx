@@ -1,27 +1,26 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useState } from 'react'
 import Button from '@mui/material/Button'
 import Card from '@mui/material/Card'
 import CardContent from '@mui/material/CardContent'
 import CardHeader from '@mui/material/CardHeader'
 import Chip from '@mui/material/Chip'
 import Stack from '@mui/material/Stack'
+import Tooltip from '@mui/material/Tooltip'
 import Typography from '@mui/material/Typography'
 import MonitorHeartIcon from '@mui/icons-material/MonitorHeart'
 
-import { useAtem } from '@/hooks/useAtem'
+import { apiFetch } from '@/api/client'
+import { COMPONENT_LABELS, type ComponentStatus, useHealth } from '@/hooks/useHealth'
 
-type Level = 'ok' | 'warn' | 'error' | 'unknown'
+type ChipColor = 'success' | 'warning' | 'error' | 'default' | 'info'
 
-const COLOR: Record<Level, 'success' | 'warning' | 'error' | 'default'> = {
+const COLOR: Record<ComponentStatus | 'unknown', ChipColor> = {
   ok: 'success',
-  warn: 'warning',
-  error: 'error',
+  mock: 'info',
+  off: 'default',
+  degraded: 'warning',
+  down: 'error',
   unknown: 'default',
-}
-
-interface ReadyResponse {
-  status: string
-  checks: Record<string, string>
 }
 
 interface OllamaResponse {
@@ -31,49 +30,29 @@ interface OllamaResponse {
   error?: string
 }
 
+/**
+ * Pre-service checklist: one row per backend component from GET /health/ready
+ * (database, ATEM, cameras, EasyWorship, mixer, audio, Ollama, AI Director,
+ * slide verification, voice) plus an on-demand Ollama inference test.
+ */
 export function SystemStatus() {
-  const { state: atem, error: atemError } = useAtem()
-  const [ready, setReady] = useState<ReadyResponse | null>(null)
-  const [backendDown, setBackendDown] = useState(false)
-  const [ollama, setOllama] = useState<{ level: Level; text: string }>({
-    level: 'unknown',
+  const { ready, backendDown } = useHealth()
+  const [ollama, setOllama] = useState<{ level: ChipColor; text: string }>({
+    level: 'default',
     text: 'not tested',
   })
   const [testing, setTesting] = useState(false)
 
-  useEffect(() => {
-    let cancelled = false
-    const poll = async () => {
-      try {
-        const res = await fetch('/api/health/ready')
-        if (!res.ok) throw new Error(String(res.status))
-        const body = (await res.json()) as ReadyResponse
-        if (!cancelled) {
-          setReady(body)
-          setBackendDown(false)
-        }
-      } catch {
-        if (!cancelled) setBackendDown(true)
-      }
-    }
-    poll()
-    const id = setInterval(poll, 5000)
-    return () => {
-      cancelled = true
-      clearInterval(id)
-    }
-  }, [])
-
-  // On-demand only: runs a real (short) inference on the EasyWorship PC's Ollama.
+  // On-demand only: runs a real (short) inference on the configured Ollama.
   const testOllama = useCallback(async () => {
     setTesting(true)
     try {
-      const res = await fetch('/api/health/ollama')
+      const res = await apiFetch('/health/ollama')
       const body = (await res.json()) as OllamaResponse
       const good = res.ok && body.ok !== false && !body.error
       const where = body.base_url ? ` @ ${body.base_url}` : ''
       setOllama({
-        level: good ? 'ok' : 'error',
+        level: good ? 'success' : 'error',
         text: good ? `${body.model ?? 'model'} responding${where}` : `${body.error ?? 'failed'}${where}`,
       })
     } catch {
@@ -83,59 +62,50 @@ export function SystemStatus() {
     }
   }, [])
 
-  const backend: { level: Level; text: string } = backendDown
-    ? { level: 'error', text: 'offline' }
-    : ready
-      ? { level: 'ok', text: ready.status }
-      : { level: 'unknown', text: 'checking' }
-
-  const atemRow: { level: Level; text: string } = atemError
-    ? { level: 'error', text: 'unreachable' }
-    : atem?.connected
-      ? { level: 'ok', text: 'connected' }
-      : { level: 'warn', text: 'not connected' }
-
-  const configured = ready?.checks?.ollama === 'configured'
-
-  const rows: Array<{ label: string; level: Level; text: string; action?: React.ReactNode }> = [
-    { label: 'Backend API', ...backend },
-    { label: 'ATEM', ...atemRow },
-    {
-      label: 'Ollama model',
-      level: ready ? (configured ? 'ok' : 'warn') : 'unknown',
-      text: ready ? (configured ? 'configured' : 'not configured') : 'checking',
-    },
-    {
-      label: 'Ollama inference',
-      ...ollama,
-      action: (
-        <Button size="small" onClick={testOllama} disabled={testing || backendDown}>
-          {testing ? 'Testing...' : 'Test'}
-        </Button>
-      ),
-    },
-  ]
+  const components = ready?.components ?? {}
+  const order = Object.keys(COMPONENT_LABELS).filter((k) => k in components)
+  const extra = Object.keys(components).filter((k) => !(k in COMPONENT_LABELS))
 
   return (
     <Card>
       <CardHeader
         avatar={<MonitorHeartIcon color="primary" />}
         title="System Status"
+        subheader={backendDown ? 'Backend offline' : ready ? `${ready.status}${ready.version ? ` · v${ready.version}` : ''}` : 'checking…'}
         titleTypographyProps={{ variant: 'subtitle2' }}
       />
       <CardContent>
         <Stack spacing={1}>
-          {rows.map((row) => (
-            <Stack key={row.label} direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
-              <Typography variant="body2">{row.label}</Typography>
-              <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-                {row.action}
-                <Chip size="small" variant="outlined" color={COLOR[row.level]} label={row.text} />
-              </Stack>
-            </Stack>
-          ))}
+          <Row label="Backend API" level={backendDown ? 'error' : ready ? 'success' : 'default'} text={backendDown ? 'offline' : ready ? 'online' : 'checking'} />
+          {[...order, ...extra].map((key) => {
+            const c = components[key]
+            return <Row key={key} label={COMPONENT_LABELS[key] ?? key} level={COLOR[c.status] ?? 'default'} text={c.status} tooltip={c.detail} />
+          })}
+          <Row
+            label="Ollama inference"
+            level={ollama.level}
+            text={ollama.text}
+            action={
+              <Button size="small" onClick={testOllama} disabled={testing || backendDown}>
+                {testing ? 'Testing...' : 'Test'}
+              </Button>
+            }
+          />
         </Stack>
       </CardContent>
     </Card>
+  )
+}
+
+function Row({ label, level, text, tooltip, action }: { label: string; level: ChipColor; text: string; tooltip?: string; action?: React.ReactNode }) {
+  const chip = <Chip size="small" variant="outlined" color={level} label={text} />
+  return (
+    <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
+      <Typography variant="body2">{label}</Typography>
+      <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+        {action}
+        {tooltip ? <Tooltip title={tooltip}>{chip}</Tooltip> : chip}
+      </Stack>
+    </Stack>
   )
 }

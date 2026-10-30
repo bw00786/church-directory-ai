@@ -1,4 +1,13 @@
-"""ATEM event definitions."""
+"""ATEM event definitions.
+
+Two layers exist:
+
+* :class:`AtemEventType` / :class:`AtemEvent` -- typed REST/WebSocket models.
+* ``BUS_EVENTS`` -- the raw messages ``AtemService`` publishes on
+  ``app.events.bus.event_bus`` (``{"event": <name>, "payload": {...}}``) when
+  a poll of the bridge shows a change. The context-sync layer and the operator
+  shot recorder consume these.
+"""
 
 from datetime import datetime
 from enum import Enum
@@ -22,6 +31,39 @@ class AtemEventType(str, Enum):
     RECORDING_STOPPED = "recording_stopped"
     INPUT_CONNECTED = "input_connected"
     INPUT_DISCONNECTED = "input_disconnected"
+
+
+# Bus events emitted by ``app.atem.service.AtemService`` (see docs/atem.md).
+BUS_EVENTS: dict[str, dict[str, Any]] = {
+    "PROGRAM_CHANGED": {
+        "program_input": "int -- new program input id",
+        "previous_input": "int -- program input before the change",
+        "preview_input": "int -- preview at the time of the poll",
+        "transition_in_progress": "bool",
+        "source": "'poll' -- detected by comparing consecutive /status polls",
+        "commanded": "bool -- True when this service issued the matching command",
+        "mock": "bool",
+        "timestamp": "ISO-8601",
+    },
+    "PREVIEW_CHANGED": {
+        "preview_input": "int -- new preview input id",
+        "previous_input": "int",
+        "program_input": "int",
+        "transition_in_progress": "bool",
+        "source": "'poll'",
+        "commanded": "bool",
+        "mock": "bool",
+        "timestamp": "ISO-8601",
+    },
+    "ATEM_CONNECTION_CHANGED": {
+        "connected": "bool",
+        "previous": "bool",
+        "atem_ip": "str",
+        "mock": "bool",
+        "source": "'connect' | 'poll' | 'monitor' | 'disconnect' | 'error'",
+        "timestamp": "ISO-8601",
+    },
+}
 
 
 class AtemEvent(BaseModel):
