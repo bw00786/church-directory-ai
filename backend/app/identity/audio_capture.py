@@ -33,7 +33,8 @@ logger = get_logger(__name__)
 
 try:
     import sounddevice as sd
-except ImportError:  # pragma: no cover
+except Exception:  # pragma: no cover - optional dependency; PortAudio may also
+    # fail to initialise at import time on hosts with no audio server (CI).
     sd = None  # type: ignore
 
 

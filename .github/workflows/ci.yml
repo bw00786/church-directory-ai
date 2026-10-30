@@ -82,5 +82,5 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m py_compile backend/easyworship_agent/agent.py
-      - run: pip install pytest
-      - run: python -m pytest -q backend/tests/test_security_agent.py
+      - run: pip install pytest httpx
+      - run: python -m pytest -q -p no:cacheprovider backend/tests/test_security_agent.py

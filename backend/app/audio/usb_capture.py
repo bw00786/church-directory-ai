@@ -50,7 +50,8 @@ logger = get_logger(__name__)
 
 try:
     import sounddevice as sd
-except ImportError:  # pragma: no cover - optional dependency
+except Exception:  # pragma: no cover - optional dependency; PortAudio may also
+    # fail to initialise at import time on hosts with no audio server (CI).
     sd = None  # type: ignore
 
 TARGET_RATE = 16000  # VAD/ASR sample rate
