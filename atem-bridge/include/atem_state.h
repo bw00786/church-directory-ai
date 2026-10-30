@@ -12,6 +12,8 @@ struct AtemInputState {
     std::string short_name;
     std::string type;
     bool connected;
+    bool program_tally;
+    bool preview_tally;
 };
 
 struct AtemState {
@@ -23,4 +25,7 @@ struct AtemState {
     bool transition_in_progress;
     std::vector<AtemInputState> inputs;
     time_t timestamp;
+    // Wall-clock time of the last SDK callback that changed cached state
+    // (0 until the first change). Lets the backend detect a stale bridge.
+    time_t last_change;
 };

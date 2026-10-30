@@ -12,6 +12,10 @@ from app.api import register_routes
 from app.vision.manager import VisionManager
 from app.cameras.service import camera_service
 from app.config import settings as global_settings
+from app.security.auth import ApiKeyAuthMiddleware, startup_auth_check
+from app.security.secrets_check import placeholder_secret_problems
+
+from app.version import APP_VERSION
 
 # Setup logging
 setup_logging(log_format=settings.log_format, log_level=settings.log_level)
@@ -24,7 +28,16 @@ vision_manager = VisionManager()
 async def lifespan(app: FastAPI):
     """Application lifespan - startup and shutdown."""
     # Startup
-    logger.info("Church Production Director starting...", version="1.0.0")
+    logger.info("Church Production Director starting...", version=APP_VERSION)
+
+    # Security gate: placeholder secrets or missing API keys are tolerated only
+    # when every hardware integration is mocked (a developer laptop).
+    problems = startup_auth_check() + placeholder_secret_problems(settings)
+    for problem in problems:
+        logger.error("startup security check failed", problem=problem)
+    all_mocked = settings.enable_mock_atem and settings.enable_mock_mixer and settings.enable_mock_easyworship
+    if problems and settings.security_strict_startup and not all_mocked:
+        raise RuntimeError("Refusing non-mock startup: " + "; ".join(problems))
     voice = None
     try:
         from app.voice.service import get_voice_service
@@ -238,6 +251,12 @@ async def lifespan(app: FastAPI):
         await operator_advance_recorder.stop()
     except Exception:
         logger.exception("Failed to stop operator slide-advance learning")
+    try:
+        from app.vision.executors import shutdown_all
+
+        shutdown_all()
+    except Exception:
+        logger.exception("Failed to stop perception thread pools")
     logger.info("Church Production Director shutting down...")
 
 
@@ -245,9 +264,13 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Church Production Director API",
     description="AI-assisted church worship production control",
-    version="1.0.0",
+    version=APP_VERSION,
     lifespan=lifespan,
 )
+
+# API-key authentication on every non-public route and WebSocket (app.security.auth).
+# Added before CORS so CORS stays outermost and 401/503 responses carry CORS headers.
+app.add_middleware(ApiKeyAuthMiddleware)
 
 # Add CORS middleware for development
 app.add_middleware(
@@ -268,7 +291,7 @@ app.add_middleware(
 @app.get("/health")
 async def health_check():
     """Basic health check."""
-    return {"status": "healthy", "version": "1.0.0"}
+    return {"status": "healthy", "version": APP_VERSION}
 
 
 @app.get("/health/live")
@@ -312,7 +335,7 @@ async def root():
     """API root endpoint."""
     return {
         "name": "Church Production Director",
-        "version": "1.0.0",
+        "version": APP_VERSION,
         "docs": "/docs",
     }
 

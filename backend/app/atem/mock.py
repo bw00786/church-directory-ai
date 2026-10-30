@@ -14,18 +14,23 @@ class MockAtemClient:
     def __init__(self):
         """Initialize mock ATEM with default state."""
         self._connected = False
-        self._program_input = 0
-        self._preview_input = 1
+        # Real ATEM Mini SDK input ids: HDMI 1..4 are ids 1..4 (0 is Black).
+        # These match ``settings.atem_camera1_input`` / ``atem_camera2_input``.
+        self._program_input = 1
+        self._preview_input = 2
         self._streaming = False
         self._recording = False
         self._transition_in_progress = False
+        # Number of status() polls an AUTO transition stays "in progress".
+        self.auto_transition_polls = 1
+        self._transition_polls_left = 0
         
-        # Default inputs for church setup
+        # Default inputs for the church setup (HDMI 1 = PTZOptics, HDMI 2 = EasyWorship laptop).
         self._inputs = [
-            {"id": 0, "name": "Pastor", "short_name": "Pas", "type": "HDMI", "connected": True},
-            {"id": 1, "name": "Congregation", "short_name": "Con", "type": "HDMI", "connected": True},
-            {"id": 2, "name": "Wide Shot", "short_name": "Wide", "type": "HDMI", "connected": True},
-            {"id": 3, "name": "Piano", "short_name": "Pno", "type": "HDMI", "connected": True},
+            {"id": 1, "name": "PTZOptics Camera", "short_name": "PTZ", "type": "HDMI", "connected": True},
+            {"id": 2, "name": "EasyWorship Slides", "short_name": "EW", "type": "HDMI", "connected": True},
+            {"id": 3, "name": "Camera 3", "short_name": "CAM3", "type": "HDMI", "connected": True},
+            {"id": 4, "name": "Camera 4", "short_name": "CAM4", "type": "HDMI", "connected": True},
         ]
 
         # Mic/audio input channels (Fairlight audio on the real ATEM).
@@ -63,15 +68,27 @@ class MockAtemClient:
         Returns:
             ATEM state dictionary.
         """
+        in_progress = self._transition_in_progress
+        if in_progress:
+            # Like the real switcher, the flag clears once the transition has run
+            # (reported as in-progress for ``auto_transition_polls`` polls).
+            self._transition_polls_left -= 1
+            if self._transition_polls_left <= 0:
+                self._transition_in_progress = False
         return {
             "connected": self._connected,
             "program_input": self._program_input,
             "preview_input": self._preview_input,
             "streaming": self._streaming,
             "recording": self._recording,
-            "inputs": self._inputs,
+            "inputs": [
+                {**inp, "program_tally": inp["id"] == self._program_input,
+                 "preview_tally": inp["id"] == self._preview_input}
+                for inp in self._inputs
+            ],
             "audio_channels": self._audio_channels,
-            "transition_in_progress": self._transition_in_progress,
+            "transition_in_progress": in_progress,
+            "capabilities": {"audio_mute": True},
             "timestamp": datetime.now().isoformat(),
         }
     
@@ -147,9 +164,9 @@ class MockAtemClient:
         if not self._connected:
             return {"ok": False, "error": "Not connected"}
         
-        # In a real ATEM, CUT immediately switches program to preview
+        # In a real ATEM, CUT swaps program and preview immediately.
         old_program = self._program_input
-        self._program_input = self._preview_input
+        self._program_input, self._preview_input = self._preview_input, old_program
         
         logger.info("Cut transition", from_input=old_program, to_input=self._program_input)
         
@@ -164,15 +181,14 @@ class MockAtemClient:
         if not self._connected:
             return {"ok": False, "error": "Not connected"}
         
-        # In a real ATEM, AUTO performs a timed transition
+        # In a real ATEM, AUTO performs a timed transition: program and
+        # preview swap and ``transition_in_progress`` stays set for a while
+        # (here: ``auto_transition_polls`` status() calls).
         old_program = self._program_input
-        self._transition_in_progress = True
+        self._transition_in_progress = self.auto_transition_polls > 0
+        self._transition_polls_left = self.auto_transition_polls
         
-        # Simulate transition in progress for a moment
-        # In real implementation, this would trigger callbacks
-        
-        self._program_input = self._preview_input
-        self._transition_in_progress = False
+        self._program_input, self._preview_input = self._preview_input, old_program
         
         logger.info("Auto transition", from_input=old_program, to_input=self._program_input)
         

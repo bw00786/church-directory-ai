@@ -17,6 +17,25 @@ from .models import AtemStateModel, AtemInputModel, AtemAudioChannelModel
 logger = get_logger(__name__)
 
 
+def _setting(name: str, default):
+    """Read an optional setting; the default mirrors ``app.config.Settings``."""
+    return getattr(settings, name, default)
+
+
+class AtemFeatureUnsupported(NotImplementedError):
+    """The connected ATEM bridge does not implement the requested feature."""
+
+
+# Event names published on ``event_bus`` (payloads documented in docs/atem.md).
+EVENT_PROGRAM_CHANGED = "PROGRAM_CHANGED"
+EVENT_PREVIEW_CHANGED = "PREVIEW_CHANGED"
+EVENT_CONNECTION_CHANGED = "ATEM_CONNECTION_CHANGED"
+
+# How recently this service must have commanded a value for an observed change
+# to be attributed to it (``commanded: true``) rather than to the operator.
+_COMMAND_ATTRIBUTION_SECONDS = 5.0
+
+
 class AtemService:
     """Service for communicating with ATEM via native bridge."""
     
@@ -42,8 +61,16 @@ class AtemService:
         self._reconnect_enabled = False
         self._real_seen = False
         self._last_ip: Optional[str] = None
-        self._monitor_interval = 2.0
+        self._monitor_interval = float(_setting("atem_poll_seconds", 1.0))
         self._retry_max_seconds = 30.0
+        # AUTO transitions: poll ``transition_in_progress`` instead of a fixed sleep.
+        self._transition_poll_seconds = 0.1
+        self._transition_timeout_seconds = 3.0
+        # Bridge feature detection (``/status`` ``capabilities`` or a 404 on first use).
+        self._capabilities: dict = {}
+        self._mic_mute_supported: Optional[bool] = None
+        # Last program/preview this service commanded: (input_id, monotonic time).
+        self._commanded: dict[str, tuple[int, float]] = {}
         
         if self.mock or self.auto_detect:
             from .mock import MockAtemClient
@@ -56,6 +83,69 @@ class AtemService:
         else:
             logger.info("ATEM Service initialized with real bridge")
     
+    def _set_connected(self, value: bool, source: str) -> None:
+        """Update the cached connection flag, publishing on every transition."""
+        previous = self._connected
+        self._connected = bool(value)
+        if previous == self._connected:
+            return
+        event_bus.publish({
+            "event": EVENT_CONNECTION_CHANGED,
+            "payload": {
+                "connected": self._connected,
+                "previous": previous,
+                "atem_ip": self._last_ip or settings.atem_ip,
+                "mock": self.mock,
+                "source": source,
+                "timestamp": datetime.now().isoformat(),
+            },
+        })
+
+    def _emit_state_changes(self, previous: Optional[AtemStateModel], state: AtemStateModel) -> None:
+        """Publish PROGRAM_CHANGED / PREVIEW_CHANGED when polled status differs."""
+        if previous is None:
+            return
+        now = asyncio.get_running_loop().time()
+        for field, event in (("program_input", EVENT_PROGRAM_CHANGED), ("preview_input", EVENT_PREVIEW_CHANGED)):
+            new_value = getattr(state, field)
+            old_value = getattr(previous, field)
+            if new_value == old_value:
+                continue
+            commanded = self._commanded.get(field)
+            by_us = (
+                commanded is not None
+                and commanded[0] == new_value
+                and now - commanded[1] <= _COMMAND_ATTRIBUTION_SECONDS
+            )
+            if by_us:
+                self._commanded.pop(field, None)
+            event_bus.publish({
+                "event": event,
+                "payload": {
+                    field: new_value,
+                    "previous_input": old_value,
+                    "program_input": state.program_input,
+                    "preview_input": state.preview_input,
+                    "transition_in_progress": state.transition_in_progress,
+                    "source": "poll",
+                    "commanded": by_us,
+                    "mock": self.mock,
+                    "timestamp": state.timestamp.isoformat(),
+                },
+            })
+
+    def _note_command(self, field: str, input_id: int) -> None:
+        self._commanded[field] = (input_id, asyncio.get_running_loop().time())
+
+    @staticmethod
+    def _json(response: httpx.Response) -> dict:
+        """Decode a bridge response body, tolerating non-JSON error pages."""
+        try:
+            data = response.json()
+        except Exception:
+            return {"ok": False, "error": f"HTTP {response.status_code}: {response.text[:200]}"}
+        return data if isinstance(data, dict) else {"ok": False, "error": "unexpected bridge response"}
+
     async def _probe_real_bridge(self) -> bool:
         """Quick reachability check for the real ATEM bridge, used by auto-detect."""
         try:
@@ -107,7 +197,7 @@ class AtemService:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                self._connected = False
+                self._set_connected(False, "monitor")
                 logger.warning("ATEM monitor connection lost", exc_info=True)
                 delay = retry_seconds
                 retry_seconds = min(retry_seconds * 2, self._retry_max_seconds)
@@ -145,14 +235,14 @@ class AtemService:
                 )
 
             if self.mock:
-                self._connected = await self._mock_client.connect(ip)
+                connected = await self._mock_client.connect(ip)
             else:
                 response = await self._client.post(
                     f"{self.bridge_url}/connect",
                     json={"atem_ip": ip}
                 )
-                self._connected = response.json().get("ok", False)
-                if not self._connected and atem_ip is None:
+                connected = self._json(response).get("ok", False)
+                if not connected and atem_ip is None:
                     # The ATEM changed address (DHCP); rescan the subnets and retry once.
                     fresh = await atem_resolver.resolve(force=True)
                     if fresh and fresh != ip:
@@ -161,13 +251,17 @@ class AtemService:
                             f"{self.bridge_url}/connect",
                             json={"atem_ip": ip}
                         )
-                        self._connected = response.json().get("ok", False)
-            
+                        connected = self._json(response).get("ok", False)
+
+            if connected and not self.mock:
+                self._last_ip = ip
+            # A fresh bridge session may have different capabilities; re-detect.
+            self._mic_mute_supported = None
+            self._set_connected(connected, "connect")
+
             if self._connected:
                 # Refresh state
                 self._state = await self.get_state()
-                if not self.mock:
-                    self._last_ip = ip
                 logger.info("ATEM connected", atem_ip=ip, mock=self.mock)
             else:
                 logger.warning("Failed to connect to ATEM", atem_ip=ip)
@@ -175,7 +269,7 @@ class AtemService:
             return self._connected
         except Exception as e:
             logger.error("ATEM connection error", error=str(e))
-            self._connected = False
+            self._set_connected(False, "connect")
             return False
     
     async def disconnect(self) -> bool:
@@ -192,10 +286,11 @@ class AtemService:
         """
         try:
             if self.mock:
-                self._connected = not await self._mock_client.disconnect()
+                disconnected = await self._mock_client.disconnect()
             else:
                 response = await self._client.post(f"{self.bridge_url}/disconnect")
-                self._connected = not response.json().get("ok", False)
+                disconnected = self._json(response).get("ok", False)
+            self._set_connected(not disconnected, "disconnect")
             
             logger.info("ATEM disconnected")
             return True
@@ -231,6 +326,12 @@ class AtemService:
                 response.raise_for_status()
                 data = response.json()
             
+            capabilities = data.get("capabilities")
+            if isinstance(capabilities, dict):
+                self._capabilities = capabilities
+                if "audio_mute" in capabilities:
+                    self._mic_mute_supported = bool(capabilities["audio_mute"])
+
             state = AtemStateModel(
                 connected=data.get("connected", False),
                 program_input=data.get("program_input", 0),
@@ -248,13 +349,14 @@ class AtemService:
             )
             
             self._detect_output_failures(state)
+            self._emit_state_changes(self._state, state)
             if not self.mock:
-                self._connected = state.connected
+                self._set_connected(state.connected, "poll")
             self._state = state
             return state
         except Exception as e:
             if not self.mock:
-                self._connected = False
+                self._set_connected(False, "error")
             self._detect_output_failures(None)
             logger.error("Error reading ATEM state", error=str(e))
             raise ConnectionError(f"Failed to read ATEM state: {e}")
@@ -294,6 +396,7 @@ class AtemService:
                 raise ValueError(f"Invalid input: {input_id}")
             
             # Send command
+            self._note_command("program_input", input_id)
             if self.mock:
                 result = await self._mock_client.set_program(input_id)
             else:
@@ -301,7 +404,7 @@ class AtemService:
                     f"{self.bridge_url}/program",
                     json={"input_id": input_id}
                 )
-                result = response.json()
+                result = self._json(response)
             
             if not result.get("ok", False):
                 raise RuntimeError(f"Command failed: {result.get('error')}")
@@ -347,6 +450,7 @@ class AtemService:
                 raise ValueError(f"Invalid input: {input_id}")
             
             # Send command
+            self._note_command("preview_input", input_id)
             if self.mock:
                 result = await self._mock_client.set_preview(input_id)
             else:
@@ -354,7 +458,7 @@ class AtemService:
                     f"{self.bridge_url}/preview",
                     json={"input_id": input_id}
                 )
-                result = response.json()
+                result = self._json(response)
             
             if not result.get("ok", False):
                 raise RuntimeError(f"Command failed: {result.get('error')}")
@@ -387,11 +491,15 @@ class AtemService:
             if not self._connected:
                 raise ConnectionError("ATEM not connected")
             
+            if self._state is not None:
+                # The switcher swaps program/preview; both changes are ours.
+                self._note_command("program_input", self._state.preview_input)
+                self._note_command("preview_input", self._state.program_input)
             if self.mock:
                 result = await self._mock_client.cut()
             else:
                 response = await self._client.post(f"{self.bridge_url}/cut")
-                result = response.json()
+                result = self._json(response)
             
             if not result.get("ok", False):
                 raise RuntimeError(f"Cut failed: {result.get('error')}")
@@ -415,18 +523,20 @@ class AtemService:
             if not self._connected:
                 raise ConnectionError("ATEM not connected")
             
+            if self._state is not None:
+                # The switcher swaps program/preview; both changes are ours.
+                self._note_command("program_input", self._state.preview_input)
+                self._note_command("preview_input", self._state.program_input)
             if self.mock:
                 result = await self._mock_client.auto()
             else:
                 response = await self._client.post(f"{self.bridge_url}/auto")
-                result = response.json()
+                result = self._json(response)
             
             if not result.get("ok", False):
                 raise RuntimeError(f"Auto failed: {result.get('error')}")
             
-            # AUTO takes time (configurable on ATEM, usually 1 second)
-            await asyncio.sleep(1.2)
-            state = await self.get_state()
+            state = await self._wait_for_transition()
             
             logger.info("Auto transition performed")
             return state
@@ -434,6 +544,41 @@ class AtemService:
             logger.error("Error performing auto", error=str(e))
             raise
     
+    async def _wait_for_transition(self) -> AtemStateModel:
+        """Poll ``transition_in_progress`` until the AUTO transition ends (capped).
+
+        The ATEM's transition rate is operator-configurable (0.5-5 s), so a
+        fixed sleep either stalls the director or returns before the cut is on
+        air. We poll the bridge status and return as soon as the flag clears;
+        the first poll happens after one interval so a slow bridge has time to
+        observe the transition start. ``_transition_timeout_seconds`` bounds
+        the wait if the flag never flips (e.g. an old bridge without it).
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._transition_timeout_seconds
+        seen_in_progress = False
+        polls = 0
+        while True:
+            await asyncio.sleep(self._transition_poll_seconds)
+            state = await self.get_state()
+            polls += 1
+            if state.transition_in_progress:
+                seen_in_progress = True
+            elif seen_in_progress or polls >= 2:
+                return state
+            if loop.time() >= deadline:
+                logger.warning(
+                    "ATEM transition flag did not clear in time",
+                    timeout=self._transition_timeout_seconds,
+                    seen_in_progress=seen_in_progress,
+                )
+                return state
+
+    @property
+    def mic_mute_supported(self) -> Optional[bool]:
+        """True/False once known, None before the bridge has been asked."""
+        return True if self.mock else self._mic_mute_supported
+
     async def set_mic_muted(self, mic_id: int, muted: bool) -> AtemStateModel:
         """Mute/unmute a mic channel.
 
@@ -451,11 +596,24 @@ class AtemService:
             if self.mock:
                 result = await self._mock_client.set_mic_muted(mic_id, muted)
             else:
+                if self._mic_mute_supported is False:
+                    raise AtemFeatureUnsupported(
+                        "ATEM bridge does not support mic mute (no /audio/{id}/mute endpoint)"
+                    )
                 response = await self._client.post(
                     f"{self.bridge_url}/audio/{mic_id}/mute",
                     json={"muted": muted},
                 )
-                result = response.json()
+                if response.status_code in (404, 405, 501):
+                    # The C++ bridge has no audio endpoints yet; remember and fail clearly.
+                    self._mic_mute_supported = False
+                    raise AtemFeatureUnsupported(
+                        f"ATEM bridge does not support mic mute (HTTP {response.status_code} "
+                        f"from /audio/{mic_id}/mute)"
+                    )
+                result = self._json(response)
+                if result.get("ok", False):
+                    self._mic_mute_supported = True
 
             if not result.get("ok", False):
                 raise ValueError(result.get("error", "Failed to set mic mute"))
@@ -481,7 +639,7 @@ class AtemService:
                 result = await self._mock_client.start_stream()
             else:
                 response = await self._client.post(f"{self.bridge_url}/stream/start")
-                result = response.json()
+                result = self._json(response)
             
             success = result.get("ok", False)
             if success:
@@ -511,7 +669,7 @@ class AtemService:
                 result = await self._mock_client.stop_stream()
             else:
                 response = await self._client.post(f"{self.bridge_url}/stream/stop")
-                result = response.json()
+                result = self._json(response)
             
             success = result.get("ok", False)
             if success:
@@ -541,7 +699,7 @@ class AtemService:
                 result = await self._mock_client.start_recording()
             else:
                 response = await self._client.post(f"{self.bridge_url}/record/start")
-                result = response.json()
+                result = self._json(response)
             
             success = result.get("ok", False)
             if success:
@@ -571,7 +729,7 @@ class AtemService:
                 result = await self._mock_client.stop_recording()
             else:
                 response = await self._client.post(f"{self.bridge_url}/record/stop")
-                result = response.json()
+                result = self._json(response)
             
             success = result.get("ok", False)
             if success:

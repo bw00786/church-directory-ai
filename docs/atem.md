@@ -147,6 +147,27 @@ class AtemService:
         """Stop recording"""
 ```
 
+### Polling and events
+
+The service polls the bridge every `ATEM_POLL_SECONDS` (default 1 s) and
+publishes `PROGRAM_CHANGED` / `PREVIEW_CHANGED` on the event bus whenever a poll
+differs from the last one, with `previous_input`, `source: "poll"` and
+`commanded` (true when this backend issued the matching command within 5 s,
+false for a panel press). `ATEM_CONNECTION_CHANGED` fires on every
+connect/disconnect transition. These are the inputs for the AI director's
+context sync and the operator shot recorder.
+
+**AUTO transitions.** `auto()` polls `transition_in_progress` (every 0.1 s,
+capped at 3 s) and returns as soon as the switcher reports the transition
+finished, so slow and fast transition rates both verify correctly.
+
+**Mic mute.** The C++ bridge has no `/audio/*` endpoints yet. The service checks
+`/status.capabilities.audio_mute` (or remembers a 404) and raises
+`AtemFeatureUnsupported`, which the API maps to HTTP 501 with a clear message.
+The mock ATEM supports it. `/status` also carries per-input `program_tally` /
+`preview_tally`, `last_change` (Unix time of the last SDK callback) and
+`capabilities`.
+
 ### State Verification
 
 After every command, the service:
@@ -314,12 +335,17 @@ from app.atem.mock import MockAtemClient
 
 mock = MockAtemClient()
 state = await mock.get_state()
-assert state.program_input == 0
+assert state.program_input == 1   # real ATEM Mini ids: HDMI 1-4 -> 1-4, 0 is Black
 
 await mock.set_program(2)
 state = await mock.get_state()
 assert state.program_input == 2
 ```
+
+The mock uses the real ATEM Mini SDK input ids, matching `ATEM_CAMERA1_INPUT=1`
+/ `ATEM_CAMERA2_INPUT=2`; CUT/AUTO swap program and preview like the switcher,
+and `auto_transition_polls` keeps `transition_in_progress` set for N polls so
+transition handling can be tested.
 
 ### Hardware Tests
 

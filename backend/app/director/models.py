@@ -1,9 +1,13 @@
 """Data models for the scripted Sunday service."""
 
 from enum import Enum
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel
+
+# How an ATEM program change reaches air: a hard cut or the ATEM's AUTO
+# (timed) transition. Defaulted per cue, overridable per ATEM action.
+Transition = Literal["cut", "auto"]
 
 
 class ActionType(str, Enum):
@@ -38,6 +42,8 @@ class CueAction(BaseModel):
     role: Optional[str] = None
     slide_op: Optional[str] = None  # EasyWorship action name (e.g. "next_item")
     note: Optional[str] = None
+    # Per-action override of the cue's ``transition`` (ATEM_PROGRAM only).
+    transition: Optional[Transition] = None
     description: str = ""
 
 
@@ -53,6 +59,11 @@ class Cue(BaseModel):
     channels: List[int] = []  # mixer channels watched for SONG_END
     ai_enabled: bool = False  # LLM/vision layer may auto-advance this cue
     exit_hint: Optional[str] = None  # natural-language advance condition for the AI
+    # How this cue's ATEM program changes are taken (see engine.plan_cue).
+    transition: Transition = "cut"
+    # ATEM input used to hide a PTZ move when the PTZ camera is already on
+    # program when the cue starts (e.g. the slides input). None = just move.
+    cover_with: Optional[int] = None
 
 
 class ServiceScript(BaseModel):

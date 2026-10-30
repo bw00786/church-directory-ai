@@ -82,7 +82,8 @@ AtemController::AtemController()
       m_preview_input(1),
       m_streaming(false),
       m_recording(false),
-      m_transition_in_progress(false)
+      m_transition_in_progress(false),
+      m_last_change(0)
 #ifdef _WIN32
       ,
       m_com_initialized(false),
@@ -144,6 +145,11 @@ bool AtemController::GetTransitionInProgress() const {
     return m_transition_in_progress;
 }
 
+time_t AtemController::GetLastChange() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    return m_last_change;
+}
+
 bool AtemController::GetStreamingState() const {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     return m_streaming;
@@ -173,6 +179,7 @@ void AtemController::NotifyStateChanged() {
     StateChangeCallback cb;
     {
         std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        m_last_change = std::time(nullptr);
         cb = m_state_cb;
     }
     if (cb) {
@@ -191,6 +198,7 @@ AtemState AtemController::GetState() const {
     state.recording = m_recording;
     state.transition_in_progress = m_transition_in_progress;
     state.timestamp = std::time(nullptr);
+    state.last_change = m_last_change;
 
     for (const auto& entry : m_inputs) {
         AtemInputState input;
@@ -199,6 +207,8 @@ AtemState AtemController::GetState() const {
         input.short_name = entry.second.short_name;
         input.type = entry.second.type;
         input.connected = entry.second.connected;
+        input.program_tally = entry.second.program_tally;
+        input.preview_tally = entry.second.preview_tally;
         state.inputs.push_back(input);
     }
     return state;
@@ -375,6 +385,48 @@ void AtemController::RegisterCallbacks() {
         m_record_callback = new RecordCallback(this);
         m_record->AddCallback(m_record_callback);
     }
+    RegisterInputCallbacks();
+}
+
+// Subscribe to per-input notifications (names, tally) so cached input state
+// tracks the switcher instead of the snapshot taken at connect time. Each
+// kept IBMDSwitcherInput* holds its iterator reference until
+// UnregisterCallbacks() releases it.
+void AtemController::RegisterInputCallbacks() {
+    if (m_switcher == nullptr || !m_input_callbacks.empty()) {
+        return;
+    }
+
+    IBMDSwitcherInputIterator* iterator = nullptr;
+    HRESULT hr = m_switcher->CreateIterator(__uuidof(IBMDSwitcherInputIterator),
+                                            reinterpret_cast<void**>(&iterator));
+    if (FAILED(hr) || iterator == nullptr) {
+        LOG_WARN("Could not iterate ATEM inputs for callback registration");
+        return;
+    }
+
+    IBMDSwitcherInput* input = nullptr;
+    while (iterator->Next(&input) == S_OK && input != nullptr) {
+        BMDSwitcherPortType port_type = bmdSwitcherPortTypeExternal;
+        input->GetPortType(&port_type);
+
+        bool kept = false;
+        if (port_type == bmdSwitcherPortTypeExternal) {
+            InputCallback* callback = new InputCallback(this);
+            if (SUCCEEDED(input->AddCallback(callback))) {
+                m_input_callbacks.push_back(std::make_pair(input, callback));
+                kept = true;
+            } else {
+                callback->Release();
+            }
+        }
+        if (!kept) {
+            input->Release();
+        }
+        input = nullptr;
+    }
+    iterator->Release();
+    LOG_INFO("Registered callbacks on " + std::to_string(m_input_callbacks.size()) + " ATEM inputs");
 }
 
 void AtemController::UnregisterCallbacks() {
@@ -509,7 +561,24 @@ void AtemController::RefreshInputsInternal() {
             BMDSwitcherExternalPortType external_type = bmdSwitcherExternalPortTypeHDMI;
             input->GetCurrentExternalPortType(&external_type);
             entry.type = ExternalPortTypeName(external_type);
+
+            // The Switchers SDK exposes no "signal present" query for an input,
+            // so `connected` means "the switcher reports this port exists".
+            // Tally is real: it changes with program/preview and is refreshed
+            // by the per-input callbacks (see RegisterInputCallbacks).
             entry.connected = true;
+            BOOL program_tally = FALSE;
+            BOOL preview_tally = FALSE;
+            if (SUCCEEDED(input->IsProgramTallied(&program_tally))) {
+                entry.program_tally = (program_tally == TRUE);
+            } else {
+                entry.program_tally = false;
+            }
+            if (SUCCEEDED(input->IsPreviewTallied(&preview_tally))) {
+                entry.preview_tally = (preview_tally == TRUE);
+            } else {
+                entry.preview_tally = false;
+            }
 
             inputs[entry.id] = entry;
         }

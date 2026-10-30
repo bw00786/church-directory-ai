@@ -77,7 +77,11 @@ class VisionManager:
         if self.settings.camera_4_rtsp_url:
             sources.append(RTSPSource(4, self.settings.camera_4_rtsp_url))
 
-        if not sources:
+        # Synthetic test patterns only on explicit opt-in (VISION_TEST_PATTERN=true,
+        # dev/tests). Without a real camera the manager has nothing to look at
+        # and must not publish VISION_RECOMMENDATION / VISION_POLICY_DECISION
+        # derived from painted frames.
+        if not sources and self.settings.vision_test_pattern:
             for camera_id in range(1, 4):
                 sources.append(TestPatternSource(camera_id))
 
@@ -94,10 +98,28 @@ class VisionManager:
             ]
         )
 
+    def uses_test_pattern(self) -> bool:
+        return any(isinstance(source, TestPatternSource) for source in self.sources)
+
+    def can_start(self) -> bool:
+        """A real camera source is the only thing that lets the manager run;
+        the explicit VISION_TEST_PATTERN opt-in is the dev-only exception."""
+        if self.has_real_camera_source():
+            return True
+        return bool(self.settings.vision_test_pattern and self.uses_test_pattern())
+
     async def start(self) -> None:
-        # Auto-detect: start automatically once a real camera is configured,
-        # even if vision_enabled wasn't explicitly turned on.
-        if not (self.settings.vision_enabled or self.has_real_camera_source()):
+        # Auto-detect: start once a real camera is configured regardless of
+        # vision_enabled; refuse otherwise (never run on synthetic frames).
+        if self.running:
+            return
+        if not self.can_start():
+            event_bus.publish(
+                {
+                    "event": "VISION_NOT_STARTED",
+                    "payload": {"reason": "no real camera source configured (CAMERA_<n>_RTSP_URL)"},
+                }
+            )
             return
         self.running = True
         await self.detector_registry.initialize()
@@ -295,6 +317,8 @@ class VisionManager:
         return {
             "enabled": self.settings.vision_enabled,
             "active": self.running,
+            "real_camera_source": self.has_real_camera_source(),
+            "test_pattern": self.uses_test_pattern(),
             "cameras": len(self.sources),
             "vision_fps": self.settings.vision_fps,
             "event_threshold": self.settings.vision_event_threshold,

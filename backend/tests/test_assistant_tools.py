@@ -225,9 +225,9 @@ def test_request_camera_save_preset_is_confirmation_gated(monkeypatch):
         return True
 
     monkeypatch.setattr(assistant_tools.camera_service, "save_preset", fake_save)
-    result = _parse(assistant_tools.request_camera_save_preset.invoke({"camera_id": 1, "preset_id": 1}))
+    result = _parse(assistant_tools.request_camera_save_preset.invoke({"camera_id": 1, "preset_id": 3}))
     assert "pending_confirmation" in result
-    assert "pastor" in result["description"]  # preset 1 is the pastor role by default
+    assert "pastor" in result["description"]  # preset 3 is the pastor role by default
     assert called == []
 
 

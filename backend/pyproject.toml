@@ -62,6 +62,8 @@ dependencies = [
 
 [project.optional-dependencies]
 voice = ["sounddevice>=0.5,<0.6", "piper-tts==1.8.0", "truststore>=0.10,<1"]
+# MGX16 USB MAIN per-channel perception: Silero VAD (bundled weights) + Whisper.
+audio = ["sounddevice>=0.5,<0.6", "faster-whisper>=1.2,<2", "silero-vad>=6.2,<7"]
 dev = [
     "black>=23.0.0",
     "pylint>=2.17.0",

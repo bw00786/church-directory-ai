@@ -19,8 +19,9 @@ class Settings(BaseSettings):
                     if not key.lower().startswith(("voice_", "tts_", "anthropic_"))}
         return init_settings, env_settings, production_dotenv, file_secret_settings
     
-    # API
-    api_host: str = "0.0.0.0"
+    # API. Loopback by default: the operator UI normally runs on the same PC.
+    # Set API_HOST=0.0.0.0 to serve the LAN -- the auth gate then requires API keys.
+    api_host: str = "127.0.0.1"
     api_port: int = 8000
     api_workers: int = 1
     
@@ -99,6 +100,20 @@ class Settings(BaseSettings):
     secret_key: str = "your-secret-key-here-change-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expiration_hours: int = 24
+
+    # --- Control-plane authentication (app.security.auth) ---
+    # Enforce API keys on every non-public HTTP route and WebSocket.
+    api_auth_enabled: bool = True
+    # Operator key: X-API-Key / Authorization: Bearer / WebSocket ?token=. Role "operator".
+    api_key: str = ""
+    # Admin key: role "admin"; required for mutating calls under ADMIN_ONLY_PREFIXES
+    # (POST /director/ai/mode, /api/settings).
+    api_admin_key: str = ""
+    # Let GET/HEAD and read-only WebSockets (/ws/director, /ws/vision, /ws/voice) through without a key.
+    api_allow_unauthenticated_reads: bool = False
+    # Refuse to start with placeholder secrets / missing keys unless every hardware
+    # integration is mocked (dev). Set false only for throwaway test rigs.
+    security_strict_startup: bool = True
     
     # Features
     enable_mock_atem: bool = True
@@ -106,6 +121,8 @@ class Settings(BaseSettings):
     # falling back to the mock client automatically otherwise (overrides enable_mock_atem).
     atem_auto_detect: bool = True
     atem_probe_timeout_seconds: float = 1.5
+    # Bridge /status poll interval; drives PROGRAM_CHANGED / PREVIEW_CHANGED latency.
+    atem_poll_seconds: float = 1.0
     # ATEM IP resolver: the switcher takes a new DHCP address when power-cycled,
     # so discover it by MAC on the configured subnets instead of pinning ATEM_IP.
     atem_resolve_enabled: bool = True
@@ -125,6 +142,13 @@ class Settings(BaseSettings):
     camera_1_password: str | None = None
     camera_1_visca_port: int = 1240  # VISCA-over-IP TCP port
     camera_1_visca_udp: bool = False  # use UDP (Sony header) instead of TCP
+    # VISCA-over-IP transport (app.cameras.visca). Two ACK timeouts in a row mark
+    # the link dead: commands fall back to HTTP-CGI and a backoff reconnect runs.
+    visca_ack_timeout_seconds: float = 0.5
+    # PTZOptics sends the completion for preset/absolute moves at end of motion.
+    visca_completion_timeout_seconds: float = 8.0
+    # 0 = leave the camera's own setting; 1..24 sends the recall-speed command once.
+    visca_preset_recall_speed: int = 0
 
     # Continuous joystick control: auto-stop if no command arrives within this window
     camera_joystick_hold_timeout: float = 1.0
@@ -154,6 +178,10 @@ class Settings(BaseSettings):
     song_end_hold_seconds: float = 3.0   # sustained silence that ends a song
     song_max_wait_seconds: float = 900.0  # give up auto-advance after this
     mock_song_seconds: float = 8.0       # simulated song length in mock mode
+    # Meter sample older than this (seconds) -- or any sample while the
+    # mgx-ai-mixer WebSocket is down -- reads as silence (-90 dBFS) instead of
+    # freezing at its last value. One PERCEPTION_DEGRADED per outage.
+    mixer_meter_stale_seconds: float = 1.0
 
     # MGX16 channel -> role mapping (configuration, not hard-coded). These are
     # 1-based channel indices. They serve two consumers: the meter feed
@@ -193,6 +221,31 @@ class Settings(BaseSettings):
     # active and the energy detector otherwise; "silero"/"energy" force one.
     vad_provider: str = "auto"             # auto | silero | energy
     vad_silero_threshold: float = 0.5
+    # Silero VAD is stateful; clear its LSTM/context state after a channel has
+    # been silent this long so the previous utterance doesn't bias the next one.
+    vad_silero_reset_silence_seconds: float = 3.0
+
+    # Whisper decode: greedy (beam 1) is fastest on CPU; 3-5 trades latency for accuracy.
+    whisper_beam_size: int = 1
+    # Utterances are flushed to Whisper on a VAD pause (SPEECH_SILENCE_HOLD_SECONDS)
+    # or once they reach this length, carrying the last overlap seconds forward.
+    whisper_max_utterance_seconds: float = 6.0
+    whisper_utterance_overlap_seconds: float = 0.5
+    # Max simultaneous Whisper decodes (worker threads) across all roles.
+    whisper_max_concurrency: int = 2
+    # Drop transcript lines whose confidence (exp(avg_logprob) * (1 - no_speech_prob),
+    # duration-weighted over segments) is below this.
+    whisper_min_confidence: float = 0.25
+    # Roles (comma-separated) whose utterances skip Whisper when classified as
+    # singing. Empty = off so the song follower still gets lyrics; TRANSCRIPT
+    # payloads always carry is_singing.
+    whisper_skip_singing_roles: str = ""
+
+    # Cross-channel bleed suppression: a USB channel more than this many dB below
+    # the loudest other active channel in the same ~200 ms window is treated as
+    # silence for VAD/ASR (the congregation mic hearing the pastor through the PA).
+    audio_bleed_suppress_enabled: bool = True
+    audio_bleed_suppress_db: float = 12.0
 
     # Which role channels get per-channel Whisper ASR (comma-separated). The
     # song follower's roles (incl. congregation) are added while it is enabled.
@@ -231,6 +284,9 @@ class Settings(BaseSettings):
     # When set, control EasyWorship via a remote agent on the EW machine
     # instead of local keystroke injection (e.g. "http://192.168.30.40:8091").
     easyworship_agent_url: str | None = None
+    # Shared secret for the EasyWorship keystroke agent (EW_AGENT_TOKEN on the EW PC);
+    # sent as X-Agent-Token by HttpAgentDriver.
+    easyworship_agent_token: str = ""
     # Key specs per action, matching EasyWorship 7.3+ default hotkeys
     # (Hotkeys2.ini). Comma-separated specs are sent in sequence -- selecting a
     # schedule item (arrow) does not go live by itself, so chain Page Down.
@@ -245,7 +301,7 @@ class Settings(BaseSettings):
 
     # PTZ camera roles (config, not hard-coded): role -> camera id + preset id.
     camera_role_pastor_camera: int = 1
-    camera_role_pastor_preset: int = 1
+    camera_role_pastor_preset: int = 3  # pastor at the altar rails (the cue sheet uses the same table)
     camera_role_liturgist_camera: int = 1
     camera_role_liturgist_preset: int = 4
     camera_role_vocalist_camera: int = 1
@@ -395,6 +451,9 @@ class Settings(BaseSettings):
     slide_verify_device: str = ""          # cv2 device index/name for the slides feed
     slide_verify_poll_ms: int = 400        # stabilization poll interval
     slide_verify_timeout_seconds: float = 4.0  # give up -> alert + halt automation
+    # Run easyocr on the GPU (CUDA) instead of CPU. Off by default: the
+    # EasyWorship tap machine is usually a laptop without CUDA.
+    slide_ocr_gpu: bool = False
     # Lyric-aware semantic verification (WO-EWVERIFY-3). Independent toggle on
     # top of SLIDE_VERIFY_ENABLED; enabling it without change-detection is a
     # startup error. Compares stable post-action OCR text to the expected

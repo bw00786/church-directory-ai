@@ -13,6 +13,7 @@ except ImportError:  # pragma: no cover
     cv2 = None  # type: ignore
     np = None  # type: ignore
 
+from .executors import run_in
 from .models import DetectorObject, DetectorResult
 
 
@@ -48,9 +49,12 @@ class PersonDetector(Detector):
             self.model_loaded = True
 
     async def process(self, frame: Any, timestamp: float, camera_id: int) -> DetectorResult:
+        """Run detection on the ``detector`` thread pool; never blocks the loop."""
         if cv2 is None:
             raise RuntimeError("opencv-python is required for person detection")
+        return await run_in("detector", self._process_sync, frame, timestamp, camera_id)
 
+    def _process_sync(self, frame: Any, timestamp: float, camera_id: int) -> DetectorResult:
         results: list[DetectorObject] = []
         height, width = frame.shape[:2]
 

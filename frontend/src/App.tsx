@@ -20,6 +20,7 @@ import { DetectionOverlay } from './components/DetectionOverlay'
 import { EventTimeline } from './components/EventTimeline'
 import { RosterPanel } from './components/RosterPanel'
 import { SlidesPanel } from './components/SlidesPanel'
+import { ApiKeyGate } from './components/ApiKeyGate'
 import { SystemStatus } from './components/SystemStatus'
 import { VisionPanel } from './components/VisionPanel'
 import { VoiceAttentionPanel } from './components/VoiceAttentionPanel'
@@ -27,6 +28,7 @@ import { VoiceAttentionPanel } from './components/VoiceAttentionPanel'
 export function App() {
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
+      <ApiKeyGate />
       <AppBar position="static" color="transparent" elevation={0} sx={{ borderBottom: 1, borderColor: 'divider' }}>
         <Toolbar sx={{ py: 1.5, gap: 2 }}>
           <ChurchIcon color="primary" fontSize="large" />

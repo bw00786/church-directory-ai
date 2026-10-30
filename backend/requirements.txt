@@ -32,6 +32,8 @@ numpy==2.2.0
 # Audio (local mic/line-in capture for real-PCM voice diarization)
 sounddevice==0.5.6
 faster-whisper==1.2.1
+# Per-channel Silero VAD with bundled (offline) weights; torch.hub is the fallback.
+silero-vad==6.2.3
 piper-tts==1.8.0
 truststore>=0.10,<1
 

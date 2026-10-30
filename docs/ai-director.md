@@ -80,6 +80,37 @@ publishes role-attributed `AudioObservation`s into the shared
 meter feed (energy [`ChannelVAD`](../backend/app/audio/vad.py), no ASR) and emits
 `PERCEPTION_DEGRADED`; on recovery it emits `PERCEPTION_RESTORED`.
 
+**Signal conditioning.** Each role channel is decimated 48 k→16 k by a stateful
+polyphase FIR (anti-aliased, continuous across capture blocks, pure numpy) and
+stamped with the PortAudio ADC time mapped into the monotonic clock, so
+`t_start`/`t_end` on `TRANSCRIPT` events line up with mixer and vision
+timestamps. Dropped capture blocks are counted in
+`usb_capture.status()["dropped_blocks"]`.
+
+**Per-channel Silero.** Silero VAD is stateful, so every channel owns its own
+model instance (weights from the pip `silero-vad` package, so it works offline;
+`torch.hub` only as a fallback) and resets its state after
+`VAD_SILERO_RESET_SILENCE_SECONDS` of silence. If Silero cannot load, the energy
+VAD takes over with one `PERCEPTION_DEGRADED`.
+
+**Whisper.** Utterances flush on a VAD pause (`SPEECH_SILENCE_HOLD_SECONDS`) or
+every `WHISPER_MAX_UTTERANCE_SECONDS` (default 6) with
+`WHISPER_UTTERANCE_OVERLAP_SECONDS` carried over, so transcript-driven cues lag
+seconds, not 15–20 s. Decoding uses `vad_filter`, `WHISPER_BEAM_SIZE` (1 =
+fastest) and no cross-utterance conditioning; concurrency is capped by
+`WHISPER_MAX_CONCURRENCY`. Confidence = `exp(avg_logprob) × (1 − no_speech_prob)`
+(duration-weighted over segments); lines under `WHISPER_MIN_CONFIDENCE` are
+dropped and `is_singing` is published on every line.
+`WHISPER_SKIP_SINGING_ROLES` (default empty, so the song follower still gets
+lyrics) skips Whisper for sung utterances on the listed roles.
+
+**Bleed suppression.** The congregation mic hears the pastor through the PA. A
+channel whose RMS is more than `AUDIO_BLEED_SUPPRESS_DB` (12) below the loudest
+co-active channel in the same ~200 ms window is treated as silence for VAD/ASR
+(`AUDIO_BLEED_SUPPRESS_ENABLED`). `perception_status()` reports per-role
+`rms_db`, `bleed_suppressed` and a `speaking_roles` map (`speaking`, `since`,
+`last_spoke_at`) that the AI director's context mirrors.
+
 **Transcription (corrected):** the MGX16 USB MAIN interface *does* deliver raw
 per-channel PCM, so Whisper transcribes the role channels directly
 ([`WHISPER_ROLES`](../backend/app/audio/whisper_service.py), default

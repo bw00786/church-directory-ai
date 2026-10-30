@@ -34,10 +34,26 @@ Write-Host "Found: $nodeVersion" -ForegroundColor Green
 
 # Create .env if it doesn't exist
 Write-Host "`nSetting up environment..." -ForegroundColor Cyan
+function New-Secret([int]$Bytes = 32) {
+    $buf = New-Object byte[] $Bytes
+    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($buf)
+    return ([Convert]::ToBase64String($buf)).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+}
+
 if (-not (Test-Path ".env")) {
     Copy-Item ".env.example" ".env"
-    Write-Host "Created .env from .env.example" -ForegroundColor Green
-    Write-Host "  Edit .env with your configuration!" -ForegroundColor Yellow
+    # Never ship placeholder secrets: generate per-install values now. The backend
+    # refuses non-mock startup while any of these are empty or a known default.
+    $env_text = Get-Content ".env" -Raw
+    $env_text = $env_text -replace '(?m)^API_KEY=.*$',           ("API_KEY=" + (New-Secret))
+    $env_text = $env_text -replace '(?m)^API_ADMIN_KEY=.*$',     ("API_ADMIN_KEY=" + (New-Secret))
+    $env_text = $env_text -replace '(?m)^SECRET_KEY=.*$',        ("SECRET_KEY=" + (New-Secret 48))
+    $env_text = $env_text -replace '(?m)^POSTGRES_PASSWORD=.*$', ("POSTGRES_PASSWORD=" + (New-Secret 18))
+    $env_text = $env_text -replace '(?m)^EASYWORSHIP_AGENT_TOKEN=.*$', ("EASYWORSHIP_AGENT_TOKEN=" + (New-Secret))
+    Set-Content ".env" $env_text -NoNewline
+    Write-Host "Created .env from .env.example with generated API keys, SECRET_KEY, POSTGRES_PASSWORD and agent token" -ForegroundColor Green
+    Write-Host "  Edit .env with your hardware configuration (ATEM, cameras, EasyWorship PC, mixer)." -ForegroundColor Yellow
+    Write-Host "  Copy EASYWORSHIP_AGENT_TOKEN to the EasyWorship PC as EW_AGENT_TOKEN if you use the keystroke agent." -ForegroundColor Yellow
 } else {
     Write-Host ".env already exists" -ForegroundColor Green
 }

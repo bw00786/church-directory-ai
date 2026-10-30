@@ -437,10 +437,35 @@ The AI Service Director mode is set via `AI_DIRECTOR_MODE` or `POST /director/ai
 ✅ All AI actions validated by policy engine
 ✅ Complete audit trail of every production action
 ✅ Manual control works without AI services
-✅ No secrets in source code
+✅ No secrets in source code; per-install secrets generated at setup
 ✅ Rate limiting and action cooldowns on AI
 ✅ Input validation on all endpoints
 ✅ Localhost-only ATEM bridge (no Internet exposure)
+✅ API-key authentication on every control route and WebSocket
+
+### Authentication
+
+Every control-plane route and WebSocket requires an API key
+([backend/app/security/auth.py](backend/app/security/auth.py)); only `/`,
+`/health*`, `/docs`, `/redoc`, `/openapi.json` and the SPA assets are public.
+Set `API_KEY` (operator) and `API_ADMIN_KEY` (admin) in `.env` —
+`scripts/setup-windows.ps1` generates them on a fresh install, or run
+`python -c "import secrets; print(secrets.token_urlsafe(32))"`. Send the key as
+`X-API-Key: <key>` or `Authorization: Bearer <key>`; WebSockets pass it as
+`?token=<key>`. The operator key runs the service (cues, cameras, slides,
+approving AI suggestions); only the admin key may change the AI Director mode.
+The backend binds to `127.0.0.1` by default; set `API_HOST=0.0.0.0` to serve the
+LAN, and it then refuses to serve (503) until keys exist. With no keys on
+loopback it runs in dev mode and logs a warning once.
+`API_ALLOW_UNAUTHENTICATED_READS=true` lets wall displays read status without a
+key. The web UI stores the key in the browser and prompts for it on the first 401.
+
+The backend also refuses non-mock startup while any secret is a placeholder
+(`POSTGRES_PASSWORD`, `SECRET_KEY`, a PTZOptics factory camera password, missing
+API keys off loopback) — see `SECURITY_STRICT_STARTUP`. The EasyWorship
+keystroke agent is guarded by its own shared secret: set `EW_AGENT_TOKEN` on the
+EasyWorship PC and the same value as `EASYWORSHIP_AGENT_TOKEN` here; without a
+token the agent only accepts loopback or `EW_AGENT_ALLOWED_IPS` clients.
 
 
 
@@ -450,5 +475,5 @@ For issues, questions, or contributions, please open a GitHub issue or discussio
 
 ---
 
-**Version 1.0** — Production-ready church worship automation system
+**Version 1.1** — Production-ready church worship automation system
 ** Copyright 2026 - Bruce Wilkins AI Systems

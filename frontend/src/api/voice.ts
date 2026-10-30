@@ -1,4 +1,4 @@
-const API_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
+import { apiFetch, wsUrl } from './client'
 
 export type VoiceMode = 'off' | 'attention_only' | 'testing' | 'emergency'
 export type VoiceFeedback = 'useful' | 'not_useful' | 'too_sensitive' | 'too_late' | 'correct' | 'incorrect'
@@ -84,7 +84,7 @@ export interface VoiceSocketMessage {
 }
 
 async function request<T>(path: string, signal?: AbortSignal, body?: unknown, post = false): Promise<T> {
-  const response = await fetch(`${API_BASE}/api/voice${path}`, {
+  const response = await apiFetch(`/api/voice${path}`, {
     method: post ? 'POST' : 'GET',
     signal,
     ...(body === undefined ? {} : {
@@ -97,9 +97,7 @@ async function request<T>(path: string, signal?: AbortSignal, body?: unknown, po
 }
 
 export function voiceSocketURL(): string {
-  const url = new URL(`${API_BASE}/ws/voice`, window.location.href)
-  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-  return url.toString()
+  return wsUrl('/ws/voice')
 }
 
 export const voiceAPI = {

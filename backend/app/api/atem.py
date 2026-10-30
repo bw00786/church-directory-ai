@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.atem.models import MicMuteRequestModel, TransitionRequestModel
-from app.atem.service import AtemService
+from app.atem.service import AtemFeatureUnsupported, AtemService
 from app.dependencies import get_atem_service
 from app.logging_config import get_logger
 
@@ -204,6 +204,8 @@ async def set_mic_muted(
             raise HTTPException(status_code=503, detail="ATEM not connected")
         state = await atem.set_mic_muted(mic_id, request.muted)
         return {"ok": True, "state": state}
+    except AtemFeatureUnsupported as e:
+        raise HTTPException(status_code=501, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

@@ -263,6 +263,29 @@ async def test_not_paired_drops_commands_and_never_heartbeats():
         await server.stop()
 
 
+async def test_oversized_status_line_is_read_without_dropping_the_link(ew):
+    """EasyWorship status lines can exceed asyncio's 64 KiB default; the
+    driver must open the socket with ``limit=MAX_LINE_BYTES``."""
+    from app.easyworship.remote_protocol import MAX_LINE_BYTES
+
+    driver = _driver(ew)
+    try:
+        assert await driver.connect() is True
+        assert await driver.wait_for(lambda s: s.pres_no == 1, 1.0)
+        assert driver._reader._limit == MAX_LINE_BYTES
+
+        big = ew._status()
+        big["pres_no"] = 7
+        big["schedule"] = "x" * (200 * 1024)  # > 64 KiB, < MAX_LINE_BYTES
+        for writer in ew._writers:
+            await ew._send(writer, big)
+        assert await driver.wait_for(lambda s: s.pres_no == 7, 2.0)
+        assert await driver.is_connected() is True
+        assert ew.connections == 1, "no reconnect was needed"
+    finally:
+        await driver.disconnect()
+
+
 async def test_reconnects_after_connection_loss(ew):
     driver = _driver(ew)
     try:

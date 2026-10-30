@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+import { apiFetch } from '@/api/client'
 
 export type AiDirectorMode = 'manual' | 'assisted' | 'ai_directed'
 
@@ -64,12 +64,12 @@ export interface AiDirectorStatus {
 }
 
 async function getJSON<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`)
+  const res = await apiFetch(path)
   return res.json()
 }
 
 async function postJSON<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await apiFetch(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,

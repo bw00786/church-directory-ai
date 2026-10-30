@@ -7,7 +7,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class VisionSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="", case_sensitive=False)
 
-    vision_enabled: bool = True
+    # Legacy multi-camera vision manager. Off by default: it only ever starts
+    # when a real camera source (CAMERA_<n>_RTSP_URL) is configured, see
+    # VisionManager.start(). Synthetic test-pattern sources are never built
+    # unless VISION_TEST_PATTERN=true is set explicitly (dev/tests only).
+    vision_enabled: bool = False
+    vision_test_pattern: bool = False
 
     camera_1_rtsp_url: str | None = None
     camera_2_rtsp_url: str | None = None

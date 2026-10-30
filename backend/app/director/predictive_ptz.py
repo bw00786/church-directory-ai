@@ -23,11 +23,16 @@ logger = get_logger(__name__)
 
 
 def _camera_for_role(role: str) -> Optional[int]:
-    return getattr(settings, f"camera_role_{role}_camera", None)
+    # Shared role table (app.cameras.service), same as the cue sheet/engine.
+    from app.cameras.service import configured_role_shot
+
+    return configured_role_shot(role)[0]
 
 
 def _preset_for_role(role: str) -> Optional[int]:
-    return getattr(settings, f"camera_role_{role}_preset", None)
+    from app.cameras.service import configured_role_shot
+
+    return configured_role_shot(role)[1]
 
 
 class PredictivePreview:

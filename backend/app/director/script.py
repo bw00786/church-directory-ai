@@ -5,9 +5,10 @@ camera 2 is the EasyWorship laptop (slides). The configured vocalist and
 congregation channels are used to detect when a song ends.
 """
 
+from app.cameras.service import configured_role_shot
 from app.config import settings
 
-from .models import ActionType, AdvanceTrigger, Cue, CueAction, ServiceScript
+from .models import ActionType, AdvanceTrigger, Cue, CueAction, ServiceScript, Transition
 
 # Mixer channels used for song-end detection. Keep these tied to the Yamaha
 # role mapping so a site change cannot silently make the detector listen to the
@@ -16,17 +17,42 @@ VOCALIST_CHANNEL = settings.mixer_vocalist_channel
 CONGREGATION_CHANNEL = settings.mixer_congregation_channel
 
 
-def _atem(input_id: int, description: str) -> CueAction:
-    return CueAction(type=ActionType.ATEM_PROGRAM, atem_input=input_id, description=description)
+def _atem(input_id: int, description: str, transition: Transition | None = None) -> CueAction:
+    """ATEM program change. ``transition`` overrides the cue's own
+    ``transition`` ("cut" | "auto") for this one action; None inherits it."""
+    return CueAction(
+        type=ActionType.ATEM_PROGRAM, atem_input=input_id, transition=transition, description=description
+    )
 
 
-def _preset(preset_id: int, description: str, role: str | None = None) -> CueAction:
+def _preset(description: str, role: str | None = None, preset_id: int | None = None) -> CueAction:
+    """PTZ preset recall.
+
+    With a ``role`` the camera and preset come from the shared role table
+    (``CAMERA_ROLE_<ROLE>_CAMERA`` / ``_PRESET`` in app.config, the same lookup
+    ``camera_service.move_to_role`` uses), so the AI Director's
+    ``PTZ_SELECT_ROLE pastor`` and the cue sheet's pastor shot are one framing.
+    The engine still prefers the preset identity recognition has learned for
+    the role at run time. An explicit ``preset_id`` is only for shots that are
+    not a role, or a deliberate per-cue override of the role's default (then
+    the number wins and the role is kept for learning/verification).
+    """
+    if role is None and preset_id is None:
+        raise ValueError("_preset needs a role or an explicit preset_id")
+    camera_id = settings.ptz_camera_id
+    if role is not None:
+        role_camera, role_preset = configured_role_shot(role)
+        if role_camera is None or role_preset is None:
+            raise ValueError(f"No camera_role_{role}_* settings for role '{role}'")
+        camera_id = role_camera
+        if preset_id is None:
+            preset_id = role_preset
     return CueAction(
         type=ActionType.PTZ_PRESET,
-        camera_id=settings.ptz_camera_id,
+        camera_id=camera_id,
         preset_id=preset_id,
         role=role,
-        description=description,
+        description=f"Preset {preset_id} — {description}",
     )
 
 
@@ -75,7 +101,7 @@ def build_cue_catalog() -> list[Cue]:
             description="Pastor (between the altar rails) gives announcements.",
             actions=[
                 _atem(cam1, "Switch to PTZOptics camera"),
-                _preset(3, "Preset 3 — pastor at altar rails", role="pastor"),
+                _preset("pastor at altar rails", role="pastor"),
             ],
             advance=AdvanceTrigger.MANUAL,
             ai_enabled=True,
@@ -86,7 +112,7 @@ def build_cue_catalog() -> list[Cue]:
             name="Children's Message",
             description="Wide shot for the children's message.",
             actions=[
-                _preset(6, "Preset 6 — wide angle"),
+                _preset("wide angle", role="wide"),
             ],
             advance=AdvanceTrigger.MANUAL,
             ai_enabled=True,
@@ -97,7 +123,7 @@ def build_cue_catalog() -> list[Cue]:
             name="Call to Worship — Liturgist",
             description="Liturgist at the podium reads the call to worship.",
             actions=[
-                _preset(4, "Preset 4 — liturgist's podium", role="liturgist"),
+                _preset("liturgist's podium", role="liturgist"),
             ],
             advance=AdvanceTrigger.MANUAL,
             ai_enabled=True,
@@ -156,7 +182,7 @@ def build_cue_catalog() -> list[Cue]:
             description="Pastor speaks.",
             actions=[
                 _atem(cam1, "Switch to PTZOptics camera"),
-                _preset(3, "Preset 3 — pastor speaking", role="pastor"),
+                _preset("pastor speaking", role="pastor"),
             ],
             advance=AdvanceTrigger.MANUAL,
         ),
@@ -166,7 +192,9 @@ def build_cue_catalog() -> list[Cue]:
             description="Pastor speaks during the introduction of communion",
             actions=[
                 _atem(cam1, "Switch to PTZOptics camera"),
-                _preset(2, "Preset 2 — pastor speaking", role="pastor"),
+                # Deliberate per-cue override: the communion table framing is not the
+                # pastor role's default preset.
+                _preset("pastor at the communion table", role="pastor", preset_id=2),
             ],
             ai_enabled=True,
             advance=AdvanceTrigger.MANUAL,
@@ -177,7 +205,7 @@ def build_cue_catalog() -> list[Cue]:
             description="Congregation participates in the communion.",
             actions=[
                 _atem(cam1, "Switch to PTZOptics camera"),
-                _preset(6, "Preset 6 — congregation participating", role="congregation"),
+                _preset("congregation participating", role="congregation"),
             ],
             ai_enabled=True,
             advance=AdvanceTrigger.MANUAL,
@@ -200,7 +228,7 @@ def build_cue_catalog() -> list[Cue]:
             description="Pastor speaks.",
             actions=[
                 _atem(cam1, "Switch to PTZOptics camera"),
-                _preset(3, "Preset 3 — pastor speaking", role="pastor"),
+                _preset("pastor speaking", role="pastor"),
             ],
             advance=AdvanceTrigger.MANUAL,
         ),
@@ -210,7 +238,7 @@ def build_cue_catalog() -> list[Cue]:
             description="Liturgist at the podium for the offertory.",
             actions=[
                 _atem(cam1, "Switch to PTZOptics camera"),
-                _preset(4, "Preset 4 — liturgist's podium", role="liturgist"),
+                _preset("liturgist's podium", role="liturgist"),
             ],
             advance=AdvanceTrigger.MANUAL,
             ai_enabled=True,
@@ -244,7 +272,7 @@ def build_cue_catalog() -> list[Cue]:
             description="Pastor gives the benediction.",
             actions=[
                 _atem(cam1, "Switch to PTZOptics camera"),
-                _preset(3, "Preset 3 — pastor speaking", role="pastor"),
+                _preset("pastor speaking", role="pastor"),
             ],
             advance=AdvanceTrigger.MANUAL,
             ai_enabled=True,

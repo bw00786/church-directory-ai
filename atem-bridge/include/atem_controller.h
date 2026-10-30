@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <ctime>
 #include <functional>
 #include <map>
 #include <mutex>
@@ -26,6 +27,8 @@ struct AtemInput {
     std::string short_name;
     std::string type;
     bool connected;
+    bool program_tally;
+    bool preview_tally;
 };
 
 #ifdef _WIN32
@@ -68,6 +71,9 @@ public:
     bool PerformAuto();
     bool GetTransitionInProgress() const;
 
+    // Wall-clock time of the last cached-state change (0 = never).
+    time_t GetLastChange() const;
+
     // Streaming/Recording
     bool GetStreamingState() const;
     bool StartStreaming();
@@ -101,6 +107,7 @@ private:
     bool ConnectInternal(const std::string& ip);
     void ReleaseAll();
     void RegisterCallbacks();
+    void RegisterInputCallbacks();
     void UnregisterCallbacks();
     void RefreshProgramPreview();
     void RefreshTransition();
@@ -119,6 +126,7 @@ private:
     bool m_streaming;
     bool m_recording;
     bool m_transition_in_progress;
+    time_t m_last_change;
     std::map<int, AtemInput> m_inputs;
 
 #ifdef _WIN32

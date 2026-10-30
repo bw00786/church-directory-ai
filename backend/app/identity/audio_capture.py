@@ -27,6 +27,7 @@ from app.events.bus import event_bus
 from app.identity.config import IdentitySettings
 from app.identity.service import identity_service
 from app.logging_config import get_logger
+from app.vision.executors import run_in
 
 logger = get_logger(__name__)
 
@@ -120,19 +121,23 @@ class AudioCaptureService:
                 continue
 
             window, buffer = buffer[:window_samples], buffer[window_samples:]
+            # Diarization (embedding + match) and Whisper each take hundreds of
+            # ms to seconds on CPU; run them on their own pools so neither
+            # blocks the event loop nor starves the other / OCR / detection.
             try:
-                result = identity_service.identify_voice(self.channel_name, window, self.sample_rate)
+                result = await run_in(
+                    "diarization", identity_service.identify_voice, self.channel_name, window, self.sample_rate
+                )
             except Exception:
                 logger.exception("Voice identification failed on captured audio")
                 continue
 
             transcript = ""
             if app_settings.enable_whisper:
-                from app.audio.whisper_service import get_whisper_service
-
-                transcribed = get_whisper_service().transcribe(window, self.sample_rate)
-                if transcribed is not None:
-                    transcript = transcribed.text
+                try:
+                    transcript = await run_in("whisper", self._transcribe, window)
+                except Exception:
+                    logger.exception("Whisper transcription failed on captured audio")
 
             result["timestamp"] = time.time()
             result["transcript"] = transcript
@@ -151,6 +156,13 @@ class AudioCaptureService:
                     duration_ms=int(self.window_seconds * 1000),
                 )
             )
+
+    def _transcribe(self, window: np.ndarray) -> str:
+        """Blocking Whisper call; runs on the ``whisper`` pool."""
+        from app.audio.whisper_service import get_whisper_service
+
+        transcribed = get_whisper_service().transcribe(window, self.sample_rate)
+        return transcribed.text if transcribed is not None else ""
 
     def get_recent(self, limit: int = 50) -> list[dict[str, Any]]:
         return self.recent[-limit:]

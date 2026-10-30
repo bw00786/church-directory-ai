@@ -176,8 +176,9 @@ def test_snapshot_reflects_flags_and_last_text(monkeypatch):
 
     snapshot = verifier.snapshot()
 
-    assert snapshot == {
-        "enabled": True,
-        "semantic_enabled": False,
-        "last_ocr_text": "some text",
-    }
+    assert snapshot["enabled"] is True
+    assert snapshot["semantic_enabled"] is False
+    assert snapshot["last_ocr_text"] == "some text"
+    assert snapshot["consecutive_unknown"] == 0
+    assert snapshot["last_unknown_reason"] is None
+    assert "ocr_available" in snapshot

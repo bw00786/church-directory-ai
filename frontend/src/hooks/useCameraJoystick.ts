@@ -6,10 +6,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-const WS_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(
-  'http',
-  'ws',
-)
+import { wsUrl } from '@/api/client'
 
 // Must be shorter than the backend camera_joystick_hold_timeout (default 1.0s).
 const KEEPALIVE_MS = 400
@@ -30,7 +27,7 @@ export function useCameraJoystick(cameraId: number) {
   const keepalive = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
-    const socket = new WebSocket(`${WS_BASE}/ws/cameras/${cameraId}/joystick`)
+    const socket = new WebSocket(wsUrl(`/ws/cameras/${cameraId}/joystick`))
     ws.current = socket
 
     socket.onopen = () => setConnected(true)

@@ -16,7 +16,19 @@ Run on the Windows machine that runs EasyWorship:
 Then point the backend at it:
 
     EASYWORSHIP_AGENT_URL=http://<this-machine-ip>:8091
+    EASYWORSHIP_AGENT_TOKEN=<same value as EW_AGENT_TOKEN below>
     ENABLE_MOCK_EASYWORSHIP=false
+
+Security (this agent injects keystrokes into the EasyWorship desktop):
+    EW_AGENT_TOKEN        shared secret; when set, POST /action/* must carry a
+                          matching X-Agent-Token header (else 401). The backend
+                          sends it from EASYWORSHIP_AGENT_TOKEN. Strongly
+                          recommended whenever EW_AGENT_HOST is not 127.0.0.1.
+    EW_AGENT_ALLOWED_IPS  comma-separated client IPs allowed to connect. Loopback
+                          is always allowed. Without EW_AGENT_TOKEN, requests
+                          from any other address are refused (403).
+    EW_AGENT_HOST         bind address (default 0.0.0.0 so the backend machine
+                          can reach it; set 127.0.0.1 to keep it local-only).
 
 Endpoints:
     GET  /health          -> {"ok": true}
@@ -28,8 +40,10 @@ variables (see DEFAULTS). Comma-separated specs are sent in sequence.
 """
 
 import ctypes
+import ipaddress
 import json
 import os
+import secrets
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -51,6 +65,11 @@ WINDOW_TITLE = os.environ.get("EASYWORSHIP_WINDOW_TITLE", "EasyWorship")
 SEND_MODE = os.environ.get("EASYWORSHIP_SEND_MODE", "foreground")
 HOST = os.environ.get("EW_AGENT_HOST", "0.0.0.0")
 PORT = int(os.environ.get("EW_AGENT_PORT", "8091"))
+TOKEN = os.environ.get("EW_AGENT_TOKEN", "").strip()
+ALLOWED_IPS = frozenset(
+    ip.strip() for ip in os.environ.get("EW_AGENT_ALLOWED_IPS", "").split(",") if ip.strip()
+)
+TOKEN_HEADER = "X-Agent-Token"
 
 VK = {
     "enter": 0x0D, "esc": 0x1B, "space": 0x20,
@@ -64,6 +83,33 @@ for _c in range(ord("a"), ord("z") + 1):
 for _d in range(0, 10):
     VK[str(_d)] = ord(str(_d))
 MODIFIERS = {"ctrl": 0x11, "control": 0x11, "alt": 0x12, "shift": 0x10, "win": 0x5B}
+
+
+def is_loopback(ip: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip.split("%")[0])
+    except ValueError:
+        return ip.lower() == "localhost"
+    mapped = getattr(addr, "ipv4_mapped", None)
+    return addr.is_loopback or (mapped is not None and mapped.is_loopback)
+
+
+def client_allowed(ip: str) -> bool:
+    """Loopback always; otherwise the allowlist if set, else only when a token guards POSTs."""
+    if is_loopback(ip):
+        return True
+    if ALLOWED_IPS:
+        return ip in ALLOWED_IPS
+    return bool(TOKEN)
+
+
+def token_ok(presented) -> bool:
+    """True when no token is configured, or the presented header matches it."""
+    if not TOKEN:
+        return True
+    if not presented:
+        return False
+    return secrets.compare_digest(str(presented).encode("utf-8"), TOKEN.encode("utf-8"))
 
 
 def key_spec_for(action: str) -> str:
@@ -153,13 +199,26 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def _client_ok(self) -> bool:
+        if client_allowed(self.client_address[0]):
+            return True
+        self._send(403, {"ok": False, "error": "client address not allowed"})
+        return False
+
     def do_GET(self):
+        if not self._client_ok():
+            return
         if self.path == "/health":
-            self._send(200, {"ok": True})
+            self._send(200, {"ok": True, "auth": bool(TOKEN)})
         else:
             self._send(404, {"error": "not found"})
 
     def do_POST(self):
+        if not self._client_ok():
+            return
+        if not token_ok(self.headers.get(TOKEN_HEADER)):
+            self._send(401, {"ok": False, "error": f"missing or invalid {TOKEN_HEADER}"})
+            return
         if self.path.startswith("/action/"):
             action = self.path[len("/action/"):]
             if action not in DEFAULTS:
@@ -181,8 +240,17 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     if sys.platform != "win32":
         print("Warning: not on Windows; keystroke injection is a no-op.")
+    if not TOKEN:
+        print("=" * 72)
+        print("WARNING: EW_AGENT_TOKEN is not set. Keystroke injection is UNAUTHENTICATED;")
+        if ALLOWED_IPS:
+            print(f"         only loopback and EW_AGENT_ALLOWED_IPS={','.join(sorted(ALLOWED_IPS))} may connect.")
+        else:
+            print("         only loopback clients may connect (set EW_AGENT_ALLOWED_IPS or,")
+            print("         better, EW_AGENT_TOKEN to let the backend machine in).")
+        print("=" * 72)
     server = ThreadingHTTPServer((HOST, PORT), Handler)
-    print(f"EasyWorship agent listening on http://{HOST}:{PORT} (window: {WINDOW_TITLE!r})")
+    print(f"EasyWorship agent listening on http://{HOST}:{PORT} (window: {WINDOW_TITLE!r}, token: {'set' if TOKEN else 'NONE'})")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

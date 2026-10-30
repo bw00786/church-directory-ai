@@ -139,6 +139,58 @@ PTZ_CAMERA_HOST=192.168.1.200 PTZ_VISCA_PORT=1240 PTZ_TEST_PRESET=1 \
 Environment overrides: `PTZ_CAMERA_HOST`, `PTZ_CAMERA_USER`, `PTZ_CAMERA_PASS`,
 `PTZ_CAMERA_PORT`, `PTZ_VISCA_PORT`, `PTZ_VISCA_UDP`, `PTZ_TEST_PRESET`.
 
+## VISCA link health
+
+**Liveness and CGI fallback.** The VISCA socket is tracked as live or dead: an
+EOF, a socket error or two consecutive ACK timeouts (`VISCA_ACK_TIMEOUT_SECONDS`,
+0.5 s) marks it dead, every joystick and preset command falls back to HTTP-CGI
+immediately, and a background reconnect retries with exponential backoff (1 s
+doubling to 30 s). No restart is needed; `GET /cameras/{id}` shows
+`control_path` (`visca` | `cgi` | `none`) and a `health` block (last error,
+reconnect count, next retry).
+
+**ACK vs completion.** PTZOptics only sends the VISCA completion for preset and
+absolute moves when the motion ends, so the driver waits up to
+`VISCA_COMPLETION_TIMEOUT_SECONDS` (8 s) for it but treats the command as
+successful as soon as the camera ACKs. A long move is no longer reported as a
+failure and no duplicate CGI `poscall` is issued; a late completion is discarded
+when it arrives.
+
+**UDP mode.** With `CAMERA_1_VISCA_UDP=true` replies are matched to the request
+sequence number in the Sony header; stale or foreign datagrams are dropped.
+Headerless (PTZOptics raw-UDP) replies are still accepted.
+
+**Preset recall speed (optional).** `VISCA_PRESET_RECALL_SPEED=1..24` sends
+PTZOptics' recall-speed command once before the first recall. Default 0 leaves
+the camera's own setting untouched; if the firmware rejects it the recall still
+proceeds.
+
+## Perception runs off the event loop
+
+Person detection, OCR, voice diarization and Whisper run on dedicated
+per-subsystem thread pools ([app/vision/executors.py](../backend/app/vision/executors.py))
+so a slow model never stalls ATEM, joystick or EasyWorship handling, and one
+subsystem cannot starve another. Within one perception tick the detector runs
+once per camera input; every role mapped to the same camera shares those
+detections (default config: six roles on camera 1 → two detector runs per tick,
+not seven). Perception status reports `last_tick_detector_calls` and
+`last_tick_seconds`.
+
+## Fresh frames from capture devices
+
+cv2 capture devices (ATEM program, slides HDMI tap) are read by a per-device
+grab thread that continuously drains the driver buffer and decodes only the
+newest frame when a poll asks for it, so a 1 Hz poll sees a frame that is
+milliseconds old rather than seconds. The thread reopens the device after
+repeated failed grabs and stops with the capture service. PTZOptics
+`snapshot.jpg` inputs reuse one persistent HTTP connection.
+
+The legacy multi-camera `VisionManager` only starts when a real
+`CAMERA_<n>_RTSP_URL` is configured; `VISION_ENABLED` alone no longer starts
+it, and synthetic test-pattern cameras exist only with the dev-only
+`VISION_TEST_PATTERN=true`, so no camera recommendation is ever derived from a
+painted frame.
+
 ## Troubleshooting
 
 - **Connects over HTTP-CGI but not VISCA:** check `CAMERA_1_VISCA_PORT` and

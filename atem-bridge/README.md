@@ -78,7 +78,7 @@ By default the bridge starts the HTTP server and waits for the backend to call
 | Method | Path             | Description                          |
 | ------ | ---------------- | ------------------------------------ |
 | GET    | `/health`        | Liveness check                       |
-| GET    | `/status`        | Full ATEM state                      |
+| GET    | `/status`        | Full ATEM state (+ `last_change`, per-input tally, `capabilities`) |
 | GET    | `/inputs`        | Enumerated external inputs           |
 | POST   | `/connect`       | Connect (`{"atem_ip": "..."}`)        |
 | POST   | `/disconnect`    | Disconnect                           |
@@ -94,6 +94,33 @@ By default the bridge starts the HTTP server and waits for the backend to call
 | POST   | `/record/stop`   | Stop recording                       |
 
 See [../docs/atem.md](../docs/atem.md) for full API documentation.
+
+`GET /status` also reports:
+
+- `last_change` — Unix time of the last SDK callback that changed cached
+  state (`0` until the first change). If it stops advancing while the
+  switcher is in use, the SDK callbacks have gone quiet; restart the bridge.
+- `inputs[].program_tally` / `inputs[].preview_tally` — live tally from the
+  SDK (`IsProgramTallied` / `IsPreviewTallied`), refreshed by per-input
+  callbacks.
+- `capabilities` — `{"audio_mute": false, "tally": true, "last_change": true}`.
+  The backend checks these before calling optional endpoints.
+
+## Known gaps
+
+- **No audio control.** There are no `/audio/*` endpoints; Fairlight mute
+  requires `IBMDSwitcherFairlightAudioMixer` / `...Input` / `...Source`
+  (`SetMixOption`/`SetFaderGain`) and is not implemented. The backend reports
+  mic mute as unsupported (`capabilities.audio_mute == false`).
+- **`inputs[].connected` is not signal presence.** The Switchers SDK offers no
+  per-input "signal present" query, so `connected` means the switcher
+  reports the port; use tally for what is actually on air.
+- **No push channel.** State changes are cached and served on poll; the
+  backend polls `/status` every `ATEM_POLL_SECONDS` (default 1 s). A
+  WebSocket/SSE feed would cut cut-detection latency further.
+- **Not compiled in CI.** The bridge builds only on Windows with the
+  Blackmagic SDK runtime present; changes here are reviewed, not
+  machine-verified, until built on the production PC.
 
 ## Architecture
 

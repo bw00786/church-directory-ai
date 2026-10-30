@@ -1,12 +1,53 @@
 """Camera service implementation."""
 
-from typing import Awaitable, List, Optional
+from typing import Awaitable, List, Optional, Tuple
 
 from app.events.bus import event_bus
 from app.logging_config import get_logger
 from app.cameras.ptz import PTZOpticsDriver
 
 logger = get_logger(__name__)
+
+# Service-plan framing roles that have a camera_role_<role>_camera/_preset pair
+# in app.config. Shared by the cue sheet (app.director.script), the cue engine,
+# the AI Director's PTZ_SELECT_ROLE and the operator assistant so there is a
+# single role -> preset table.
+CAMERA_ROLES: Tuple[str, ...] = ("pastor", "liturgist", "vocalist", "congregation", "choir", "wide")
+
+
+def configured_role_shot(role: str) -> Tuple[Optional[int], Optional[int]]:
+    """``(camera_id, preset_id)`` configured for ``role`` (``camera_role_*``
+    settings), or ``(None, None)`` for an unknown role. Configuration only --
+    no learned override (see :func:`resolve_role_shot`)."""
+    from app.config import settings
+
+    role = (role or "").strip().lower()
+    camera_id = getattr(settings, f"camera_role_{role}_camera", None)
+    preset_id = getattr(settings, f"camera_role_{role}_preset", None)
+    if camera_id is None or preset_id is None:
+        return None, None
+    return int(camera_id), int(preset_id)
+
+
+def resolve_role_shot(role: str) -> Tuple[Optional[int], Optional[int], str]:
+    """``(camera_id, preset_id, source)`` for ``role``: the configured shot,
+    replaced by the preset identity recognition has learned for that role on
+    that camera when enough consistent samples exist (same rule the cue engine
+    applies). ``source`` is ``"configured"`` or ``"learned"``; unknown roles
+    give ``(None, None, "unknown")``."""
+    camera_id, preset_id = configured_role_shot(role)
+    if camera_id is None:
+        return None, None, "unknown"
+    try:
+        from app.identity.service import identity_service
+
+        learned = identity_service.best_preset_for_role(role.strip().lower(), camera_id)
+    except Exception:
+        logger.warning("Learned role/preset lookup unavailable", role=role, exc_info=True)
+        learned = None
+    if learned is not None and preset_id is not None and int(learned) != preset_id:
+        return camera_id, int(learned), "learned"
+    return camera_id, preset_id, "configured"
 
 
 class CameraService:
@@ -157,19 +198,20 @@ class CameraService:
         return self._current_preset.get(camera_id)
 
     async def move_to_role(self, role: str) -> bool:
-        """Move to the camera/preset configured for a service-plan role
-        (e.g. "pastor", "liturgist", "vocalist", "congregation", "choir",
-        "wide") — see app.config's camera_role_* settings. Keeps the AI
-        Director hardware-independent (it selects roles, never raw PTZ
+        """Move to the camera/preset for a service-plan role (e.g. "pastor",
+        "liturgist", "vocalist", "congregation", "choir", "wide") -- the
+        app.config camera_role_* settings, or the preset identity recognition
+        has learned for the role (:func:`resolve_role_shot`). This is the same
+        lookup the cue sheet and cue engine use, so the AI Director's
+        PTZ_SELECT_ROLE and a scripted cue frame the role identically. Keeps
+        the AI Director hardware-independent (it selects roles, never raw PTZ
         coordinates or camera ids); see docs/ai-director.md.
         """
-        from app.config import settings
-
-        camera_id = getattr(settings, f"camera_role_{role}_camera", None)
-        preset_id = getattr(settings, f"camera_role_{role}_preset", None)
+        camera_id, preset_id, source = resolve_role_shot(role)
         if camera_id is None or preset_id is None:
             logger.warning("Unknown camera role", role=role)
             return False
+        logger.info("Moving camera to role", role=role, camera_id=camera_id, preset_id=preset_id, source=source)
         return await self.move_to_preset(camera_id, preset_id)
 
     async def save_preset(self, camera_id: int, preset_id: int) -> bool:

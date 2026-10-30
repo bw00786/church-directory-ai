@@ -29,6 +29,7 @@ from app.domain.observations import VisionObservation
 from app.domain.service_context import service_context
 from app.events.bus import event_bus
 from app.logging_config import get_logger
+from app.vision.executors import run_in
 from app.vision.frame_capture import frame_capture
 from app.vision.perception import PersonDetector, analyze, roi_for_role
 
@@ -74,7 +75,13 @@ class PtzVerifier:
             self._detector = PersonDetector()
         return self._detector
 
+    async def _observe_async(self, role: str, camera_id: int, on_program: bool) -> Optional[VisionObservation]:
+        """``_observe`` (frame grab + detector) on the ``detector`` pool so the
+        verify coroutine never blocks the event loop."""
+        return await run_in("detector", self._observe, role, camera_id, on_program)
+
     def _observe(self, role: str, camera_id: int, on_program: bool) -> Optional[VisionObservation]:
+        """Blocking: runs the person detector. Call via :meth:`_observe_async`."""
         tag = f"camera_{camera_id}"
         frame, _ = frame_capture.get_frame(tag)
         if frame is None and on_program:
@@ -97,7 +104,7 @@ class PtzVerifier:
     ) -> VerifyResult:
         await self._sleep(settings.ptz_verify_delay_ms / 1000.0)
 
-        obs = self._observe(role, camera_id, on_program)
+        obs = await self._observe_async(role, camera_id, on_program)
         if obs is None:
             return self._resolve_unverified(role, camera_id)
 
@@ -112,7 +119,7 @@ class PtzVerifier:
             event_bus.publish({"event": "PTZ_VERIFY_PENDING", "payload": {"role": role, "camera": camera_id}})
             await self._sleep(1.0)
             waited += 1.0
-            probe = self._observe(role, camera_id, on_program)
+            probe = await self._observe_async(role, camera_id, on_program)
             if probe is not None:
                 obs = probe
 

@@ -183,13 +183,19 @@ class HttpAgentDriver(EasyWorshipDriver):
         self.agent_url = (agent_url or settings.easyworship_agent_url or "").rstrip("/")
         self._connected = False
 
+    @staticmethod
+    def _headers() -> dict[str, str]:
+        """Shared secret the agent checks on POST (EW_AGENT_TOKEN on the EW PC)."""
+        token = settings.easyworship_agent_token
+        return {"X-Agent-Token": token} if token else {}
+
     async def connect(self) -> bool:
         if not self.agent_url:
             return False
         import httpx
 
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with httpx.AsyncClient(timeout=5.0, headers=self._headers()) as client:
                 resp = await client.get(f"{self.agent_url}/health")
                 self._connected = resp.status_code == 200
         except Exception as e:
@@ -206,9 +212,14 @@ class HttpAgentDriver(EasyWorshipDriver):
         import httpx
 
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with httpx.AsyncClient(timeout=5.0, headers=self._headers()) as client:
                 resp = await client.post(f"{self.agent_url}/action/{action}")
             ok = resp.status_code in (200, 204)
+            if resp.status_code == 401:
+                logger.error(
+                    "EasyWorship agent rejected our token; set EASYWORSHIP_AGENT_TOKEN to the agent's EW_AGENT_TOKEN",
+                    action=action,
+                )
             logger.info("EasyWorship agent action", action=action, ok=ok)
             return ok
         except Exception as e:

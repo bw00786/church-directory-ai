@@ -36,26 +36,52 @@ note) on entry, then advances by its trigger.
 | - | -------------------------- | ------------------------------------------ | --------- |
 | 1 | `service_start`            | ATEM→cam 2 (slides); note: open Mic 1      | Timer (countdown) |
 | 2 | `first_song`              | ATEM→cam 2                                 | Song end (ch 5/8) |
-| 3 | `announcements`           | ATEM→cam 1; **preset 23**                  | Manual / AI |
-| 4 | `childrens_message`       | **preset 6** (wide)                        | Manual / AI |
-| 5 | `call_to_worship_liturgist` | **preset 4** (podium)                    | Manual / AI |
+| 3 | `announcements`           | ATEM→cam 1; **pastor** preset (role table)  | Manual / AI |
+| 4 | `childrens_message`       | **wide** preset (role table)               | Manual / AI |
+| 5 | `call_to_worship_liturgist` | **liturgist** preset (role table)        | Manual / AI |
 | 6 | `call_to_worship_slides`  | ATEM→cam 2                                  | Manual / AI |
 | 7 | `hymn_of_praise`          | ATEM→cam 2                                  | Song end (ch 5/8) |
 | 8 | `scripture_reading`       | ATEM→cam 2                                  | Manual / AI |
 | 9 | `bumper_video`            | ATEM→cam 2                                  | Manual / AI |
-| 10 | `sermon`                 | ATEM→cam 1; **preset 3**                    | Manual    |
-| 11 | `communion_pastor`       | ATEM→cam 1; **preset 2**                    | Manual / AI |
-| 12 | `communion_congregation` | ATEM→cam 1; **preset 6**                    | Manual / AI |
+| 10 | `sermon`                 | ATEM→cam 1; **pastor** preset (role table)                    | Manual    |
+| 11 | `communion_pastor`       | ATEM→cam 1; **preset 2** (explicit communion-table override) | Manual / AI |
+| 12 | `communion_congregation` | ATEM→cam 1; **congregation** preset (role table) | Manual / AI |
 | 13 | `lords_prayer`           | ATEM→cam 2                                  | Manual / AI |
-| 14 | `community_prayers`      | ATEM→cam 1; **preset 3**                    | Manual    |
-| 15 | `offertory_liturgist`    | ATEM→cam 1; **preset 4**                    | Manual / AI |
+| 14 | `community_prayers`      | ATEM→cam 1; **pastor** preset (role table)                    | Manual    |
+| 15 | `offertory_liturgist`    | ATEM→cam 1; **liturgist** preset (role table) | Manual / AI |
 | 16 | `doxology`               | ATEM→cam 2                                  | Song end (ch 5/8) |
 | 17 | `closing_praise`         | ATEM→cam 2                                  | Song end (ch 5/8) |
-| 18 | `benediction`            | ATEM→cam 1; **preset 3**                    | Manual / AI |
+| 18 | `benediction`            | ATEM→cam 1; **pastor** preset (role table)                    | Manual / AI |
 | 19 | `service_end`            | ATEM→cam 2; clear slides                    | Manual    |
 
 Presets and the ATEM input mapping come from config, so no numbers are
-hard-coded to specific hardware.
+hard-coded to specific hardware. Role shots (`pastor`, `liturgist`,
+`congregation`, `wide`, ...) resolve through **one role→preset table**
+(`CAMERA_ROLE_<ROLE>_CAMERA` / `_PRESET`, plus any learned per-role preset from
+the identity service), shared by the cue sheet, the AI director's
+`PTZ_SELECT_ROLE` and `camera_service.move_to_role`, so the AI and the sheet
+always frame a role the same way. The pastor default is preset 3.
+
+### Off-air PTZ staging
+
+A cue that both moves the PTZ camera and switches program to it never pans on
+air. The engine's pure planner (`plan_cue` in
+[engine.py](../backend/app/director/engine.py)) reorders the actions to
+**preset → settle → ATEM preview → cut/auto**, whatever order they are written
+in: the pan happens on preview and the congregation only sees the finished
+frame. Settle waits for the camera's move-completion when the driver offers it,
+else `PTZ_VERIFY_DELAY_MS`. Unknown program state is treated as off-air.
+
+- If the PTZ camera is **already on program** when the cue starts, the move
+  would be visible either way. With `cover_with: <ATEM input>` on the cue the
+  engine cuts to that input (e.g. slides) first, moves, then takes the camera
+  back; without it the preset is recalled and the redundant switch dropped.
+- `transition` on a cue (`cut`, default, or `auto`) decides how the take reaches
+  air; an individual ATEM action may override it. A plain program switch with
+  no PTZ move is a direct cut, or preview → `auto()` for a dissolve, and is
+  skipped when the input is already live.
+- If the operator or AI advances while a cue is still settling, the remaining
+  preview/take steps are abandoned so the superseded shot never reaches program.
 
 ## Advance triggers
 
@@ -159,6 +185,18 @@ with `MGX_USB_ENABLED=true`. [`UsbMultichannelCapture`](../backend/app/audio/usb
 opens it, extracts the configured role channels, and feeds real Silero VAD +
 per-role Whisper (see [ai-director.md](ai-director.md)).
 
+Capture runs on one PortAudio callback plus one drain thread; frames are
+resampled off the event loop (anti-aliased polyphase FIR) and handed to
+subscribers on it. Status (`perception.capture`) exposes `clock_source` (`adc`
+when hardware timestamps are in use), `dropped_blocks` and `queue_depth` — a
+rising drop count means the host can't keep up (lower `WHISPER_MAX_CONCURRENCY`
+or the model size). Install the audio extras with `pip install -e ".[audio]"`
+(sounddevice, faster-whisper, silero-vad with bundled weights so it works
+offline). Because the congregation mic picks up the PA, per-frame bleed
+suppression (`AUDIO_BLEED_SUPPRESS_DB`) keeps the sermon from being
+double-transcribed as congregation speech; raise it if a genuinely quiet second
+talker is being muted.
+
 Run any **streaming / ATEM audio consumer on the USB SUB** (2x2) port instead of
 USB MAIN so the two consumers don't contend for the same interface. The console
 also records 16-track multitrack to microSD standalone — enable that every
@@ -174,6 +212,14 @@ service to accumulate the replay corpus (ingest with
   at ~12 Hz (it also sends `"analysis"`/`"dsp"` messages on the same socket,
   which `MixerService` ignores), and tracks per-channel RMS. This is the degraded
   fallback when USB capture is unavailable or a channel stalls.
+- **Stale meters read as silence.** Every meter sample carries a timestamp. If
+  the WebSocket drops, or a channel's newest sample is older than
+  `MIXER_METER_STALE_SECONDS` (default 1.0), that channel reads as −90 dBFS and
+  is omitted from `levels()`; a speaker who was active at the instant of the
+  drop does not stay "speaking" forever and song-end detection can still see
+  silence. One `PERCEPTION_DEGRADED` (`reason: mixer meter feed stale`) is
+  published per outage and `PERCEPTION_RESTORED` when samples resume;
+  `mixer_service.status()` exposes `stale` and per-channel age.
 
 Both apps run on the **same machine** (the one with the MGX16's USB-C MAIN
 port plugged in). `mgx-ai-mixer`'s own default is `--port 8000`, which collides
@@ -350,16 +396,29 @@ against what the congregation should be reading.
 Requires a separate hardware tap of the EasyWorship laptop's own video output
 (e.g. an HDMI splitter + USB capture card), independent of the ATEM program
 capture used for PTZ verification. After a slide action the OCR text is polled
-until it stabilizes and differs from the pre-action text; if it never does
-within the timeout (or, with semantic on, doesn't match the expected lyric),
-automation is halted for operator attention and the keystroke is never
-auto-retried. Configuration:
+until it stabilizes and differs from the pre-action text. The result is
+**tri-state**:
+
+- *verified* — the text changed;
+- *unchanged* — two or more real OCR reads still show the old text within the
+  timeout (or, with semantic on, it doesn't match the expected lyric) →
+  `EASYWORSHIP_SLIDE_STUCK` + `SLIDE_VERIFY_HALT`; automation is halted for
+  operator attention and the keystroke is never auto-retried;
+- *unknown* — no frame from the slides tap, easyocr missing or not loaded, a
+  read failed, or OCR saw no text while frames were flowing. **Unknown never
+  halts**: it publishes `SLIDE_VERIFY_UNKNOWN` with a reason and a
+  `consecutive_unknown` counter (also in `GET /easyworship/status`), so an OCR
+  outage is visible without taking automation down.
+
+Verifications are serialized and OCR runs on its own thread pool, off the event
+loop. `SLIDE_OCR_GPU=true` runs easyocr on CUDA. Configuration:
 
 ```
 SLIDE_VERIFY_ENABLED=false               # off by default
 SLIDE_VERIFY_DEVICE=                      # cv2 device index/name for the camera-2 tap
 SLIDE_VERIFY_POLL_MS=400                  # stabilization poll interval (ms)
 SLIDE_VERIFY_TIMEOUT_SECONDS=4.0          # give up -> alert + halt automation
+SLIDE_OCR_GPU=false                       # easyocr on CUDA
 SLIDE_VERIFY_SEMANTIC_ENABLED=false       # lyric-aware correctness check (WO-EWVERIFY-3)
 SLIDE_VERIFY_SEMANTIC_THRESHOLD=0.75      # fuzzy-match acceptance threshold
 ```

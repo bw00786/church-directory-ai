@@ -215,6 +215,8 @@ class PTZOpticsDriver(PTZDriver):
         self._client = None
         self._visca: ViscaOverIPClient | None = None
         self._connected = False
+        self._http_ok: bool | None = None
+        self._cgi_fallbacks = 0
 
     # -- connection lifecycle -------------------------------------------------
     async def connect(
@@ -245,9 +247,13 @@ class PTZOpticsDriver(PTZDriver):
 
         self._visca = ViscaOverIPClient(host, self._visca_port, use_udp=self._use_udp)
         visca_ok = await self._visca.connect()
+        if not visca_ok:
+            # Keep trying in the background (bounded backoff); CGI carries the load meanwhile.
+            self._visca.schedule_reconnect()
 
         # A harmless stop command doubles as an HTTP-CGI reachability probe.
         http_ok = await self._cgi("ptzcmd", "ptzstop", 1, 1)
+        self._http_ok = http_ok
 
         self._connected = bool(visca_ok or http_ok)
         if self._connected:
@@ -305,7 +311,19 @@ class PTZOpticsDriver(PTZDriver):
             return False
 
     def _visca_ready(self) -> bool:
-        return self._visca is not None and self._visca.connected
+        """True when VISCA is live; otherwise ensure the reconnect loop is running.
+
+        The reconnect runs in the background with bounded exponential backoff,
+        so a dropped VISCA socket never blocks or kills the joystick: commands
+        fall back to HTTP-CGI until the socket is back.
+        """
+        if self._visca is None:
+            return False
+        if self._visca.connected:
+            return True
+        self._visca.schedule_reconnect()
+        self._cgi_fallbacks += 1
+        return False
 
     # -- absolute positioning -------------------------------------------------
     async def move_absolute(
@@ -392,8 +410,17 @@ class PTZOpticsDriver(PTZDriver):
 
     # -- presets --------------------------------------------------------------
     async def move_to_preset(self, preset_id: int) -> bool:
-        if self._visca_ready() and await self._visca.preset_recall(preset_id):
-            return True
+        """Recall a preset over VISCA, falling back to CGI ``poscall``.
+
+        ``preset_recall`` returns True as soon as the camera ACKs (even when
+        the completion for a long move lags), so the CGI recall is only issued
+        when VISCA was unavailable or actually refused the command -- never as
+        a duplicate of a move already in progress.
+        """
+        if self._visca_ready():
+            if await self._visca.preset_recall(preset_id):
+                return True
+            logger.info("VISCA preset recall not accepted; falling back to CGI", preset=preset_id)
         return await self._cgi("ptzcmd", "poscall", preset_id)
 
     async def save_preset(self, preset_id: int) -> bool:
@@ -412,7 +439,23 @@ class PTZOpticsDriver(PTZDriver):
             zoom_pos = await self._visca.get_zoom()
             if zoom_pos is not None:
                 status["zoom"] = ViscaOverIPClient.pos_to_zoom_pct(zoom_pos)
+        status["control_path"] = "visca" if self._visca_ready() else ("cgi" if self._client else "none")
+        status["health"] = self.health()
         return status
+
+    def health(self) -> dict:
+        """Transport health: VISCA liveness/reconnects plus the CGI fallback state."""
+        return {
+            "host": self._host,
+            "connected": self._connected,
+            "visca": self._visca.health() if self._visca is not None else None,
+            "http_cgi": {
+                "port": self._http_port,
+                "probe_ok": self._http_ok,
+                "basic_auth": self._use_basic_auth,
+                "fallbacks": self._cgi_fallbacks,
+            },
+        }
 
 
 # Backwards-compatible alias for earlier imports.
