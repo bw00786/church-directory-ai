@@ -27,6 +27,22 @@ operator can always override.
 | Channel 4   | Vocalist mic (song-end detection, slide follower) | `MIXER_VOCALIST_CHANNEL` |
 | Channel 8   | Congregation mic (song-end detection, slide follower) | `MIXER_CONGREGATION_CHANNEL` |
 
+### Per-church rig profile
+
+Everything in the table above is configuration. A per-church **rig profile**
+(`rig.yaml`, see [rig-profile.md](rig-profile.md); copy `rig.example.yaml`)
+describes cameras and their ATEM inputs (`cameras[].atem_input`,
+`switcher.slides_input`), mixer channels per role (`mixer.roles`, any role
+names), PTZ role shots, cue-sheet overrides (`cues:` modifies built-in cues by
+id, removes them with `enabled: false`, or adds new ones) and order-of-service
+heading synonyms. Every section is optional: omitted sections come from `.env`,
+so with no file the director behaves exactly as the settings describe.
+`GET /api/rig` shows the active profile (passwords masked),
+`POST /api/rig/validate` dry-runs a candidate and `PUT /api/rig` (admin key)
+saves it, reporting which sections applied live and which (`cameras`, `mixer`)
+need a restart. The operator UI renders one joystick panel per registered
+camera plus a rig summary card.
+
 ## Cue sheet
 
 Each cue runs its actions (ATEM program switch, PTZOptics preset, or an advisory
@@ -546,6 +562,42 @@ with the same `cycle_id` and its outcome (`pending_approval`, `executed`,
 `executed_after_approval`, `rejected`, with detail). This is a local audit trail
 that works without PostgreSQL; it complements production memory, which stores
 summaries. The file is gitignored because it contains transcripts and decisions.
+
+### Pause and resume
+
+`POST /director/ai/pause` (operator key) drops the AI Director to `manual` and
+remembers the mode it was in; `POST /director/ai/resume` restores it.
+`GET /director/ai/status` reports `paused` and `paused_from`; the panel shows an
+"AI paused" banner with a Resume button. Choosing a mode explicitly while
+paused ends the pause. Events: `AI_DIRECTOR_PAUSED`, `AI_DIRECTOR_RESUMED`.
+
+### Rehearsal mode
+
+`POST /director/rehearsal/start {"sample": "default", "speed": 5}` replays a
+recorded service (a bundled sample, or a JSON file under
+`REHEARSAL_RECORDINGS_DIR`) through a **private copy** of the AI runtime.
+Decisions use the real model, policy and pacing rules, but every action is
+dispatched to a recorder, never to the ATEM, cameras or EasyWorship. Rehearsal
+refuses to start while a service is running, or when real hardware is
+configured unless `FORCE_MOCK_DURING_REHEARSAL=true`.
+`GET /director/rehearsal/status` shows progress, per-step decisions, queued
+proposals and mock-executed actions; `POST /director/rehearsal/stop` ends it.
+Recording format: a list of `AudioObservation`-shaped entries (`speaker_role`,
+`speaking`, `transcript`, optional `delay_seconds`) or
+`{"name", "description", "entries": [...]}`. The Rehearsal panel in the UI
+picks a sample and speed and lists the decisions as they happen.
+
+### Post-service review
+
+`GET /director/review?date=YYYY-MM-DD` (default today) aggregates the
+decision-cycle audit log and the review event log (`REVIEW_EVENTS_FILE`: ATEM
+program changes operator vs app, mode changes and pauses, perception
+degraded/restored, rehearsal windows) into totals — cycles, latency, stale
+cycles, proposals by outcome (executed / approved / rejected / expired / held),
+top hold reasons, program changes — plus a compact timeline (first and last 200
+entries), the operator's slide advances and learned shots. Records inside a
+rehearsal window are excluded. `GET /director/review/dates` lists days with
+data. The Service review panel selects the date and shows totals and timeline.
 
 ## Operating modes
 

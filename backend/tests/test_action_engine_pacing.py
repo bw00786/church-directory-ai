@@ -190,3 +190,17 @@ async def test_cue_advance_below_global_threshold_rejected(engine):
     action = DirectorAction(type=DirectorActionType.CUE_ADVANCE, confidence=0.5, parameters={"cue_id": "x"})
     result = await engine.execute(action)
     assert result.approved is False
+
+
+def test_learned_typical_hold_raises_min_hold(monkeypatch):
+    """Operator shot learning lifts the policy hold toward the operator's own pacing."""
+    from app.director import action_engine as ae
+    from app.director.operator_shots import operator_shot_history
+
+    monkeypatch.setattr(settings, "operator_shots_hold_fraction", 0.5)
+    monkeypatch.setattr(operator_shot_history, "typical_hold", lambda state: 30.0)
+    assert ae.ActionEngine._learned_min_hold(8.0) == 15.0
+    monkeypatch.setattr(operator_shot_history, "typical_hold", lambda state: 10.0)
+    assert ae.ActionEngine._learned_min_hold(8.0) == 8.0  # never below the policy hold
+    monkeypatch.setattr(settings, "operator_shots_hold_fraction", 0.0)
+    assert ae.ActionEngine._learned_min_hold(8.0) == 8.0

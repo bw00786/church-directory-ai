@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import re
 import statistics
-from collections import Counter
+from collections import Counter, defaultdict
 from typing import Any, Iterable
 
 HOUSE_STYLE_CATEGORIES = (
@@ -70,12 +70,27 @@ def observation_matches_state(row: Any, state: str, easyworship_item: str | None
     return False
 
 
+def _duration(seconds: float) -> str:
+    """``~14 s`` below 90 s, else ``~4 min`` (one decimal when it matters)."""
+    if seconds >= 90:
+        minutes = f"{seconds / 60:.1f}".rstrip("0").rstrip(".")
+        return f"{minutes} min"
+    return f"{seconds:.0f} s"
+
+
 def summarize_house_style(rows: Iterable[Any], state: str, *, max_rules: int = 6) -> list[str]:
     """Turn operator observations for one service state into 3-6 bullet rules.
 
     Cheap aggregation only (medians and counters); no LLM. Returns fewer than
     three bullets when there is not enough evidence rather than padding with
     guesses -- the prompt template already carries the generic defaults.
+
+    ``operator_shot`` rows written by app.director.operator_shots carry
+    ``kind`` (cut/reframe), ``preset_id``, ``hold_seconds`` and
+    ``delay_since_speaker_change`` in their metadata; those give the
+    "you stay on X (preset N) 92% of the time and cut to wide roughly every
+    4 min", speaker-change latency and typical-hold bullets. Legacy shot rows
+    (camera_role only) still produce the per-speaker shot bullets.
     """
     rows = list(rows)
     label = state.replace("_", " ")
@@ -88,6 +103,13 @@ def summarize_house_style(rows: Iterable[Any], state: str, *, max_rules: int = 6
     inputs: Counter[str] = Counter()
     rejected: Counter[str] = Counter()
     approved: Counter[str] = Counter()
+    # Structured shot samples (app.director.operator_shots).
+    shot_targets: Counter[str] = Counter()
+    shot_presets: dict[str, Counter[int]] = defaultdict(Counter)
+    holds: list[float] = []
+    holds_to: dict[str, list[float]] = defaultdict(list)       # target -> hold of the shot it replaced
+    holds_from_to: dict[tuple[str, str], list[float]] = defaultdict(list)
+    latencies: list[float] = []
 
     for row in rows:
         category = _category(row)
@@ -116,6 +138,29 @@ def summarize_house_style(rows: Iterable[Any], state: str, *, max_rules: int = 6
                 shots[(str(speaker), str(camera))] += 1
             if meta.get("atem_input") is not None:
                 inputs[str(meta["atem_input"])] += 1
+            kind = meta.get("kind")
+            target = str(camera) if camera else (
+                f"input {meta['atem_input']}" if meta.get("atem_input") is not None else None
+            )
+            if kind in ("cut", "reframe") and target:
+                shot_targets[target] += 1
+                if meta.get("preset_id") is not None:
+                    try:
+                        shot_presets[target][int(meta["preset_id"])] += 1
+                    except (TypeError, ValueError):
+                        pass
+            if kind == "cut":
+                hold = meta.get("hold_seconds")
+                if hold is not None:
+                    holds.append(float(hold))
+                    if target:
+                        holds_to[target].append(float(hold))
+                        origin = meta.get("from_camera_role")
+                        if origin:
+                            holds_from_to[(str(origin), target)].append(float(hold))
+                latency = meta.get("delay_since_speaker_change")
+                if latency is not None:
+                    latencies.append(float(latency))
         elif category in ("operator_override", "operator_approval"):
             action = meta.get("action_type")
             target = meta.get("camera_role") or meta.get("easyworship_item") or meta.get("target")
@@ -148,14 +193,41 @@ def summarize_house_style(rows: Iterable[Any], state: str, *, max_rules: int = 6
             f"The operator went back a slide {backs} time{'s' if backs != 1 else ''} in {label}: "
             f"an early advance costs more than a late one here."
         )
+    dominant: str | None = None
+    if sum(shot_targets.values()) >= 3:
+        dominant, count = shot_targets.most_common(1)[0]
+        share = count / sum(shot_targets.values())
+        preset = ""
+        if shot_presets.get(dominant):
+            preset = f" (preset {shot_presets[dominant].most_common(1)[0][0]})"
+        sentence = f"During {label} you stay on the {dominant} shot{preset} {share:.0%} of the time"
+        others = [t for t, _ in shot_targets.most_common() if t != dominant]
+        if others:
+            secondary = others[0]
+            cadence = holds_from_to.get((dominant, secondary)) or holds_to.get(secondary) or []
+            if cadence:
+                sentence += f" and cut to {secondary} roughly every {_duration(statistics.median(cadence))}"
+            else:
+                sentence += f"; {secondary} is your usual cutaway"
+        bullets.append(sentence + ".")
     for (speaker, camera), count in shots.most_common(2):
-        if count >= 2:
+        if count >= 2 and camera != dominant:
             who = "someone" if speaker == "anyone" else f"the {speaker}"
             bullets.append(f"When {who} speaks during {label}, the operator takes the {camera} shot ({count}x).")
-    if inputs:
+    if inputs and dominant is None:
         program, count = inputs.most_common(1)[0]
         if count >= 3:
             bullets.append(f"ATEM input {program} is the usual program source during {label} ({count}x).")
+    if len(latencies) >= 3:
+        bullets.append(
+            f"Speaker change -> cut within ~{statistics.median(latencies):.1f} s during {label} "
+            f"(n={len(latencies)}); match that, do not cut on the first syllable."
+        )
+    if len(holds) >= 3:
+        bullets.append(
+            f"Typical hold during {label} ~{_duration(statistics.median(holds))} before the operator cuts "
+            f"(n={len(holds)})."
+        )
     for key, count in rejected.most_common(2):
         if count >= 2:
             bullets.append(

@@ -13,7 +13,7 @@ import { AiObservation } from './components/AiObservation'
 import { AIDirectorPanel } from './components/AIDirectorPanel'
 import { AssistantChat } from './components/AssistantChat'
 import { AtemPanel } from './components/AtemPanel'
-import { CameraJoystick } from './components/CameraJoystick'
+import { CameraPanels, RigSummary } from './components/CameraPanels'
 import { CameraObservation } from './components/CameraObservation'
 import { CueSheet } from './components/CueSheet'
 import { DetectionOverlay } from './components/DetectionOverlay'
@@ -21,6 +21,9 @@ import { EventTimeline } from './components/EventTimeline'
 import { RosterPanel } from './components/RosterPanel'
 import { SlidesPanel } from './components/SlidesPanel'
 import { ApiKeyGate } from './components/ApiKeyGate'
+import { SetupWizard, SetupWizardButton } from './components/SetupWizard'
+import { RehearsalPanel } from './components/RehearsalPanel'
+import { ServiceReview } from './components/ServiceReview'
 import { SystemStatus } from './components/SystemStatus'
 import { VisionPanel } from './components/VisionPanel'
 import { VoiceAttentionPanel } from './components/VoiceAttentionPanel'
@@ -30,6 +33,7 @@ export function App() {
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
       <ApiKeyGate />
+      <SetupWizard />
       <AppBar position="static" color="transparent" elevation={0} sx={{ borderBottom: 1, borderColor: 'divider' }}>
         <Toolbar sx={{ py: 1.5, gap: 2 }}>
           <ChurchIcon color="primary" fontSize="large" />
@@ -41,6 +45,7 @@ export function App() {
               AI-assisted worship production control
             </Typography>
           </Box>
+          <SetupWizardButton />
           <SystemChip />
         </Toolbar>
       </AppBar>
@@ -78,7 +83,7 @@ export function App() {
           >
             <CueSheet />
             <AtemPanel />
-            <CameraJoystick cameraId={1} />
+            <CameraPanels />
             <SlidesPanel />
           </Box>
 
@@ -91,13 +96,28 @@ export function App() {
             }}
           >
             <VoiceAttentionPanel />
-            <Box id="system-status" sx={{ scrollMarginTop: 24 }}>
-              <SystemStatus />
-            </Box>
+            <Stack spacing={3}>
+              <Box id="system-status" sx={{ scrollMarginTop: 24 }}>
+                <SystemStatus />
+              </Box>
+              <RigSummary />
+            </Stack>
           </Box>
 
           <Box id="ai-director-panel" tabIndex={-1} sx={{ scrollMarginTop: 24 }}>
             <AIDirectorPanel />
+          </Box>
+
+          <Box
+            sx={{
+              display: 'grid',
+              gap: 3,
+              alignItems: 'start',
+              gridTemplateColumns: { xs: '1fr', lg: '1fr 2fr' },
+            }}
+          >
+            <RehearsalPanel />
+            <ServiceReview />
           </Box>
 
           <RosterPanel />

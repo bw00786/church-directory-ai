@@ -13,6 +13,8 @@
 **/data/operator-slide-advances.json
 **/data/adaptive-confidence.json
 **/data/operator-shots.json
+**/data/review_events.jsonl
+**/data/recordings/
 env/
 venv/
 ENV/

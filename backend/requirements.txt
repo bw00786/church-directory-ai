@@ -47,6 +47,7 @@ zeroconf==0.132.2
 
 # Utilities
 python-dotenv==1.0.0
+pyyaml==6.0.3  # per-church rig profile (rig.yaml)
 structlog==23.2.0
 python-multipart==0.0.6
 onvif-zeep==0.2.12

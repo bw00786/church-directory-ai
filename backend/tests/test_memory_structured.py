@@ -218,3 +218,66 @@ def test_observation_matches_state_uses_metadata_or_legacy_item_text():
 @pytest.mark.parametrize("space,expected", [("hashed:crc32-logtf-v1:256", True), ("nomic:x:768", False), (None, False)])
 def test_is_hashed_space(space, expected):
     assert retrieval.is_hashed_space(space) is expected
+
+
+# -- operator shot rows (app.director.operator_shots) -----------------------------
+
+
+def _shot(state, speaker, camera, *, kind="cut", preset=None, hold=None, delay=None, origin=None, atem_input=1):
+    meta = {"service_state": state, "speaker_role": speaker, "camera_role": camera, "atem_input": atem_input,
+            "kind": kind, "preset_id": preset, "hold_seconds": hold, "delay_since_speaker_change": delay,
+            "from_camera_role": origin}
+    return _row("operator_shot", f"Operator cut to {camera}", {k: v for k, v in meta.items() if v is not None})
+
+
+def test_summarize_house_style_shot_bullets_from_structured_rows():
+    rows = [
+        _shot("sermon", "pastor", "pastor", preset=3, hold=20, delay=2.0, origin="slides"),
+        _shot("sermon", "pastor", "pastor", preset=3, hold=18, delay=3.0, origin="wide"),
+        _shot("sermon", "pastor", "pastor", preset=3, hold=240, delay=2.5, origin="wide"),
+        _shot("sermon", "pastor", "pastor", preset=3, hold=30, origin="wide"),
+        _shot("sermon", "pastor", "pastor", kind="reframe", preset=3),
+        _shot("sermon", "pastor", "wide", preset=1, hold=250, origin="pastor"),
+        _shot("sermon", "pastor", "wide", preset=1, hold=230, origin="pastor"),
+        _shot("sermon", "pastor", "slides", atem_input=2, hold=5, origin="pastor"),
+    ]
+    rules = retrieval.summarize_house_style(rows, "sermon")
+    joined = "\n".join(rules)
+    # 5 of 8 structured samples are the pastor shot; the cutaway cadence is the median hold
+    # of pastor -> wide cuts (240 s), not of every hold.
+    assert "During sermon you stay on the pastor shot (preset 3) 62% of the time and cut to wide roughly every 4 min." in joined
+    assert "Speaker change -> cut within ~2.5 s during sermon (n=3)" in joined
+    assert "Typical hold during sermon ~30 s before the operator cuts (n=7)." in joined
+    # The dominant-shot bullet replaces the per-speaker bullet for the same shot and the ATEM-input bullet.
+    assert "takes the pastor shot" not in joined
+    assert "ATEM input" not in joined
+    assert 3 <= len(rules) <= 6
+
+
+def test_summarize_house_style_shot_bullets_without_holds_or_presets():
+    rows = [_shot("announcement", None, "liturgist")] * 3 + [_shot("announcement", "pastor", "wide")] * 2
+    rules = retrieval.summarize_house_style(rows, "announcement")
+    assert rules == [
+        "During announcement you stay on the liturgist shot 60% of the time; wide is your usual cutaway.",
+        "When the pastor speaks during announcement, the operator takes the wide shot (2x).",
+    ]
+
+
+def test_summarize_house_style_shot_bullets_need_three_samples_and_match_state():
+    rows = [_shot("sermon", "pastor", "pastor", preset=3, hold=20, delay=2.0)] * 2
+    assert retrieval.summarize_house_style(rows, "sermon") == [
+        "When the pastor speaks during sermon, the operator takes the pastor shot (2x).",
+    ]
+    rows = [_shot("sermon", "pastor", "pastor", preset=3)] * 3 + [_shot("hymn", "vocalist", "congregation")] * 3
+    # Callers filter by state first; the aggregation itself just counts what it is given.
+    sermon_only = [r for r in rows if retrieval.observation_matches_state(r, "sermon")]
+    assert retrieval.summarize_house_style(sermon_only, "sermon") == [
+        "During sermon you stay on the pastor shot (preset 3) 100% of the time.",
+    ]
+
+
+def test_duration_formatting():
+    assert retrieval._duration(14) == "14 s"
+    assert retrieval._duration(89.6) == "90 s"
+    assert retrieval._duration(240) == "4 min"
+    assert retrieval._duration(150) == "2.5 min"

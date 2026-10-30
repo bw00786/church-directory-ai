@@ -179,8 +179,9 @@ class ActionEngine:
         category = _category_for(action.type)
 
         since_cut = self._seconds_since_last_cut(now)
-        if since_cut is not None and since_cut < policy.min_camera_hold_seconds:
-            return f"min hold: last program change {since_cut:.1f}s ago (< {policy.min_camera_hold_seconds}s)"
+        min_hold = self._learned_min_hold(policy.min_camera_hold_seconds)
+        if since_cut is not None and since_cut < min_hold:
+            return f"min hold: last program change {since_cut:.1f}s ago (< {min_hold:.0f}s)"
 
         last = self._last_by_category.get(category)
         if last is not None and now - last < policy.camera_switch_cooldown_seconds:
@@ -196,6 +197,23 @@ class ActionEngine:
             return f"max consecutive AI '{category}' actions ({policy.max_consecutive_switches}) reached"
 
         return self._speech_boundary_hold(action, now)
+
+    @staticmethod
+    def _learned_min_hold(policy_hold: float) -> float:
+        """The policy hold, raised toward how long the operator actually keeps
+        shots in the current part of the service (operator shot learning)."""
+        fraction = float(getattr(settings, "operator_shots_hold_fraction", 0.5) or 0.0)
+        if fraction <= 0:
+            return policy_hold
+        try:
+            from app.director.operator_shots import operator_shot_history
+
+            typical = operator_shot_history.typical_hold(service_context.state)
+        except Exception:  # noqa: BLE001 - learning is advisory
+            return policy_hold
+        if not typical:
+            return policy_hold
+        return max(float(policy_hold), fraction * float(typical))
 
     def _record_paced(self, action: DirectorAction, now: float) -> None:
         if action.type not in PACED_ACTION_TYPES:
@@ -298,6 +316,7 @@ class ActionEngine:
             role = action.target
             if not role:
                 return "no role given"
+            self._note_camera_command(camera_service)
             ok = await camera_service.move_to_role(role)
             if ok:
                 service_context.current_camera_role = role
@@ -308,6 +327,7 @@ class ActionEngine:
             preset_id = action.parameters.get("preset_id")
             if camera_id is None or preset_id is None:
                 return "no camera_id/preset_id given"
+            self._note_camera_command(camera_service, int(camera_id), int(preset_id))
             ok = await camera_service.move_to_preset(int(camera_id), int(preset_id))
             if ok:
                 role = self._role_for_preset(int(camera_id), int(preset_id))
@@ -356,6 +376,14 @@ class ActionEngine:
             return f"cue advance ({result.get('reason', 'suggested to operator')})"
 
         return "unhandled action type"
+
+    @staticmethod
+    def _note_camera_command(camera_service, camera_id=None, preset_id=None) -> None:
+        """Tell the camera service the app (not the operator) is recalling a preset,
+        so app.director.operator_shots does not learn it as an operator reframe."""
+        note_command = getattr(camera_service, "note_command", None)
+        if callable(note_command):
+            note_command(camera_id, preset_id)
 
     # -- PTZ verification hooks (WO-VISION-1; gated by vision_enabled) --------
     @staticmethod

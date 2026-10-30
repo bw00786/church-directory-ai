@@ -181,6 +181,10 @@ async def _easyworship_black():
 async def _cameras_home():
     from app.cameras.service import camera_service
 
+    # Mark this as an app action so operator-shot learning doesn't record it.
+    note = getattr(camera_service, "note_command", None)
+    if callable(note):
+        note()
     return await camera_service.move_to_role("wide")
 
 

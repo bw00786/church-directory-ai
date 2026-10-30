@@ -9,6 +9,8 @@ vi.mock('@/hooks/useAIDirector', () => ({ useAIDirector: vi.fn() }))
 const approve = vi.fn().mockResolvedValue(undefined)
 const reject = vi.fn().mockResolvedValue(undefined)
 const setMode = vi.fn().mockResolvedValue(undefined)
+const pause = vi.fn().mockResolvedValue(undefined)
+const resume = vi.fn().mockResolvedValue(undefined)
 const refresh = vi.fn().mockResolvedValue(undefined)
 
 const pending: PendingAction = {
@@ -42,7 +44,7 @@ const status: AiDirectorStatus = {
 }
 
 const hookValue = (overrides: Partial<ReturnType<typeof useAIDirector>> = {}) => ({
-  status, fetchedAt: Date.now(), loading: false, setMode, approve, reject, refresh, ...overrides,
+  status, fetchedAt: Date.now(), loading: false, setMode, pause, resume, approve, reject, refresh, ...overrides,
 })
 
 beforeEach(() => {
@@ -97,5 +99,23 @@ describe('AIDirectorPanel', () => {
     render(<PendingActionRow action={bare} fetchedAt={null} now={Date.now()} onApprove={approve} onReject={reject} />)
     expect(screen.queryByText(/held:/)).not.toBeInTheDocument()
     expect(screen.queryByText(/expires in/)).not.toBeInTheDocument()
+  })
+
+  it('pauses the AI and shows the paused state with a resume button', async () => {
+    const user = userEvent.setup()
+    const { unmount } = render(<AIDirectorPanel />)
+    expect(screen.queryByText('AI paused')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Pause AI Director' }))
+    expect(pause).toHaveBeenCalledTimes(1)
+    unmount()
+    vi.mocked(useAIDirector).mockReturnValue(
+      hookValue({ status: { ...status, mode: 'manual', paused: true, paused_from: 'assisted' } }),
+    )
+    render(<AIDirectorPanel />)
+    expect(screen.getByText('AI paused')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('Resume returns to Assisted')
+    expect(screen.queryByRole('button', { name: 'Pause AI Director' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /Resume AI Director/ }))
+    expect(resume).toHaveBeenCalledTimes(1)
   })
 })

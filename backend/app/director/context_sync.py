@@ -57,16 +57,14 @@ SLIDES_ROLE = "slides"
 
 
 def _camera_for_input(atem_input: int) -> Optional[int]:
-    """CameraService id feeding ``atem_input`` (PTZ camera only), else None."""
-    try:
-        from app.vision.verification import camera_to_atem_input
-    except Exception:  # pragma: no cover
-        camera_to_atem_input = None  # type: ignore[assignment]
-    candidates = [settings.ptz_camera_id, 1]
-    for camera_id in candidates:
-        mapped = camera_to_atem_input(camera_id) if camera_to_atem_input else None
-        if mapped is not None and int(mapped) == atem_input:
-            return int(camera_id)
+    """CameraService id feeding ``atem_input`` (PTZ cameras only), else None:
+    the rig profile's ``cameras[].atem_input`` map, with the legacy
+    ``ATEM_CAMERA1_INPUT`` -> ``PTZ_CAMERA_ID`` fallback."""
+    from app.rig import rig
+
+    mapped = rig().camera_for_atem_input(atem_input)
+    if mapped is not None:
+        return int(mapped)
     if atem_input == settings.atem_camera1_input:
         return int(settings.ptz_camera_id)
     return None
@@ -75,15 +73,18 @@ def _camera_for_input(atem_input: int) -> Optional[int]:
 def camera_role_for_input(atem_input: Optional[int], current_role: Optional[str] = None) -> Optional[str]:
     """Framing role now on air for ``atem_input``.
 
-    ``"slides"`` for the EasyWorship input. For the PTZ camera, the role from
-    the shared ``camera_role_*`` table whose (camera, preset) matches the
+    ``"slides"`` for the EasyWorship input (``switcher.slides_input``). For a
+    PTZ camera, the role from the shared role table (rig profile ``roles`` /
+    ``camera_role_*`` settings) whose (camera, preset) matches the
     camera's last recalled preset -- preferring ``current_role`` when several
     roles share a preset. None when unknown (other inputs, preset unknown).
     """
     if atem_input is None:
         return None
     atem_input = int(atem_input)
-    if atem_input == int(settings.atem_camera2_input):
+    from app.rig import rig
+
+    if atem_input == int(rig().switcher.slides_input):
         return SLIDES_ROLE
     camera_id = _camera_for_input(atem_input)
     if camera_id is None:

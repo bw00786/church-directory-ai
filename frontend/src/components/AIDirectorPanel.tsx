@@ -2,7 +2,8 @@
  * AI Service Director panel
  * Shows mode (Manual/Assisted/AI Directed), current service state, speaker,
  * transcript, camera/ATEM/EasyWorship, and the latest AI decision. Lets the
- * operator switch modes and approve/reject pending (assisted-mode) actions.
+ * operator switch modes, pause/resume the AI, and approve/reject pending
+ * (assisted-mode) actions.
  */
 
 import React, { useEffect, useState } from 'react'
@@ -20,6 +21,8 @@ import Divider from '@mui/material/Divider'
 import SmartToyIcon from '@mui/icons-material/SmartToy'
 import CheckIcon from '@mui/icons-material/Check'
 import CloseIcon from '@mui/icons-material/Close'
+import PauseIcon from '@mui/icons-material/Pause'
+import PlayArrowIcon from '@mui/icons-material/PlayArrow'
 
 import { AiDirectorMode, PendingAction, useAIDirector } from '@/hooks/useAIDirector'
 
@@ -101,7 +104,7 @@ export function PendingActionRow({ action, fetchedAt, now, onApprove, onReject }
 }
 
 export function AIDirectorPanel() {
-  const { status, fetchedAt, setMode, approve, reject } = useAIDirector()
+  const { status, fetchedAt, setMode, pause, resume, approve, reject } = useAIDirector()
   const [now, setNow] = useState(() => Date.now())
   const hasPending = (status?.pending_actions.length ?? 0) > 0
 
@@ -116,6 +119,7 @@ export function AIDirectorPanel() {
   const context = status?.context
   const decision = context?.last_decision
   const lastCycle = status?.last_cycle
+  const paused = Boolean(status?.paused)
 
   return (
     <Card>
@@ -125,20 +129,57 @@ export function AIDirectorPanel() {
         subheader={context ? formatState(context.service_state) : 'Loading…'}
         titleTypographyProps={{ variant: 'subtitle2' }}
         action={
-          <ButtonGroup size="small" sx={{ mt: 1, mr: 1 }}>
-            {MODES.map((m) => (
+          <Stack direction="row" spacing={1} sx={{ mt: 1, mr: 1, alignItems: 'center' }}>
+            {paused ? (
               <Button
-                key={m.value}
-                variant={status?.mode === m.value ? 'contained' : 'outlined'}
-                onClick={() => setMode(m.value)}
+                size="small"
+                color="warning"
+                variant="contained"
+                startIcon={<PlayArrowIcon />}
+                onClick={() => resume()}
+                aria-label={`Resume AI Director (back to ${status?.paused_from ?? 'previous mode'})`}
               >
-                {m.label}
+                Resume
               </Button>
-            ))}
-          </ButtonGroup>
+            ) : (
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<PauseIcon />}
+                disabled={!status}
+                onClick={() => pause()}
+                aria-label="Pause AI Director"
+              >
+                Pause
+              </Button>
+            )}
+            <ButtonGroup size="small">
+              {MODES.map((m) => (
+                <Button
+                  key={m.value}
+                  variant={status?.mode === m.value ? 'contained' : 'outlined'}
+                  onClick={() => setMode(m.value)}
+                >
+                  {m.label}
+                </Button>
+              ))}
+            </ButtonGroup>
+          </Stack>
         }
       />
       <CardContent>
+        {paused && (
+          <Paper
+            role="status"
+            variant="outlined"
+            sx={{ p: 1, mb: 2, borderColor: 'warning.main', display: 'flex', alignItems: 'center', gap: 1 }}
+          >
+            <Chip size="small" color="warning" label="AI paused" />
+            <Typography variant="body2">
+              Observing only. Resume returns to {MODES.find((m) => m.value === status?.paused_from)?.label ?? 'the previous mode'}.
+            </Typography>
+          </Paper>
+        )}
         <Box
           sx={{
             display: 'grid',

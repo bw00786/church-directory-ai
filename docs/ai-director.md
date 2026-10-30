@@ -601,6 +601,36 @@ recorder state and the learned history. Config: `OPERATOR_LEARNING_ENABLED`,
 `OPERATOR_LEARNING_MIN_SAMPLES`, `OPERATOR_LEARNING_MIN_DWELL_FRACTION`,
 `OPERATOR_LEARNING_MEMORY`.
 
+### Learning from the operator's camera work
+
+[`operator_shots.py`](../backend/app/director/operator_shots.py) runs in every
+mode and watches the ATEM bus. A `PROGRAM_CHANGED` this app did not command
+(`commanded: false`, and no app preset recall or program change within
+`OPERATOR_SHOTS_COMMAND_WINDOW_SECONDS`) is the operator's cut and is recorded
+with the service state and plan element, who was speaking (and whether
+singing), the shot taken (ATEM input, framing role via the camera's current
+preset, preset id), how long the previous shot was up, cut vs auto transition,
+the last `OPERATOR_SHOTS_TAIL_WORDS` heard, and how long after a speaker change
+the cut came. A preset the operator recalls while the PTZ camera is on program
+or preview is recorded as a `reframe` sample. Samples go to
+`OPERATOR_SHOTS_FILE`, keyed by `(service_state, speaker_role)` (newest
+`OPERATOR_SHOTS_MAX_SAMPLES` per key), and to production memory as
+`operator_shot` observations with structured metadata.
+
+Once a key has `OPERATOR_SHOTS_MIN_SAMPLES` samples: `preferred_shot()`
+(majority with share ≥ `OPERATOR_SHOTS_MIN_SHARE`) overrides the configured
+role shot in `resolve_role_shot` (source `operator`), `typical_hold()` raises
+the AI's minimum hold for that part of the service toward what the operator
+actually does (`OPERATOR_SHOTS_HOLD_FRACTION` of the median), and
+`summarize_house_style` turns the memory rows into prompt bullets such as
+*"During sermon you stay on the pastor shot (preset 3) 92% of the time and cut
+to wide roughly every 4 min"*, *"Speaker change → cut within ~2.5 s"*,
+*"Typical hold during announcement ~14 s"*. Cuts and preset recalls the app
+made (cue engine, AI action engine, predictive preview, service end) are never
+learned as operator behaviour. `GET /api/learning/operator-shots`,
+`/api/learning/operator-advances` and `/api/learning/house-style?state=` expose
+the learned state.
+
 ### Phase 2 — event-driven ticks + predictive PTZ preview
 
 - The decision loop ([`ai_director_runtime.py`](../backend/app/director/ai_director_runtime.py))

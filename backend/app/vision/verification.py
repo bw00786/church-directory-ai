@@ -48,10 +48,22 @@ class VerifyResult:
 
 
 def camera_to_atem_input(camera_id: int) -> Optional[int]:
-    if camera_id == 1:
+    """ATEM input fed by PTZ ``camera_id`` (rig profile ``cameras[].atem_input``).
+
+    Legacy ids keep their meaning when the profile does not list them: 1 is
+    the PTZOptics camera (``ATEM_CAMERA1_INPUT``) and 2 the EasyWorship
+    laptop (``ATEM_CAMERA2_INPUT`` / ``switcher.slides_input``).
+    """
+    from app.rig import rig
+
+    profile = rig()
+    mapped = profile.atem_input_for_camera(camera_id)
+    if mapped is not None:
+        return int(mapped)
+    if camera_id == 1 and not profile.cameras:
         return settings.atem_camera1_input
     if camera_id == 2:
-        return settings.atem_camera2_input
+        return int(profile.switcher.slides_input)
     return None
 
 

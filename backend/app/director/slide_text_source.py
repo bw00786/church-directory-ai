@@ -318,7 +318,11 @@ class OcrSlideReader:
 
 
 def follow_cue_ids() -> set:
-    return {c.strip() for c in settings.song_follower_cues.split(",") if c.strip()}
+    """Cue ids the follower may advance during: the rig profile's follower.cues,
+    else SONG_FOLLOWER_CUES."""
+    from app.rig import rig
+
+    return set(rig().follower_cue_ids())
 
 
 def _current_cue():

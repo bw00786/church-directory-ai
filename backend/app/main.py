@@ -170,6 +170,21 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Failed to start operator slide-advance learning")
 
+    # Keep the post-service review event log (program changes, mode changes,
+    # pauses, degraded/restored, rehearsal windows).
+    try:
+        from app.director.review import review_recorder
+        await review_recorder.start()
+    except Exception:
+        logger.exception("Failed to start review event recorder")
+
+    # Learn from the operator's camera work (ATEM cuts + preset recalls).
+    try:
+        from app.director.operator_shots import operator_shot_recorder
+        await operator_shot_recorder.start()
+    except Exception:
+        logger.exception("Failed to start operator shot learning")
+
     # Auto-detect ATEM: connect the shared service at startup so the real
     # bridge is used automatically when reachable, mock otherwise.
     try:
@@ -186,27 +201,19 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Context initial sync failed")
 
-    # Automatic camera registration from config (camera_1)
+    # Register every camera in the rig profile (rig.yaml; defaults = camera_1_*
+    # settings). An invalid rig.yaml is a startup error: fail loud, not silent.
+    from app.rig import rig as _rig
+
+    _rig()  # raises RigProfileError naming the offending field
     try:
-        if global_settings.camera_1_host:
-            camera_service.register_camera(
-                1,
-                global_settings.camera_1_host,
-                port=global_settings.camera_1_port,
-                username=global_settings.camera_1_username,
-                password=global_settings.camera_1_password,
-                name=global_settings.camera_1_name,
-                visca_port=global_settings.camera_1_visca_port,
-                visca_udp=global_settings.camera_1_visca_udp,
-            )
-            # attempt connect in background
-            try:
-                asyncio.create_task(camera_service.connect_camera(1))
-            except Exception:
-                logger.exception("Failed to start camera connect task")
+        from app.cameras.service import register_from_profile
+
+        registered = register_from_profile(camera_service)  # registers + starts connect tasks
+        logger.info("Cameras registered from rig profile", cameras=registered)
     except Exception:
-        logger.exception("Failed to auto-register camera from config")
-    
+        logger.exception("Failed to register cameras from the rig profile")
+
     yield
     
     try:
@@ -285,6 +292,16 @@ async def lifespan(app: FastAPI):
         await operator_advance_recorder.stop()
     except Exception:
         logger.exception("Failed to stop operator slide-advance learning")
+    try:
+        from app.director.operator_shots import operator_shot_recorder
+        await operator_shot_recorder.stop()
+    except Exception:
+        logger.exception("Failed to stop operator shot learning")
+    try:
+        from app.director.review import review_recorder
+        await review_recorder.stop()
+    except Exception:
+        logger.exception("Failed to stop review event recorder")
     try:
         from app.vision.executors import shutdown_all
 

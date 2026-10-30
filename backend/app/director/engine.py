@@ -432,6 +432,9 @@ class ServiceDirector:
                         action,
                     )
                 else:
+                    note_command = getattr(camera_service, "note_command", None)
+                    if callable(note_command):
+                        note_command(camera_id, preset_id)  # the app, not the operator, is reframing
                     ok = await camera_service.move_to_preset(camera_id, preset_id)
                     if ok and action.role:
                         service_context.set_camera_role(action.role)

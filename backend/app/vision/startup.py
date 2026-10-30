@@ -25,21 +25,23 @@ def _register_inputs() -> None:
     elif settings.vision_program_device is not None:
         frame_capture.register_input("program", device_provider(settings.vision_program_device))
 
-    # Per-camera direct snapshot inputs (all configured roles share camera ids).
-    cameras = {
-        getattr(settings, f"camera_role_{r}_camera", None)
-        for r in ("pastor", "liturgist", "vocalist", "congregation", "choir", "wide")
-    }
-    for camera_id in sorted(c for c in cameras if c is not None):
-        tag = f"camera_{camera_id}"
+    # Per-camera direct snapshot inputs: every camera in the rig profile that
+    # has a snapshot URL (explicit ``snapshot_url`` or ``http://<host>/snapshot.jpg``).
+    from app.rig import rig
+
+    for camera in sorted(rig().cameras, key=lambda c: c.id):
+        tag = f"camera_{camera.id}"
         if use_dir:
             frame_capture.register_input(tag, dir_provider(f"{settings.vision_frame_dir}/{tag}"))
-        elif settings.camera_1_host:
-            url = f"http://{settings.camera_1_host}/snapshot.jpg"
-            auth = None
-            if settings.camera_1_username:
-                auth = (settings.camera_1_username, settings.camera_1_password or "")
-            frame_capture.register_input(tag, snapshot_provider(url, auth))
+            continue
+        url = camera.snapshot()
+        if not url:
+            continue
+        auth = None
+        username = camera.resolved_username()
+        if username:
+            auth = (username, camera.resolved_password() or "")
+        frame_capture.register_input(tag, snapshot_provider(url, auth))
 
 
 async def start_vision_layer() -> None:

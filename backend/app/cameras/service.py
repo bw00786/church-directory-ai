@@ -1,5 +1,6 @@
 """Camera service implementation."""
 
+import time
 from typing import Awaitable, List, Optional, Tuple
 
 from app.events.bus import event_bus
@@ -8,20 +9,19 @@ from app.cameras.ptz import PTZOpticsDriver
 
 logger = get_logger(__name__)
 
-# Service-plan framing roles that have a camera_role_<role>_camera/_preset pair
-# in app.config. Shared by the cue sheet (app.director.script), the cue engine,
-# the AI Director's PTZ_SELECT_ROLE and the operator assistant so there is a
-# single role -> preset table.
-CAMERA_ROLES: Tuple[str, ...] = ("pastor", "liturgist", "vocalist", "congregation", "choir", "wide")
+# Service-plan framing roles with a (camera, preset) shot: the rig profile's
+# ``roles`` table (app.rig), which with no rig.yaml is exactly the
+# camera_role_<role>_camera/_preset settings. Shared by the cue sheet
+# (app.director.script), the cue engine, the AI Director's PTZ_SELECT_ROLE and
+# the operator assistant so there is a single role -> preset table. Dynamic:
+# iterate it (``for role in CAMERA_ROLES``) or ``"pastor" in CAMERA_ROLES``;
+# the role names change when a profile is loaded, so do not copy it.
+_SETTINGS_ROLES: Tuple[str, ...] = ("pastor", "liturgist", "vocalist", "congregation", "choir", "wide")
 
 
-def configured_role_shot(role: str) -> Tuple[Optional[int], Optional[int]]:
-    """``(camera_id, preset_id)`` configured for ``role`` (``camera_role_*``
-    settings), or ``(None, None)`` for an unknown role. Configuration only --
-    no learned override (see :func:`resolve_role_shot`)."""
+def _settings_role_shot(role: str) -> Tuple[Optional[int], Optional[int]]:
     from app.config import settings
 
-    role = (role or "").strip().lower()
     camera_id = getattr(settings, f"camera_role_{role}_camera", None)
     preset_id = getattr(settings, f"camera_role_{role}_preset", None)
     if camera_id is None or preset_id is None:
@@ -29,15 +29,97 @@ def configured_role_shot(role: str) -> Tuple[Optional[int], Optional[int]]:
     return int(camera_id), int(preset_id)
 
 
+def _profile():
+    # An invalid rig.yaml raises RigProfileError here: fail loud, never fall
+    # back to a role table the operator did not configure.
+    from app.rig import rig
+
+    return rig()
+
+
+def camera_roles() -> Tuple[str, ...]:
+    """Role names that resolve to a shot: the profile's roles plus any
+    camera_role_* settings role the profile does not mention."""
+    profile = _profile()
+    names = list(profile.role_names()) if profile is not None else []
+    for role in _SETTINGS_ROLES:
+        if role not in names:
+            names.append(role)
+    return tuple(names)
+
+
+class _RoleTable:
+    """Live, read-only view of :func:`camera_roles` with tuple semantics."""
+
+    def __iter__(self):
+        return iter(camera_roles())
+
+    def __contains__(self, role) -> bool:
+        return role in camera_roles()
+
+    def __len__(self) -> int:
+        return len(camera_roles())
+
+    def __getitem__(self, index):
+        return camera_roles()[index]
+
+    def __eq__(self, other) -> bool:
+        return tuple(camera_roles()) == tuple(other) if isinstance(other, (tuple, list, _RoleTable)) else NotImplemented
+
+    def __hash__(self) -> int:  # pragma: no cover - identity only
+        return id(self)
+
+    def __repr__(self) -> str:
+        return f"CAMERA_ROLES{camera_roles()!r}"
+
+
+CAMERA_ROLES = _RoleTable()
+
+
+def configured_role_shot(role: str) -> Tuple[Optional[int], Optional[int]]:
+    """``(camera_id, preset_id)`` configured for ``role``: the rig profile's
+    ``roles`` entry, else the ``camera_role_*`` settings (so a profile that
+    omits a role does not regress it), or ``(None, None)`` for an unknown
+    role. Configuration only -- no learned override (see
+    :func:`resolve_role_shot`)."""
+    role = (role or "").strip().lower()
+    if not role:
+        return None, None
+    profile = _profile()
+    if profile is not None:
+        camera_id, preset_id = profile.role_shot(role)
+        if camera_id is not None and preset_id is not None:
+            return int(camera_id), int(preset_id)
+    return _settings_role_shot(role)
+
+
 def resolve_role_shot(role: str) -> Tuple[Optional[int], Optional[int], str]:
-    """``(camera_id, preset_id, source)`` for ``role``: the configured shot,
-    replaced by the preset identity recognition has learned for that role on
-    that camera when enough consistent samples exist (same rule the cue engine
-    applies). ``source`` is ``"configured"`` or ``"learned"``; unknown roles
-    give ``(None, None, "unknown")``."""
+    """``(camera_id, preset_id, source)`` for ``role``.
+
+    Precedence: the shot the operator actually uses for this role in the
+    current part of the service (operator shot learning, ``"operator"``), then
+    the preset identity recognition has learned for the role on that camera
+    (``"learned"``), then the rig profile / settings table (``"configured"``).
+    Unknown roles give ``(None, None, "unknown")``.
+    """
     camera_id, preset_id = configured_role_shot(role)
     if camera_id is None:
         return None, None, "unknown"
+    try:
+        from app.director.operator_shots import operator_shot_history
+        from app.domain.service_context import service_context
+
+        preferred = operator_shot_history.preferred_shot(service_context.state, role.strip().lower())
+    except Exception:
+        logger.warning("Operator shot lookup unavailable", role=role, exc_info=True)
+        preferred = None
+    if (
+        preferred
+        and preferred.get("camera_id") is not None
+        and preferred.get("preset_id") is not None
+        and (int(preferred["camera_id"]), int(preferred["preset_id"])) != (camera_id, preset_id)
+    ):
+        return int(preferred["camera_id"]), int(preferred["preset_id"]), "operator"
     try:
         from app.identity.service import identity_service
 
@@ -65,7 +147,26 @@ class CameraService:
         self._drivers: dict[int, PTZOpticsDriver] = {}
         # camera_id -> last preset_id commanded via move_to_preset
         self._current_preset: dict[int, int] = {}
+        # Monotonic time of the last preset recall the *application* issued
+        # (cue engine, AI action engine); see note_command / commanded_within.
+        self._last_command_at: float = float("-inf")
         logger.info("Camera service initialized")
+
+    # -- command attribution ---------------------------------------------------
+    def note_command(self, camera_id: Optional[int] = None, preset_id: Optional[int] = None) -> None:
+        """Record that the app itself is about to recall a preset.
+
+        The operator UI (``POST /cameras/{id}/preset/{n}``) does not call this,
+        so a preset change seen without a recent note is the operator's own
+        reframe (app.director.operator_shots). Mirrors
+        ``easyworship_service.commanded_within``.
+        """
+        self._last_command_at = time.monotonic()
+        logger.debug("Camera command noted", camera_id=camera_id, preset_id=preset_id)
+
+    def commanded_within(self, seconds: float) -> bool:
+        """Did this app recall a camera preset in the last ``seconds``?"""
+        return time.monotonic() - self._last_command_at <= seconds
 
     def _connection_failed(self, camera_id: int) -> None:
         event_bus.publish({"event": "CAMERA_CONNECTION_FAILED",
@@ -199,7 +300,8 @@ class CameraService:
 
     async def move_to_role(self, role: str) -> bool:
         """Move to the camera/preset for a service-plan role (e.g. "pastor",
-        "liturgist", "vocalist", "congregation", "choir", "wide") -- the
+        "liturgist", "vocalist", "congregation", "choir", "wide", or any role
+        the rig profile defines) -- the profile's ``roles`` table / the
         app.config camera_role_* settings, or the preset identity recognition
         has learned for the role (:func:`resolve_role_shot`). This is the same
         lookup the cue sheet and cue engine use, so the AI Director's
@@ -293,6 +395,52 @@ class CameraService:
             camera_id, "camera_move_absolute",
             driver.move_absolute(pan_deg=pan, tilt_deg=tilt, zoom_pct=zoom),
         )
+
+
+def register_from_profile(service: "CameraService", profile=None, *, connect: bool = True) -> List[int]:
+    """Register every camera in the rig profile's ``cameras`` list with
+    ``service`` and (optionally) start connecting the real ones in the
+    background. Returns the registered camera ids.
+
+    Replaces main.py's hard-coded camera_1 block: with no rig.yaml the profile
+    holds exactly camera 1 from the ``camera_1_*`` settings, so behaviour is
+    unchanged. Cameras without a host are skipped (same as an unset
+    CAMERA_1_HOST); ``driver: mock`` cameras are registered but never dialled.
+    """
+    import asyncio
+
+    if profile is None:
+        from app.rig import rig
+
+        profile = rig()
+    registered: List[int] = []
+    for camera in profile.cameras:
+        host = camera.host
+        if not host:
+            if camera.driver == "mock":
+                host = "mock"
+            else:
+                logger.info("Camera has no host; not registered", camera_id=camera.id, name=camera.name)
+                continue
+        service.register_camera(
+            camera.id,
+            host,
+            port=camera.port,
+            username=camera.resolved_username(),
+            password=camera.resolved_password(),
+            name=camera.name,
+            visca_port=camera.visca_port,
+            visca_udp=camera.visca_udp,
+        )
+        registered.append(camera.id)
+        if connect and camera.driver != "mock":
+            try:
+                asyncio.get_running_loop().create_task(service.connect_camera(camera.id))
+            except RuntimeError:
+                logger.warning("No running event loop; camera not connected", camera_id=camera.id)
+            except Exception:
+                logger.exception("Failed to start camera connect task", camera_id=camera.id)
+    return registered
 
 
 # Module-level singleton for dependency injection and startup wiring

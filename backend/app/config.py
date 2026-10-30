@@ -79,6 +79,27 @@ class Settings(BaseSettings):
     database_migrate_on_startup: bool = True
     database_startup_timeout_seconds: float = 10.0
 
+    # Per-church rig profile (docs/rig-profile.md): cameras, ATEM inputs, mixer
+    # channels, PTZ role shots, cue overrides, heading synonyms. Relative paths
+    # resolve from the repo root; a missing file means "derive from .env".
+    rig_profile_file: str = "rig.yaml"
+
+    # First-run setup wizard (app/api/setup.py): discovery + connectivity tests,
+    # writes allow-listed keys to .env (admin key). needs_setup is false on a
+    # fully mocked loopback dev box.
+    setup_wizard_enabled: bool = True
+    setup_probe_timeout_seconds: float = 8.0
+    setup_env_file: str = ""                     # empty => the repo .env
+
+    # Rehearsal mode (app/director/rehearsal.py): replay a recording through a
+    # private copy of the AI runtime; actions are recorded, never sent to hardware.
+    force_mock_during_rehearsal: bool = False    # allow rehearsal while real hardware is configured
+    rehearsal_default_gap_seconds: float = 2.0
+    rehearsal_recordings_dir: str = "data/recordings"
+
+    # Post-service review (app/director/review.py): bus events kept for GET /director/review.
+    review_events_file: str = "data/review_events.jsonl"
+
     # Serve the built operator UI (frontend/dist) at /app when the directory
     # exists. Empty = <repo>/frontend/dist.
     frontend_dist_dir: str = ""
@@ -457,6 +478,25 @@ class Settings(BaseSettings):
     operator_learning_min_samples: int = 2               # before the follower uses a slide's history
     operator_learning_min_dwell_fraction: float = 0.35   # no advance before this share of the usual slide time (0 = off)
     operator_learning_memory: bool = True                # also write advances to production memory (RAG)
+
+    # Learn from the operator's camera work (app.director.operator_shots): ATEM
+    # program changes and preset recalls the app didn't command are recorded
+    # per (service_state, speaker_role) and reused as preferred shots, pacing
+    # medians and house-style prompt bullets.
+    operator_shots_enabled: bool = True
+    operator_shots_file: str = "data/operator-shots.json"
+    operator_shots_max_samples: int = 12          # newest samples kept per (state, speaker_role)
+    operator_shots_min_samples: int = 3           # before preferred_shot / medians are trusted
+    operator_shots_min_share: float = 0.6         # majority share needed for preferred_shot
+    operator_shots_command_window_seconds: float = 3.0   # app recalls / program changes within this aren't the operator's
+    operator_shots_poll_seconds: float = 1.0      # preset poll for reframe detection
+    operator_shots_context_seconds: float = 20.0  # transcript window before a cut
+    operator_shots_tail_words: int = 12
+    operator_shots_speaker_window_seconds: float = 15.0  # a speaker change older than this isn't "reacted to"
+    operator_shots_memory: bool = True            # also write samples to production memory (RAG)
+    # Raise the AI's minimum hold toward this share of the operator's median hold
+    # for the current service part (0 = policy hold only).
+    operator_shots_hold_fraction: float = 0.5
 
     # Phase 2: event-driven decision ticks + predictive PTZ preview staging.
     ai_director_event_driven: bool = True        # nudge a decision tick on key events

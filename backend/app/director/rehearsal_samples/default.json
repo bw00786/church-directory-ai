@@ -1,0 +1,18 @@
+{
+  "name": "Sunday morning (short)",
+  "description": "Twelve-step walk from the pre-service countdown through welcome, hymn, scripture, sermon and benediction. Synthetic transcript; speaker roles match the default mixer channel map.",
+  "entries": [
+    {"speaker_role": "liturgist", "speaking": true, "transcript": "Good morning and welcome to worship. Please stand as we begin with our opening hymn.", "confidence": 0.94, "delay_seconds": 0},
+    {"speaker_role": "vocalist", "speaking": true, "transcript": "Holy, holy, holy, Lord God Almighty, early in the morning our song shall rise to thee.", "confidence": 0.9, "delay_seconds": 6},
+    {"speaker_role": "congregation", "speaking": true, "transcript": "Holy, holy, holy, merciful and mighty, God in three persons, blessed Trinity.", "confidence": 0.82, "delay_seconds": 8},
+    {"speaker_role": "vocalist", "speaking": false, "transcript": "", "delay_seconds": 5},
+    {"speaker_role": "liturgist", "speaking": true, "transcript": "Our scripture reading this morning is from the Gospel of John, chapter one, verses one through fourteen.", "confidence": 0.95, "delay_seconds": 4},
+    {"speaker_role": "liturgist", "speaking": true, "transcript": "In the beginning was the Word, and the Word was with God, and the Word was God. This is the Word of the Lord.", "confidence": 0.93, "delay_seconds": 10},
+    {"speaker_role": "congregation", "speaking": true, "transcript": "Thanks be to God.", "confidence": 0.8, "delay_seconds": 3},
+    {"speaker_role": "pastor", "speaking": true, "transcript": "Thank you. Please be seated. This morning I want to talk about what it means for the Word to become flesh and dwell among us.", "confidence": 0.96, "delay_seconds": 5},
+    {"speaker_role": "pastor", "speaking": true, "transcript": "John doesn't start with a stable or a star. He starts before creation, and then he brings it all the way down to a neighbourhood.", "confidence": 0.95, "delay_seconds": 12},
+    {"speaker_role": "pastor", "speaking": true, "transcript": "So let us pray. Gracious God, make your Word flesh in us this week. Amen.", "confidence": 0.94, "delay_seconds": 14},
+    {"speaker_role": "pastor", "speaking": true, "transcript": "Now may the grace of our Lord Jesus Christ be with you all. Go in peace to love and serve the Lord.", "confidence": 0.96, "delay_seconds": 6},
+    {"speaker_role": "congregation", "speaking": true, "transcript": "Thanks be to God. Amen and amen.", "confidence": 0.78, "delay_seconds": 4}
+  ]
+}

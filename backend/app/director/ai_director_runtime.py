@@ -117,6 +117,8 @@ class AIDirectorRuntime:
         # Cycle bookkeeping (set on every cycle, including failed ones).
         self._last_cycle_id: Optional[str] = None
         self._last_cycle: dict = {}
+        # Operator pause: the mode to restore on resume (None = not paused).
+        self._paused_from: Optional[str] = None
 
     # -- mode ---------------------------------------------------------------------
     @property
@@ -126,8 +128,47 @@ class AIDirectorRuntime:
     def set_mode(self, mode: str) -> None:
         if mode not in VALID_MODES:
             raise ValueError(f"Invalid AI Director mode: {mode}")
+        # An explicit mode choice ends any pause.
+        self._paused_from = None
         self._mode = mode
         event_bus.publish({"event": "AI_DIRECTOR_MODE_CHANGED", "payload": {"mode": mode}})
+
+    # -- pause / resume (operator-level; no admin key needed) ------------------------
+    @property
+    def paused(self) -> bool:
+        return self._paused_from is not None
+
+    @property
+    def paused_from(self) -> Optional[str]:
+        return self._paused_from
+
+    def pause(self) -> dict:
+        """Drop to ``manual`` (observe only) remembering the mode to come back to.
+
+        Idempotent: pausing while paused keeps the original ``paused_from``."""
+        if self._paused_from is None:
+            self._paused_from = self._mode
+            self._mode = "manual"
+            event_bus.publish({"event": "AI_DIRECTOR_MODE_CHANGED", "payload": {"mode": "manual"}})
+            event_bus.publish(
+                {"event": "AI_DIRECTOR_PAUSED", "payload": {"mode": "manual", "paused_from": self._paused_from}}
+            )
+            logger.info("AI Director paused", paused_from=self._paused_from)
+        return self.pause_state()
+
+    def resume(self) -> dict:
+        """Restore the mode that was active before :meth:`pause`; no-op when not paused."""
+        if self._paused_from is not None:
+            restored = self._paused_from
+            self._paused_from = None
+            self._mode = restored
+            event_bus.publish({"event": "AI_DIRECTOR_MODE_CHANGED", "payload": {"mode": restored}})
+            event_bus.publish({"event": "AI_DIRECTOR_RESUMED", "payload": {"mode": restored}})
+            logger.info("AI Director resumed", mode=restored)
+        return self.pause_state()
+
+    def pause_state(self) -> dict:
+        return {"mode": self._mode, "paused": self.paused, "paused_from": self._paused_from}
 
     def nudge(self) -> None:
         """Request an immediate decision cycle (Phase 2 event-driven)."""
@@ -155,6 +196,8 @@ class AIDirectorRuntime:
     def status(self) -> dict:
         return {
             "mode": self._mode,
+            "paused": self.paused,
+            "paused_from": self._paused_from,
             "pending_actions": self.pending_proposals(),
             "last_cycle": dict(self._last_cycle),
             "adaptive_confidence": adaptive_confidence.status(_bases(), service_context.state.value),

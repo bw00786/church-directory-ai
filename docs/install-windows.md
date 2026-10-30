@@ -64,7 +64,23 @@ Network exposure: the backend binds to `127.0.0.1`. If the operator UI runs on
 another machine, set `API_HOST=0.0.0.0`; the API keys are then mandatory and
 the UI prompts for the operator key on first load.
 
-## 5. First run
+## 5. First-run setup wizard
+
+On first start the operator UI opens a setup wizard when `GET /api/setup/status`
+reports required settings missing (ATEM, camera 1, EasyWorship, Ollama, mixer
+USB device, PostgreSQL password, API keys when `API_HOST` is not loopback, the
+slides tap when verification is enabled). It walks through Network discovery
+(ATEM by MAC sweep, EasyWorship by mDNS, Ollama on the EasyWorship PC), Cameras,
+Audio (USB device picker and channel-to-role map), Slides, Security, then
+Review & Save. Saving writes only the fields you changed to `.env` (admin API
+key required; comments and order are preserved) and tells you to restart the
+backend. Reopen it any time from the **Setup** toolbar button;
+`SETUP_WIZARD_ENABLED=false` turns the auto-open off. API keys are not edited by
+the wizard — `scripts/setup-windows.ps1` generates them. For a church with more
+than one camera or a different liturgy, also create `rig.yaml` from
+`rig.example.yaml` ([rig-profile.md](rig-profile.md)).
+
+## 6. First run
 
 ```powershell
 docker compose up -d          # PostgreSQL (first time; optional but recommended)
@@ -80,16 +96,18 @@ docker compose up -d          # PostgreSQL (first time; optional but recommended
 - Check <http://localhost:8000/health/ollama> once; it performs one bounded
   inference against the configured model.
 
-## 6. Rehearse
+## 7. Rehearse
 
 Keep the AI Director in `assisted` mode for the first services: every proposal
 appears in the panel with its reason and must be approved. Operator slide
 advances and shot changes are recorded from the first service onward and
 become learned cues, dwell guards and house-style rules for later services.
-Replay a recorded service with `backend/scripts/replay_service.py` to rehearse
-without hardware.
+Use the **Rehearsal** panel (or `POST /director/rehearsal/start`) to replay a
+recorded service through the AI with every action recorded instead of sent to
+hardware, and the **Service review** panel after each Sunday to see what the AI
+proposed, what was approved or held, and how the operator cut.
 
-## 7. Upgrade
+## 8. Upgrade
 
 ```powershell
 git pull

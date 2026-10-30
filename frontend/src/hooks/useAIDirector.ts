@@ -2,7 +2,7 @@
  * AI Service Director hook
  * Polls /director/ai/status for the current mode, service context, and
  * pending proposals (assisted-mode queue with ids, TTL and hold reasons);
- * exposes mode switching + approve/reject by proposal id.
+ * exposes mode switching, pause/resume, and approve/reject by proposal id.
  */
 
 import { useCallback, useEffect, useState } from 'react'
@@ -91,8 +91,18 @@ export interface AdaptiveConfidenceStatus {
   thresholds: Record<string, { base: number; effective: number }>
 }
 
+export interface PauseState {
+  mode: AiDirectorMode
+  paused: boolean
+  paused_from: AiDirectorMode | null
+}
+
 export interface AiDirectorStatus {
   mode: AiDirectorMode
+  /** True while the operator has paused the AI (mode forced to manual). */
+  paused?: boolean
+  /** The mode that resume() restores, while paused. */
+  paused_from?: AiDirectorMode | null
   context: ServiceContextSnapshot
   pending_actions: PendingAction[]
   last_cycle?: LastCycle
@@ -147,6 +157,18 @@ export function useAIDirector(pollMs = 3000) {
     [refresh],
   )
 
+  const pause = useCallback(async () => {
+    const state = await postJSON<PauseState>('/director/ai/pause')
+    await refresh()
+    return state
+  }, [refresh])
+
+  const resume = useCallback(async () => {
+    const state = await postJSON<PauseState>('/director/ai/resume')
+    await refresh()
+    return state
+  }, [refresh])
+
   const approve = useCallback(
     async (id: string) => {
       await postJSON(`/director/ai/pending/${encodeURIComponent(id)}/approve`)
@@ -163,5 +185,5 @@ export function useAIDirector(pollMs = 3000) {
     [refresh],
   )
 
-  return { status, fetchedAt, loading, setMode, approve, reject, refresh }
+  return { status, fetchedAt, loading, setMode, pause, resume, approve, reject, refresh }
 }
